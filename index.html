@@ -34,20 +34,35 @@
       display: block;
     }
 
-    #hud {
+    .hud-panel {
       position: fixed;
-      top: 16px;
-      left: 16px;
       z-index: 10;
-      min-width: 220px;
-      padding: 14px 16px;
       border: 1px solid var(--panel-border);
       border-radius: 14px;
       background: var(--panel);
       pointer-events: none;
     }
 
-    #hud .title {
+    #playerHud {
+      left: 16px;
+      bottom: 16px;
+      max-width: 360px;
+      padding: 12px 14px;
+      background:
+        linear-gradient(180deg, rgba(46, 24, 7, 0.92), rgba(16, 10, 4, 0.9)),
+        var(--panel);
+    }
+
+	    #devHud {
+	      position: fixed;
+	      top: 16px;
+	      right: 16px;
+	      min-width: 208px;
+	      max-width: 220px;
+	      padding: 10px 12px;
+	    }
+
+    .hud-panel .title {
       margin: 0 0 8px;
       font-size: 13px;
       letter-spacing: 0.16em;
@@ -55,14 +70,62 @@
       color: var(--accent);
     }
 
-    #hud .line {
+    .hud-panel .line {
       margin: 4px 0;
       font-size: 15px;
       line-height: 1.4;
     }
 
-    #hud .hint {
+    .hud-panel .hint {
       margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .cargo-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 8px 12px;
+      border: 1px solid rgba(255, 212, 138, 0.22);
+      border-radius: 999px;
+      background: rgba(255, 244, 220, 0.05);
+      color: #f7e9cf;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .cargo-pill.active {
+      border-color: rgba(255, 210, 109, 0.44);
+      background: rgba(240, 160, 40, 0.16);
+      color: #ffd88a;
+      box-shadow: 0 0 24px rgba(240, 160, 40, 0.16);
+    }
+
+    .cargo-pill.harvesting {
+      border-color: rgba(255, 214, 130, 0.36);
+      background: rgba(255, 200, 90, 0.12);
+      color: #ffe2aa;
+    }
+
+    #hudScore {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    #hudObjective {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #f2e7d3;
+    }
+
+    #hudNoiseText {
+      margin-top: 8px;
       font-size: 12px;
       color: var(--muted);
     }
@@ -226,15 +289,23 @@
   </style>
 </head>
 <body>
-  <div id="hud">
-    <div class="title">Spice Jam</div>
-    <div id="hudDay" class="line">Time: 12:00</div>
-    <div id="hudPhase" class="line">Phase: Day</div>
+  <div id="playerHud" class="hud-panel">
+    <div id="hudCargo" class="cargo-pill">Holding: none</div>
+    <div id="hudWeapon" class="hint">Weapon: Crysknife</div>
+    <div class="line">HP <span class="noise-track"><span id="healthFill" class="noise-fill" style="background:#44cc44;width:100%;"></span></span></div>
+    <div id="hudLasgunCharge" class="line" style="display:none">LAS <span class="noise-track"><span id="lasgunFill" class="noise-fill" style="background:#5ed3ff;width:100%;"></span></span></div>
+    <div id="hudScore">Spice secured: 0</div>
+    <div id="hudObjective" class="hint">Leave rock and find a spice patch in the open sand.</div>
+    <div id="hudNoiseText" class="hint">Rock dampens vibration.</div>
+  </div>
+
+	  <div id="devHud" class="hud-panel">
+	    <div class="title">Dev Hud</div>
+	    <div id="hudDay" class="line">Time: 12:00</div>
+	    <div id="hudPhase" class="line">Phase: Day</div>
     <div id="hudSpeed" class="line">Speed: 0.0</div>
     <div id="hudPos" class="line">Pos: (0.0, 0.0)</div>
     <div id="hudSurface" class="line">Surface: Rock</div>
-    <div id="hudCargo" class="line">Cargo: Empty</div>
-    <div id="hudScore" class="line">Secured: 0</div>
     <div class="noise-row">
       <span class="noise-label">Noise</span>
       <span class="noise-track"><span id="noiseFill" class="noise-fill"></span></span>
@@ -243,19 +314,20 @@
       <span class="noise-label">Sign</span>
       <span class="noise-track"><span id="signFill" class="noise-fill"></span></span>
     </div>
-    <div id="hudObjective" class="hint">Leave rock and find spice in the open sand.</div>
-    <div id="hudNoiseText" class="hint">Rock dampens vibration.</div>
-    <div id="hudSeed" class="hint"></div>
-    <div class="hint">WASD move · Space jump · Shift run · C or Ctrl crouch · Hold E harvest · ESC pause</div>
-  </div>
+    <div class="noise-row">
+      <span class="noise-label">Worm</span>
+      <span class="noise-track"><span id="wormFill" class="noise-fill"></span></span>
+	    </div>
+	    <div id="hudSeed" class="hint"></div>
+	  </div>
 
   <div id="reticle"></div>
 
   <div id="overlay">
     <div class="panel">
       <h1 id="overlayTitle">Spice Jam</h1>
-      <p id="overlayBody">Harvest spice in the open dunes, then get it back to rock before the worm takes you.</p>
-      <p id="overlayHint">Click to lock the mouse. WASD to move, Space to jump, Shift to run, Hold E to harvest.</p>
+      <p id="overlayBody">Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.</p>
+      <p id="overlayHint">Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, Hold E in a patch, Q to deploy a thumper.</p>
       <div id="overlayCta" class="cta">Click to Play</div>
     </div>
   </div>
@@ -296,12 +368,20 @@
       playerCrouchCollisionHeight: 3.6,
       playerLandSnapHeight: 0.95,
       playerGroundSnapEpsilon: 0.45,
+      playerSpawnClearance: 4,
+      playerStartPlatformRadius: 18,
+      playerStartPlatformHeight: 3.5,
       playerTurnSpeed: 10,
       playerCoyoteTime: 0.12,
       playerJumpBuffer: 0.14,
       playerStandHeight: 0,
       crouchScale: 0.68,
       crouchTransitionSpeed: 14,
+      sfxMasterVolume: 0.72,
+      footstepMinSpeed: 1.45,
+      footstepWalkInterval: 0.42,
+      footstepRunInterval: 0.28,
+      footstepCrouchInterval: 0.58,
 
       slopeSpeedAngleMax: 38,   // degrees — full speed penalty at this slope
       slopeSpeedMin: 0.55,      // min speed multiplier on steepest climbable slope
@@ -326,9 +406,12 @@
       noiseSignRockDecayRate: 0.28,
 
       spiceNodeCount: 8,
-      spiceHarvestRadius: 5,
+      spiceHarvestRadius: 8,
+      spicePatchRadius: 12,
+      spicePatchPocketRadius: 3.6,
+      spicePatchSparkleCount: 54,
       spiceHarvestDuration: 4.5,
-      spiceHarvestNoiseBonus: 0.42,
+      spiceHarvestNoiseBonus: 0.72,
       spiceHarvestMoveCancelSpeed: 0.8,
       spiceRespawnDuration: 32,
       spiceCarrySpeedMultiplier: 0.88,
@@ -337,7 +420,70 @@
       spiceNodeMinSafeClearance: 46,
       spiceNodeEdgePadding: 70,
 
-      wormNoisePressureSpawnThreshold: 0.68,
+      thumperDuration: 24,
+      thumperPulseInterval: 0.9,
+      thumperAmbientStrength: 0.52,
+      thumperPulseStrength: 1,
+      thumperSignalDecayRate: 1.3,
+      thumperDeployReach: 13,
+
+	      knifeRange: 5.2,
+	      knifeArcDegrees: 74,
+	      knifeDuration: 0.34,
+	      knifeHitStart: 0.12,
+	      knifeHitEnd: 0.24,
+	      knifeCooldown: 0.48,
+	      knifeSwingNoiseImpulse: 0.08,
+	      knifeHitNoiseImpulse: 0.16,
+	      knifeDamage: 25,
+	      knifeThumperHitRadius: 1.8,
+	      trainingDummyHitRadius: 1.35,
+	      trainingDummyHeadRadius: 0.26,
+	      trainingDummyOffsetX: 5.4,
+	      trainingDummyOffsetZ: -6.2,
+	      dummyMaxHealth: 100,
+	      dummyRespawnDelay: 3.0,
+	      playerMaxHealth: 100,
+
+	      critChance: 0.12,
+	      critMultiplier: 1.5,
+	      headshotMultiplier: 1.5,
+	      maulaImpactDamage: 20,
+	      maulaPoisonDamagePerSecond: 4,
+	      maulaPoisonDuration: 6,
+	      maulaMaxDarts: 3,
+	      maulaCooldown: 0.72,
+	      maulaFireDuration: 0.24,
+	      maulaReloadDuration: 2.1,
+	      maulaProjectileSpeed: 36,
+	      maulaProjectileGravity: 15.5,
+	      maulaProjectileLift: 4.2,
+	      maulaProjectileLifetime: 1.3,
+	      maulaProjectileRadius: 0.18,
+	      maulaFireNoiseImpulse: 0.16,
+	      maulaImpactNoiseImpulse: 0.22,
+	      lasgunDPS: 50,
+	      lasgunDrainRate: 0.24,
+	      lasgunRechargeRate: 0.10,
+	      lasgunImpactDamage: 34,
+	      lasgunCooldown: 1.15,
+	      lasgunFireDuration: 0.18,
+	      lasgunBeamDuration: 0.12,
+	      lasgunRange: 120,
+	      lasgunFireNoiseImpulse: 0.34,
+	      shieldTransitionSpeed: 8.5,
+	      shieldFlashDecay: 3.4,
+	      shieldPulseSpeed: 3.1,
+	      shieldDrainRate: 0.16,
+	      shieldRechargeRate: 0.055,
+	      shieldRechargeSunFloor: 0.24,
+	      shieldMinActivateCharge: 0.08,
+	      shieldNoiseBonusSand: 0.62,
+	      shieldNoiseBonusRock: 0.18,
+	      shieldSignFloorSand: 0.58,
+	      shieldHotspotBonus: 0.34,
+
+	      wormNoisePressureSpawnThreshold: 0.68,
       wormNoisePressureRise: 0.38,
       wormNoisePressureDecay: 0.14,
       wormHotspotMinIntensity: 0.18,
@@ -350,6 +496,7 @@
       wormRetreatSteering: 2.2,
       wormAttackTriggerDistance: 36,
       wormOffMapTravelDistance: 1900,
+      wormHotspotTrackSharpness: 4.6,
       wormRadioMessageDuration: 3.5,
       wormAttackMinSign: 0.32,
       wormWarningSignFloor: 0.72,
@@ -368,8 +515,18 @@
       wormPullBreachStrength: 22,
       wormShakeWarning: 0.34,
       wormShakeBreach: 1.35,
-      wormDevourDuration: 1.05,
-      wormDevourMessageDuration: 2.4,
+      wormDevourDuration: 3.2,
+      wormRespawnDelayDuration: 2,
+      wormDevourMessageDuration: 2.8,
+      wormDevourCameraDistance: 48,
+      wormDevourCameraHeight: 22,
+      wormDevourCameraFocusHeight: 12,
+      wormDevourRevealStart: 0.46,
+      wormDevourRevealDistance: 86,
+      wormDevourRevealHeight: 42,
+      wormDevourRevealFocusHeight: 24,
+      wormDevourCameraOrbitSpeed: 0.78,
+      wormDevourCameraSharpness: 5.2,
 
       cameraDistance: 9,
       crouchCameraDistance: 7,
@@ -435,6 +592,11 @@
       },
     ];
 
+    const MAX_SUN_INTENSITY = DAY_NIGHT_KEYS.reduce(
+      (max, key) => Math.max(max, key.sunIntensity),
+      0
+    );
+
     const ui = {
       overlay: document.getElementById("overlay"),
       overlayTitle: document.getElementById("overlayTitle"),
@@ -447,12 +609,17 @@
       hudDay: document.getElementById("hudDay"),
       hudPhase: document.getElementById("hudPhase"),
       hudSpeed: document.getElementById("hudSpeed"),
-      hudPos: document.getElementById("hudPos"),
-      hudSurface: document.getElementById("hudSurface"),
-      hudCargo: document.getElementById("hudCargo"),
-      hudScore: document.getElementById("hudScore"),
+	      hudPos: document.getElementById("hudPos"),
+	      hudSurface: document.getElementById("hudSurface"),
+	      hudCargo: document.getElementById("hudCargo"),
+	      hudWeapon: document.getElementById("hudWeapon"),
+	      hudScore: document.getElementById("hudScore"),
+      healthFill: document.getElementById("healthFill"),
+      hudLasgunCharge: document.getElementById("hudLasgunCharge"),
+      lasgunFill: document.getElementById("lasgunFill"),
       noiseFill: document.getElementById("noiseFill"),
       signFill: document.getElementById("signFill"),
+      wormFill: document.getElementById("wormFill"),
       hudObjective: document.getElementById("hudObjective"),
       hudNoiseText: document.getElementById("hudNoiseText"),
       hudSeed: document.getElementById("hudSeed"),
@@ -494,6 +661,11 @@
 
     const stars = createStarField();
     const player = createPlayer();
+    const audioState = {
+      enabled: false,
+      footstepTimer: 0,
+    };
+    const sfx = createSfxBank();
 
     // Seeded PRNG (mulberry32) — share MAP_SEED with other clients for identical terrain.
     function mulberry32(seed) {
@@ -575,15 +747,37 @@
       spiceScore: 0,
       harvestNode: null,
       harvestTimer: 0,
-      interactHint: "Leave rock and find spice in the open sand.",
+      interactHint: "Leave rock and find a spice patch in the open sand.",
       wormPhase: "idle",
       wormTimer: 0,
       wormCooldown: 0,
       wormRecoveryTimer: 0,
-      wormRadioTimer: 0,
-      wormRadioMessage: "",
-      wormShake: 0,
-      wormTarget: new THREE.Vector3(),
+	      wormRadioTimer: 0,
+	      wormRadioMessage: "",
+	      wormShake: 0,
+	      playerHealth: 100,
+	      equippedWeapon: "knife",
+	      knifeTimer: 0,
+	      knifeCooldown: 0,
+	      knifeHasHit: false,
+	      maulaCooldown: 0,
+	      maulaFireTimer: 0,
+	      maulaReloadTimer: 0,
+	      maulaLoaded: true,
+	      maulaReserveAmmo: CONFIG.maulaMaxDarts - 1,
+	      lasgunCooldown: 0,
+	      lasgunFireTimer: 0,
+	      lasgunBeamTimer: 0,
+	      lasgunFiring: false,
+	      lasgunNoiseTimer: 0,
+	      lasgunCharge: 1,
+	      lasgunBeamStart: new THREE.Vector3(),
+	      lasgunBeamEnd: new THREE.Vector3(),
+	      shieldActive: false,
+	      shieldCharge: 1,
+	      shieldAlpha: 0,
+	      shieldFlash: 0,
+	      wormTarget: new THREE.Vector3(),
       wormRespawnPoint: new THREE.Vector3(),
       wormDevourStart: new THREE.Vector3(),
       paused: true,
@@ -603,6 +797,7 @@
       ControlRight: false,
       KeyC: false,
       KeyE: false,
+      KeyQ: false,
     };
 
     const clock = new THREE.Clock();
@@ -611,6 +806,8 @@
     const tempRight = new THREE.Vector3();
     const tempInput = new THREE.Vector3();
     const tempCameraPos = new THREE.Vector3();
+    const tempCameraLook = new THREE.Vector3();
+    const tempCameraDir = new THREE.Vector3();
     const tempUp = new THREE.Vector3(0, 1, 0);
     const tempSunTarget = new THREE.Vector3();
     const tempColorA = new THREE.Color();
@@ -620,8 +817,29 @@
     const tempWormDesired = new THREE.Vector3();
     const tempClusterCenter = new THREE.Vector3();
     const tempDevourTarget = new THREE.Vector3();
-    const textureLoader = new THREE.TextureLoader();
-    const rockMaterial = createRockMaterial();
+	    const tempThumperPlacement = new THREE.Vector3();
+	    const tempThumperDirection = new THREE.Vector3();
+	    const tempKnifeDir = new THREE.Vector3();
+	    const tempKnifeOffset = new THREE.Vector3();
+	    const tempMaulaOrigin = new THREE.Vector3();
+	    const tempMaulaVelocity = new THREE.Vector3();
+	    const tempProjectileStart = new THREE.Vector3();
+	    const tempProjectileEnd = new THREE.Vector3();
+	    const tempProjectileCenter = new THREE.Vector3();
+	    const tempProjectileDelta = new THREE.Vector3();
+	    const tempProjectileClosest = new THREE.Vector3();
+	    const tempLasgunImpact = new THREE.Vector3();
+	    const tempLasgunEnd = new THREE.Vector3();
+	    const cameraRaycaster = new THREE.Raycaster();
+	    const textureLoader = new THREE.TextureLoader();
+	    const rockMaterial = createRockMaterial();
+	    const maulaProjectiles = [];
+    const startPlatform = {
+      x: CONFIG.playerStart.x,
+      z: CONFIG.playerStart.z,
+      topY: CONFIG.playerStart.y,
+      radius: CONFIG.playerStartPlatformRadius,
+    };
     const worm = {
       position: new THREE.Vector3(),
       velocity: new THREE.Vector3(),
@@ -633,11 +851,15 @@
 
     ui.hudSeed.textContent = `Seed: ${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")}`;
     createTerrain();
-    buildRockInstances();
-    const wormHazard = createWormHazard();
-    const spiceObjective = createSpiceObjective();
-    placePlayerOnGround();
-    bindEvents();
+	    const rockMesh = buildRockInstances();
+	    const wormHazard = createWormHazard();
+	    const thumper = createThumper();
+	    const spiceObjective = createSpiceObjective();
+	    const trainingDummy = createTrainingDummy();
+    const shieldedDummy = createTrainingDummy({ offsetX: 15, offsetZ: 2, hasShield: true });
+	    const lasgunBeam = createLasgunBeam();
+	    placePlayerOnGround();
+	    bindEvents();
     updateDayNight(0);
     refreshHud();
     animate();
@@ -666,6 +888,69 @@
         metalness: 0,
         flatShading: false,
       });
+    }
+
+    function createRockGeometry() {
+      const geometry = new THREE.CylinderGeometry(1.02, 1.7, 1, 7, 3, false);
+      const positions = geometry.attributes.position;
+
+      for (let i = 0; i < positions.count; i += 1) {
+        const x = positions.getX(i);
+        const y = positions.getY(i);
+        const z = positions.getZ(i);
+        const angle = Math.atan2(z, x);
+        const capScale = Math.abs(y) > 0.49 ? 1.08 : 1;
+        const radialScale = capScale
+          * (1 + (0.12 * Math.sin((angle * 2.7) + (y * 5.1))) + (0.08 * Math.cos((angle * 5.2) - (y * 3.4))));
+
+        positions.setX(i, (x * radialScale) + (0.04 * Math.sin((y + angle) * 4.3)));
+        positions.setY(i, y + (0.05 * Math.sin((x * 6.1) + (z * 4.7))));
+        positions.setZ(i, (z * radialScale) + (0.04 * Math.cos((y - angle) * 4.9)));
+      }
+
+      positions.needsUpdate = true;
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    function createSpicePatchGeometry(worldX, worldZ, radius, segments, seed, baseY, heightOffset, edgeWarp) {
+      const geometry = new THREE.CircleGeometry(radius, segments);
+      geometry.rotateX(-Math.PI / 2);
+
+      const positions = geometry.attributes.position;
+      for (let i = 0; i < positions.count; i += 1) {
+        let localX = positions.getX(i);
+        let localZ = positions.getZ(i);
+        const localRadius = Math.hypot(localX, localZ);
+
+        if (localRadius > 0.001) {
+          const angle = Math.atan2(localZ, localX);
+          const edge = localRadius / radius;
+          const warp = 1
+            + (edgeWarp * edge * (
+              (0.42 * Math.sin((angle * 2.6) + seed))
+              + (0.24 * Math.cos((angle * 4.9) - (seed * 1.4)))
+              + (0.12 * Math.sin((angle * 7.3) + (seed * 0.8)))
+            ));
+
+          localX *= warp;
+          localZ *= warp;
+        }
+
+        const worldY = sampleGroundHeight(worldX + localX, worldZ + localZ);
+        const ripple = (
+          0.028 * Math.sin((localX * 0.46) + (seed * 3.1))
+          + 0.02 * Math.cos((localZ * 0.37) - (seed * 4.7))
+        );
+
+        positions.setX(i, localX);
+        positions.setY(i, (worldY - baseY) + heightOffset + ripple);
+        positions.setZ(i, localZ);
+      }
+
+      positions.needsUpdate = true;
+      geometry.computeVertexNormals();
+      return geometry;
     }
 
     function sampleDuneHeight(x, z) {
@@ -728,6 +1013,18 @@
       );
       mesh.receiveShadow = CONFIG.shadowEnabled;
       scene.add(mesh);
+    }
+
+    function getStartSpawnPoint(out = tempWormTarget) {
+      out.set(startPlatform.x, startPlatform.topY, startPlatform.z);
+      return out;
+    }
+
+    function overlapsStartSpawn(worldX, worldZ, radius = 0) {
+      const dx = worldX - startPlatform.x;
+      const dz = worldZ - startPlatform.z;
+      const clearance = startPlatform.radius + CONFIG.playerSpawnClearance + radius;
+      return (dx * dx) + (dz * dz) < clearance * clearance;
     }
 
     function smoothstep(t) {
@@ -856,12 +1153,903 @@
         surfaceType: state.surfaceType,
         noiseLevel: state.noiseLevel,
         signLevel: state.signLevel,
+        shieldActive: isShieldOperational(),
         spiceCarry: state.spiceCarry,
         harvestActive: Boolean(state.harvestNode),
       }];
     }
 
-    function setWormTargetHotspot(target) {
+    function isShieldOperational() {
+      return state.shieldActive
+        && state.shieldCharge > 0.001
+        && !state.paused
+        && state.wormPhase === "idle";
+    }
+
+    function getShieldRechargeFactor() {
+      return THREE.MathUtils.clamp(
+        (sun.intensity - CONFIG.shieldRechargeSunFloor)
+          / Math.max(0.001, MAX_SUN_INTENSITY - CONFIG.shieldRechargeSunFloor),
+        0,
+        1
+      );
+    }
+
+    function getShieldHotspotStrength(surfaceType, noiseLevel, signLevel, shieldActive) {
+      if (!shieldActive || surfaceType !== "sand") return 0;
+      return THREE.MathUtils.clamp(
+        Math.max(signLevel, (noiseLevel * 0.65) + CONFIG.shieldHotspotBonus),
+        0,
+        1
+      );
+    }
+
+    function getWormThreatFactor(radius = CONFIG.wormWarningRadius) {
+      if (state.surfaceType !== "sand") return 0;
+      const dx = player.position.x - state.wormTarget.x;
+      const dz = player.position.z - state.wormTarget.z;
+      const distance = Math.hypot(dx, dz);
+      return THREE.MathUtils.clamp(1 - (distance / Math.max(1, radius)), 0, 1);
+    }
+
+    function getThumperHotspot() {
+      if (!thumper.active) return null;
+      const strength = THREE.MathUtils.lerp(
+        CONFIG.thumperAmbientStrength,
+        CONFIG.thumperPulseStrength,
+        thumper.signal
+      );
+      return {
+        position: thumper.group.position.clone(),
+        signLevel: strength,
+        strength,
+        source: "thumper",
+      };
+    }
+
+    function triggerThumperPulse(resetAge = true) {
+      if (resetAge) thumper.pulseAge = 0;
+      thumper.signal = 1;
+      thumper.flash = 1;
+      sfx.thumperPulse.play({
+        volumeMultiplier: resetAge ? 1 : 0.82,
+        playbackRate: resetAge ? 0.78 : 0.72,
+      });
+    }
+
+    function setThumperActive(active) {
+      thumper.active = active;
+      thumper.group.visible = active;
+      if (!active) {
+        thumper.timer = 0;
+        thumper.signal = 0;
+        thumper.flash = 0;
+        thumper.pulseAge = 0;
+      }
+    }
+
+    function findThumperPlacement(out = tempThumperPlacement) {
+      camera.getWorldDirection(tempThumperDirection);
+      tempThumperDirection.y = 0;
+      if (tempThumperDirection.lengthSq() < 0.0001) {
+        tempThumperDirection.set(0, 0, 1);
+      } else {
+        tempThumperDirection.normalize();
+      }
+
+      const distances = [3.5, 6.5, 9.5, CONFIG.thumperDeployReach];
+      for (const distance of distances) {
+        const x = player.position.x + (tempThumperDirection.x * distance);
+        const z = player.position.z + (tempThumperDirection.z * distance);
+        if (!isInsideWorldBounds(x, z, 12)) continue;
+        if (getSurfaceType(x, z) !== "sand") continue;
+        out.set(x, sampleGroundHeight(x, z), z);
+        return out;
+      }
+
+      if (state.surfaceType === "sand") {
+        out.set(
+          player.position.x,
+          sampleGroundHeight(player.position.x, player.position.z),
+          player.position.z
+        );
+        return out;
+      }
+
+      return null;
+    }
+
+    function tryDeployThumper() {
+      if (state.paused || !controls.isLocked || state.wormPhase !== "idle") return false;
+
+      const placement = findThumperPlacement();
+      if (!placement) {
+        broadcastWormRadio(
+          state.surfaceType === "sand"
+            ? "Thumper needs open sand ahead."
+            : "No sand ahead. Thumpers deploy onto open sand."
+        );
+        return false;
+      }
+
+      thumper.group.position.copy(placement);
+      thumper.group.rotation.y = randomRange(0, Math.PI * 2, rng);
+      thumper.timer = CONFIG.thumperDuration;
+      setThumperActive(true);
+      triggerThumperPulse();
+      emitNoiseImpulse(0.06);
+      return true;
+    }
+
+    function getKnifeStrikeDirection(out = tempKnifeDir) {
+      camera.getWorldDirection(out);
+      out.y = 0;
+      if (out.lengthSq() < 0.0001) {
+        out.set(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y));
+      } else {
+        out.normalize();
+      }
+      return out;
+    }
+
+	    function testKnifeHitTarget(targetPosition, targetRadius = 0) {
+	      const strikeDir = getKnifeStrikeDirection(tempKnifeDir);
+      const originX = player.position.x + (strikeDir.x * 0.9);
+      const originZ = player.position.z + (strikeDir.z * 0.9);
+      tempKnifeOffset.set(targetPosition.x - originX, 0, targetPosition.z - originZ);
+      const distance = tempKnifeOffset.length();
+      if (distance > CONFIG.knifeRange + targetRadius || distance < 0.001) return false;
+
+      tempKnifeOffset.divideScalar(distance);
+	      const arcThreshold = Math.cos(THREE.MathUtils.degToRad(CONFIG.knifeArcDegrees * 0.5));
+	      return tempKnifeOffset.dot(strikeDir) >= arcThreshold;
+	    }
+
+	    function resolveImpactDamage(baseDamage, { headshot = false } = {}) {
+	      const isCritical = !headshot && Math.random() < CONFIG.critChance;
+	      const multiplier = headshot
+	        ? CONFIG.headshotMultiplier
+	        : isCritical ? CONFIG.critMultiplier : 1;
+	      return {
+	        damage: Math.round(baseDamage * multiplier),
+	        isCritical: headshot || isCritical,
+	        headshot,
+	      };
+	    }
+
+	    function equipWeapon(weapon) {
+	      if (weapon !== "knife" && weapon !== "maula" && weapon !== "lasgun") return false;
+	      if (weapon === state.equippedWeapon) return false;
+	      if (state.maulaReloadTimer > 0) {
+	        broadcastWormRadio("Finish reloading before changing weapons.");
+	        return false;
+	      }
+
+	      state.equippedWeapon = weapon;
+	      state.knifeTimer = 0;
+	      state.knifeHasHit = false;
+	      state.maulaFireTimer = 0;
+	      state.lasgunFireTimer = 0;
+	      const knifeRoot = player.userData.knifeRoot;
+	      const maulaRoot = player.userData.maulaRoot;
+	      const lasgunRoot = player.userData.lasgunRoot;
+	      if (knifeRoot) knifeRoot.visible = weapon === "knife";
+	      if (maulaRoot) maulaRoot.visible = weapon === "maula";
+	      if (lasgunRoot) lasgunRoot.visible = weapon === "lasgun";
+	      if (weapon === "knife") {
+	        sfx.knifeDraw.play({ volumeMultiplier: 0.9 });
+	      }
+	      return true;
+	    }
+
+	    function tryPrimaryAttack() {
+	      if (state.equippedWeapon === "lasgun") {
+	        return tryLasgunAttack();
+	      }
+	      if (state.equippedWeapon === "maula") {
+	        return tryMaulaAttack();
+	      }
+	      return tryKnifeAttack();
+	    }
+
+	    function performKnifeHit() {
+	      let hit = false;
+
+	      if (
+	        thumper.active &&
+	        testKnifeHitTarget(thumper.group.position, CONFIG.knifeThumperHitRadius)
+	      ) {
+	        setThumperActive(false);
+	        broadcastWormRadio("Crysknife severed the thumper.");
+	        hit = true;
+	      }
+
+	      if (
+	        trainingDummy &&
+	        testKnifeHitTarget(trainingDummy.group.position, CONFIG.trainingDummyHitRadius)
+	      ) {
+	        hitTrainingDummy(1, resolveImpactDamage(CONFIG.knifeDamage).damage);
+	        hit = true;
+	      }
+
+	      if (hit) {
+	        sfx.hitSoft.play({ volumeMultiplier: 0.96, playbackRate: randomRange(0.94, 1.04) });
+	      }
+	      emitNoiseImpulse(hit ? CONFIG.knifeHitNoiseImpulse : CONFIG.knifeSwingNoiseImpulse);
+	      state.knifeHasHit = true;
+	    }
+
+	    function tryKnifeAttack() {
+      if (
+        state.paused ||
+        !controls.isLocked ||
+        state.wormPhase === "devour" ||
+        state.wormPhase === "recover"
+      ) {
+        return false;
+      }
+      if (state.knifeTimer > 0 || state.knifeCooldown > 0) return false;
+
+      cancelHarvest();
+      const strikeDir = getKnifeStrikeDirection(tempKnifeDir);
+      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
+      state.knifeTimer = CONFIG.knifeDuration;
+      state.knifeCooldown = CONFIG.knifeCooldown;
+	      state.knifeHasHit = false;
+	      sfx.knifeSwing.play({ volumeMultiplier: 0.92 });
+	      return true;
+	    }
+
+	    function segmentHitsSphere(start, end, center, radius) {
+	      tempProjectileDelta.subVectors(end, start);
+	      const lenSq = tempProjectileDelta.lengthSq();
+	      if (lenSq < 0.000001) {
+	        return start.distanceToSquared(center) <= radius * radius;
+	      }
+
+	      const t = THREE.MathUtils.clamp(
+	        tempProjectileClosest.subVectors(center, start).dot(tempProjectileDelta) / lenSq,
+	        0,
+	        1
+	      );
+	      tempProjectileClosest.copy(start).addScaledVector(tempProjectileDelta, t);
+	      return tempProjectileClosest.distanceToSquared(center) <= radius * radius;
+	    }
+
+	    function createMaulaProjectileMesh() {
+	      const group = new THREE.Group();
+	      const shaft = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.04, 0.05, 0.9, 6),
+	        new THREE.MeshStandardMaterial({
+	          color: 0xc8d2ca,
+	          roughness: 0.42,
+	          metalness: 0.08,
+	          flatShading: true,
+	        })
+	      );
+	      shaft.castShadow = CONFIG.shadowEnabled;
+	      shaft.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(shaft);
+
+	      const tip = new THREE.Mesh(
+	        new THREE.ConeGeometry(0.07, 0.22, 6),
+	        new THREE.MeshLambertMaterial({ color: 0x5c493a, flatShading: true })
+	      );
+	      tip.position.y = 0.56;
+	      tip.castShadow = CONFIG.shadowEnabled;
+	      group.add(tip);
+
+	      const finGeometry = new THREE.BoxGeometry(0.02, 0.18, 0.12);
+	      for (let i = 0; i < 3; i += 1) {
+	        const fin = new THREE.Mesh(
+	          finGeometry,
+	          new THREE.MeshLambertMaterial({ color: 0x7f9186, flatShading: true })
+	        );
+	        const angle = (i / 3) * Math.PI * 2;
+	        fin.position.set(Math.cos(angle) * 0.05, -0.34, Math.sin(angle) * 0.05);
+	        fin.rotation.y = angle;
+	        group.add(fin);
+	      }
+
+	      return group;
+	    }
+
+	    function spawnMaulaProjectile(strikeDir) {
+	      const muzzle = player.userData.maulaMuzzle;
+	      if (muzzle) {
+	        muzzle.getWorldPosition(tempMaulaOrigin);
+	      } else {
+	        tempMaulaOrigin.copy(player.position);
+	        tempMaulaOrigin.y += 3.3;
+	        tempMaulaOrigin.addScaledVector(strikeDir, 1.1);
+	      }
+
+	      const mesh = createMaulaProjectileMesh();
+	      mesh.position.copy(tempMaulaOrigin);
+	      scene.add(mesh);
+
+	      tempMaulaVelocity.copy(strikeDir).multiplyScalar(CONFIG.maulaProjectileSpeed);
+	      tempMaulaVelocity.y += CONFIG.maulaProjectileLift;
+	      mesh.quaternion.setFromUnitVectors(tempUp, tempMaulaVelocity.clone().normalize());
+
+	      maulaProjectiles.push({
+	        mesh,
+	        velocity: tempMaulaVelocity.clone(),
+	        age: 0,
+	      });
+	    }
+
+	    function tryMaulaAttack() {
+	      if (
+	        state.paused ||
+	        !controls.isLocked ||
+	        state.wormPhase === "devour" ||
+	        state.wormPhase === "recover"
+	      ) {
+	        return false;
+	      }
+	      if (state.maulaReloadTimer > 0) {
+	        broadcastWormRadio("Reloading maula dart.");
+	        return false;
+	      }
+	      if (!state.maulaLoaded) {
+	        broadcastWormRadio("Maula is empty.");
+	        return false;
+	      }
+	      if (state.maulaCooldown > 0) return false;
+
+	      cancelHarvest();
+	      const strikeDir = getKnifeStrikeDirection(tempKnifeDir);
+	      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
+	      spawnMaulaProjectile(strikeDir);
+	      state.maulaLoaded = false;
+	      state.maulaCooldown = CONFIG.maulaCooldown;
+	      state.maulaFireTimer = CONFIG.maulaFireDuration;
+	      if (state.maulaReserveAmmo > 0) {
+	        state.maulaReloadTimer = CONFIG.maulaReloadDuration;
+	      }
+	      sfx.maulaFire.play({ volumeMultiplier: 0.9 });
+	      emitNoiseImpulse(CONFIG.maulaFireNoiseImpulse);
+	      return true;
+	    }
+
+	    function updateKnifeCombat(delta) {
+	      if (state.knifeCooldown > 0) {
+	        state.knifeCooldown = Math.max(0, state.knifeCooldown - delta);
+	      }
+
+	      const armPivot = player.userData.rightArmPivot;
+	      const knifeRoot = player.userData.knifeRoot;
+	      if (!armPivot || !knifeRoot) return;
+	      knifeRoot.visible = state.equippedWeapon === "knife";
+	      if (state.equippedWeapon !== "knife") return;
+
+	      const idleRotX = 0.24;
+	      const idleRotY = 0.12;
+	      const idleRotZ = 0.58;
+	      let attackAlpha = 0;
+
+      if (state.knifeTimer > 0) {
+        attackAlpha = 1 - (state.knifeTimer / CONFIG.knifeDuration);
+        if (
+          !state.knifeHasHit &&
+          attackAlpha >= CONFIG.knifeHitStart &&
+          attackAlpha <= CONFIG.knifeHitEnd
+        ) {
+          performKnifeHit();
+        }
+
+        state.knifeTimer = Math.max(0, state.knifeTimer - delta);
+        if (state.knifeTimer === 0) {
+          state.knifeHasHit = false;
+        }
+      }
+
+      let swingAmount = 0;
+      if (attackAlpha > 0) {
+        if (attackAlpha < 0.32) {
+          swingAmount = attackAlpha / 0.32;
+        } else {
+          swingAmount = 1 - ((attackAlpha - 0.32) / 0.68);
+        }
+        swingAmount = THREE.MathUtils.clamp(swingAmount, 0, 1);
+	      }
+
+	      armPivot.rotation.x = THREE.MathUtils.lerp(idleRotX, -0.08, swingAmount);
+	      armPivot.rotation.y = THREE.MathUtils.lerp(idleRotY, -0.22, swingAmount);
+	      armPivot.rotation.z = THREE.MathUtils.lerp(idleRotZ, 0.1, swingAmount);
+
+	      knifeRoot.rotation.x = THREE.MathUtils.lerp(-0.04, 0.52, swingAmount);
+	      knifeRoot.rotation.y = THREE.MathUtils.lerp(-0.1, -0.2, swingAmount);
+	      knifeRoot.rotation.z = THREE.MathUtils.lerp(0.12, -0.42, swingAmount);
+	    }
+
+	    function hitMaulaProjectileTarget(result, headshot = false) {
+	      const intensity = headshot ? 1.45 : result.isCritical ? 1.2 : 1;
+	      hitTrainingDummy(intensity, result.damage);
+	      if (!trainingDummy.dead) {
+	        trainingDummy.poisonTimer = CONFIG.maulaPoisonDuration;
+	      }
+	      const suffix = headshot
+	        ? `Headshot for ${result.damage}.`
+	        : result.isCritical
+	          ? `Critical hit for ${result.damage}.`
+	          : `Maula hit for ${result.damage}.`;
+	      broadcastWormRadio(`${suffix} Poison applied.`);
+	      sfx.hitSoft.play({
+	        volumeMultiplier: headshot ? 1.05 : 0.84,
+	        playbackRate: headshot ? 0.92 : randomRange(0.98, 1.08),
+	      });
+	      emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	    }
+
+	    function updateMaulaCombat(delta) {
+	      if (state.maulaCooldown > 0) {
+	        state.maulaCooldown = Math.max(0, state.maulaCooldown - delta);
+	      }
+	      if (state.maulaFireTimer > 0) {
+	        state.maulaFireTimer = Math.max(0, state.maulaFireTimer - delta);
+	      }
+	      if (state.maulaReloadTimer > 0) {
+	        state.maulaReloadTimer = Math.max(0, state.maulaReloadTimer - delta);
+	        if (state.maulaReloadTimer === 0 && state.maulaReserveAmmo > 0) {
+	          state.maulaLoaded = true;
+	          state.maulaReserveAmmo = Math.max(0, state.maulaReserveAmmo - 1);
+	        }
+	      }
+
+	      const armPivot = player.userData.rightArmPivot;
+	      const maulaRoot = player.userData.maulaRoot;
+	      if (!armPivot || !maulaRoot) return;
+	      maulaRoot.visible = state.equippedWeapon === "maula";
+	      if (state.equippedWeapon !== "maula") return;
+
+	      let recoil = 0;
+	      if (state.maulaFireTimer > 0) {
+	        const fireProgress = 1 - (state.maulaFireTimer / CONFIG.maulaFireDuration);
+	        recoil = Math.sin(fireProgress * Math.PI);
+	      }
+	      const reloadBlend = state.maulaReloadTimer > 0
+	        ? 0.25 + (0.18 * Math.sin((1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * Math.PI))
+	        : 0;
+
+	      armPivot.rotation.x = THREE.MathUtils.lerp(0.14, -0.1 - reloadBlend, recoil);
+	      armPivot.rotation.y = THREE.MathUtils.lerp(-0.04, -0.18, recoil);
+	      armPivot.rotation.z = THREE.MathUtils.lerp(0.26 + reloadBlend, 0.08, recoil);
+
+	      maulaRoot.rotation.x = THREE.MathUtils.lerp(0.26 + reloadBlend, -0.06, recoil);
+	      maulaRoot.rotation.y = THREE.MathUtils.lerp(-0.02, -0.08, recoil);
+	      maulaRoot.rotation.z = THREE.MathUtils.lerp(0.22, -0.08, recoil);
+	    }
+
+	    function updateMaulaProjectiles(delta) {
+	      for (let i = maulaProjectiles.length - 1; i >= 0; i -= 1) {
+	        const projectile = maulaProjectiles[i];
+	        tempProjectileStart.copy(projectile.mesh.position);
+	        projectile.velocity.y -= CONFIG.maulaProjectileGravity * delta;
+	        projectile.mesh.position.addScaledVector(projectile.velocity, delta);
+	        tempProjectileEnd.copy(projectile.mesh.position);
+	        projectile.age += delta;
+
+	        if (projectile.velocity.lengthSq() > 0.0001) {
+	          projectile.mesh.quaternion.setFromUnitVectors(
+	            tempUp,
+	            tempProjectileDelta.copy(projectile.velocity).normalize()
+	          );
+	        }
+
+	        let hit = false;
+	        if (thumper.active && segmentHitsSphere(
+	          tempProjectileStart,
+	          tempProjectileEnd,
+	          thumper.group.position,
+	          CONFIG.knifeThumperHitRadius + CONFIG.maulaProjectileRadius
+	        )) {
+	          setThumperActive(false);
+	          broadcastWormRadio("Maula dart wrecked the thumper.");
+	          sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
+	          emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	          hit = true;
+	        }
+
+	        if (!hit && trainingDummy) {
+	          trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
+	          if (segmentHitsSphere(
+	            tempProjectileStart,
+	            tempProjectileEnd,
+	            tempProjectileCenter,
+	            CONFIG.trainingDummyHeadRadius + CONFIG.maulaProjectileRadius
+	          )) {
+	            hitMaulaProjectileTarget(resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true }), true);
+	            hit = true;
+	          } else {
+	            trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
+	            if (segmentHitsSphere(
+	              tempProjectileStart,
+	              tempProjectileEnd,
+	              tempProjectileCenter,
+	              CONFIG.trainingDummyHitRadius + CONFIG.maulaProjectileRadius
+	            )) {
+	              hitMaulaProjectileTarget(resolveImpactDamage(CONFIG.maulaImpactDamage));
+	              hit = true;
+	            }
+	          }
+	        }
+
+	        const outOfBounds = !isInsideWorldBounds(projectile.mesh.position.x, projectile.mesh.position.z, 4);
+	        if (hit || projectile.age >= CONFIG.maulaProjectileLifetime || outOfBounds) {
+	          scene.remove(projectile.mesh);
+	          maulaProjectiles.splice(i, 1);
+	        }
+	      }
+	    }
+
+	    function getLasgunOrigin(out = tempMaulaOrigin) {
+	      const muzzle = player.userData.lasgunMuzzle;
+	      if (muzzle) {
+	        muzzle.getWorldPosition(out);
+	      } else {
+	        out.copy(player.position);
+	        out.y += 3.4;
+	      }
+	      return out;
+	    }
+
+	    function showLasgunBeam(start, end) {
+	      state.lasgunBeamStart.copy(start);
+	      state.lasgunBeamEnd.copy(end);
+	      state.lasgunBeamTimer = CONFIG.lasgunBeamDuration;
+	      lasgunBeam.group.visible = true;
+	    }
+
+	    function fireLasgun(strikeDirIn) {
+	      camera.getWorldDirection(tempKnifeDir);
+	      const strikeDir = tempKnifeDir;
+	      const origin = getLasgunOrigin(tempMaulaOrigin);
+	      let maxDistance = CONFIG.lasgunRange;
+	      cameraRaycaster.set(origin, strikeDir);
+	      const rockHit = cameraRaycaster
+	        .intersectObject(rockMesh, true)
+	        .find((intersection) => intersection.distance > 0.35);
+	      if (rockHit && rockHit.distance < maxDistance) {
+	        maxDistance = rockHit.distance;
+	      }
+
+	      tempLasgunEnd.copy(origin).addScaledVector(strikeDir, maxDistance);
+	      let bestDistance = maxDistance + 1;
+	      let bestType = null;
+	      let bestHeadshot = false;
+
+	      if (
+	        thumper.active &&
+	        segmentHitsSphere(origin, tempLasgunEnd, thumper.group.position, CONFIG.knifeThumperHitRadius + 0.18)
+	      ) {
+	        const thumperDistance = origin.distanceTo(thumper.group.position);
+	        if (thumperDistance < bestDistance) {
+	          bestDistance = thumperDistance;
+	          bestType = "thumper";
+	        }
+	      }
+
+	      if (trainingDummy) {
+	        trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
+	        if (
+	          segmentHitsSphere(
+	            origin,
+	            tempLasgunEnd,
+	            tempProjectileCenter,
+	            CONFIG.trainingDummyHeadRadius + 0.08
+	          )
+	        ) {
+	          const headDistance = origin.distanceTo(tempProjectileCenter);
+	          if (headDistance < bestDistance) {
+	            bestDistance = headDistance;
+	            bestType = "dummy";
+	            bestHeadshot = true;
+	          }
+	        }
+
+	        trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
+	        if (
+	          segmentHitsSphere(
+	            origin,
+	            tempLasgunEnd,
+	            tempProjectileCenter,
+	            CONFIG.trainingDummyHitRadius + 0.1
+	          )
+	        ) {
+	          const bodyDistance = origin.distanceTo(tempProjectileCenter);
+	          if (bodyDistance < bestDistance) {
+	            bestDistance = bodyDistance;
+	            bestType = "dummy";
+	            bestHeadshot = false;
+	          }
+	        }
+	      }
+
+	      if (bestType) {
+	        tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance);
+	        if (bestType === "thumper") {
+	          setThumperActive(false);
+	          broadcastWormRadio("Lasgun beam sheared through the thumper.");
+	        } else {
+	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
+	          hitTrainingDummy(bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
+	          const hitLabel = bestHeadshot
+	            ? `Lasgun headshot for ${result.damage}.`
+	            : result.isCritical
+	              ? `Lasgun critical hit for ${result.damage}.`
+	              : `Lasgun hit for ${result.damage}.`;
+	          broadcastWormRadio(hitLabel);
+	        }
+	        showLasgunBeam(origin, tempLasgunImpact);
+	      } else {
+	        showLasgunBeam(origin, tempLasgunEnd);
+	      }
+	    }
+
+	    function tryLasgunAttack() {
+	      if (
+	        state.paused ||
+	        !controls.isLocked ||
+	        state.wormPhase === "devour" ||
+	        state.wormPhase === "recover"
+	      ) {
+	        return false;
+	      }
+	      if (state.lasgunCharge <= 0.01) {
+	        broadcastWormRadio("Lasgun power depleted.");
+	        return false;
+	      }
+	      if (state.lasgunFiring) return false;
+	      cancelHarvest();
+	      state.lasgunFiring = true;
+	      sfx.lasgunFire.play({ volumeMultiplier: 0.92 });
+	      return true;
+	    }
+
+	    function toggleShieldVisual() {
+	      if (state.shieldActive) {
+	        state.shieldActive = false;
+	        state.shieldFlash = 1;
+	        broadcastWormRadio("Holtzman shield disengaged.");
+	        sfx.shieldToggle.play({ volumeMultiplier: 0.82, playbackRate: 0.86 });
+	        return true;
+	      }
+	      if (state.shieldCharge < CONFIG.shieldMinActivateCharge) {
+	        state.shieldFlash = Math.max(state.shieldFlash, 0.4);
+	        broadcastWormRadio("Shield battery too low.");
+	        return false;
+	      }
+	      state.shieldActive = true;
+	      state.shieldFlash = 1;
+	      broadcastWormRadio("Holtzman shield engaged.");
+	      sfx.shieldToggle.play({ volumeMultiplier: 1, playbackRate: 1.04 });
+	      return true;
+	    }
+
+	    function updateShieldSystem(delta) {
+	      if (isShieldOperational()) {
+	        state.shieldCharge = Math.max(0, state.shieldCharge - (delta * CONFIG.shieldDrainRate));
+	        if (state.shieldCharge <= 0.001) {
+	          state.shieldCharge = 0;
+	          state.shieldActive = false;
+	          state.shieldFlash = 1;
+	          broadcastWormRadio("Holtzman shield depleted.");
+	          sfx.shieldToggle.play({ volumeMultiplier: 0.9, playbackRate: 0.8 });
+	        }
+	        return;
+	      }
+
+	      if (state.paused || state.shieldActive) return;
+
+	      const rechargeFactor = getShieldRechargeFactor();
+	      if (rechargeFactor <= 0) return;
+
+	      state.shieldCharge = Math.min(
+	        1,
+	        state.shieldCharge + (delta * CONFIG.shieldRechargeRate * rechargeFactor)
+	      );
+	    }
+
+	    function updateLasgunBeam(delta) {
+	      // Lasgun charge recharge when not firing
+	      if (!state.lasgunFiring) {
+	        state.lasgunCharge = Math.min(1, state.lasgunCharge + delta * CONFIG.lasgunRechargeRate);
+	      }
+
+	      if (!state.lasgunFiring) return;
+
+	      // Stop conditions
+	      if (state.paused || !controls.isLocked || state.equippedWeapon !== "lasgun" ||
+	          state.wormPhase === "devour" || state.wormPhase === "recover") {
+	        state.lasgunFiring = false;
+	        return;
+	      }
+
+	      // Drain power
+	      state.lasgunCharge = Math.max(0, state.lasgunCharge - delta * CONFIG.lasgunDrainRate);
+	      if (state.lasgunCharge <= 0) {
+	        state.lasgunFiring = false;
+	        broadcastWormRadio("Lasgun power depleted.");
+	        return;
+	      }
+
+	      camera.getWorldDirection(tempKnifeDir);
+	      const strikeDir = tempKnifeDir;
+	      // Rotate player body to face horizontal aim direction
+	      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
+	      const origin = getLasgunOrigin(tempMaulaOrigin);
+
+	      let maxDistance = CONFIG.lasgunRange;
+	      cameraRaycaster.set(origin, strikeDir);
+	      const rockHit = cameraRaycaster.intersectObject(rockMesh, true).find(i => i.distance > 0.35);
+	      if (rockHit && rockHit.distance < maxDistance) maxDistance = rockHit.distance;
+
+	      tempLasgunEnd.copy(origin).addScaledVector(strikeDir, maxDistance);
+	      let bestDistance = maxDistance + 1;
+	      let bestType = null;
+	      let bestHeadshot = false;
+
+	      if (thumper.active && segmentHitsSphere(origin, tempLasgunEnd, thumper.group.position, CONFIG.knifeThumperHitRadius + 0.18)) {
+	        const d = origin.distanceTo(thumper.group.position);
+	        if (d < bestDistance) { bestDistance = d; bestType = "thumper"; bestHeadshot = false; }
+	      }
+
+	      if (trainingDummy && !trainingDummy.dead) {
+	        trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
+	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+	          const d = origin.distanceTo(tempProjectileCenter);
+	          if (d < bestDistance) { bestDistance = d; bestType = "dummy"; bestHeadshot = true; }
+	        }
+	        trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
+	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+	          const d = origin.distanceTo(tempProjectileCenter);
+	          if (d < bestDistance && bestType !== "dummy") { bestDistance = d; bestType = "dummy"; bestHeadshot = false; }
+	        }
+	      }
+
+	      if (shieldedDummy && !shieldedDummy.dead) {
+	        shieldedDummy.headDot.getWorldPosition(tempProjectileCenter);
+	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+	          const d = origin.distanceTo(tempProjectileCenter);
+	          if (d < bestDistance) { bestDistance = d; bestType = "shielded"; bestHeadshot = true; }
+	        }
+	        shieldedDummy.targetPivot.getWorldPosition(tempProjectileCenter);
+	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+	          const d = origin.distanceTo(tempProjectileCenter);
+	          if (d < bestDistance && bestType !== "shielded") { bestDistance = d; bestType = "shielded"; bestHeadshot = false; }
+	        }
+	      }
+
+	      const impactPoint = bestType
+	        ? tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance)
+	        : tempLasgunEnd;
+
+	      if (bestType === "thumper") {
+	        setThumperActive(false);
+	        broadcastWormRadio("Lasgun beam sheared through the thumper.");
+	      } else if (bestType === "dummy") {
+	        hitTrainingDummy(0.35, CONFIG.lasgunDPS * delta);
+	      } else if (bestType === "shielded") {
+	        shieldedDummy.shieldHitFlash = 1.0;
+	        shieldedDummy.shieldMessageTimer = (shieldedDummy.shieldMessageTimer || 0) - delta;
+	        if (shieldedDummy.shieldMessageTimer <= 0) {
+	          broadcastWormRadio("Holtzman shield deflects the beam.");
+	          shieldedDummy.shieldMessageTimer = 2.5;
+	        }
+	      }
+
+	      state.lasgunBeamStart.copy(origin);
+	      state.lasgunBeamEnd.copy(impactPoint);
+	      state.lasgunBeamTimer = CONFIG.lasgunBeamDuration + delta;
+
+	      // Noise at intervals
+	      state.lasgunNoiseTimer = Math.max(0, state.lasgunNoiseTimer - delta);
+	      if (state.lasgunNoiseTimer <= 0) {
+	        emitNoiseImpulse(CONFIG.lasgunFireNoiseImpulse * 0.5);
+	        state.lasgunNoiseTimer = 0.28;
+	      }
+
+	      state.lasgunFireTimer = CONFIG.lasgunFireDuration * 0.5;
+	    }
+
+	    function updateLasgunCombat(delta) {
+	      if (state.lasgunCooldown > 0) {
+	        state.lasgunCooldown = Math.max(0, state.lasgunCooldown - delta);
+	      }
+	      if (state.lasgunFireTimer > 0) {
+	        state.lasgunFireTimer = Math.max(0, state.lasgunFireTimer - delta);
+	      }
+	      if (state.lasgunBeamTimer > 0) {
+	        state.lasgunBeamTimer = Math.max(0, state.lasgunBeamTimer - delta);
+	      }
+
+	      const beamVisible = state.lasgunBeamTimer > 0;
+	      lasgunBeam.group.visible = beamVisible;
+	      if (beamVisible) {
+	        tempProjectileDelta.subVectors(state.lasgunBeamEnd, state.lasgunBeamStart);
+	        const length = Math.max(0.001, tempProjectileDelta.length());
+	        lasgunBeam.group.position.copy(state.lasgunBeamStart);
+	        lasgunBeam.group.quaternion.setFromUnitVectors(tempUp, tempProjectileDelta.normalize());
+	        lasgunBeam.core.position.set(0, length * 0.5, 0);
+	        lasgunBeam.glow.position.set(0, length * 0.5, 0);
+	        lasgunBeam.core.scale.set(1, length, 1);
+	        lasgunBeam.glow.scale.set(1, length, 1);
+	        lasgunBeam.flash.position.set(0, 0, 0);
+	        const alpha = state.lasgunFiring ? 1.0 : (state.lasgunBeamTimer / CONFIG.lasgunBeamDuration);
+	        lasgunBeam.core.material.opacity = 0.2 + (alpha * 0.72);
+	        lasgunBeam.glow.material.opacity = 0.08 + (alpha * 0.24);
+	        lasgunBeam.flash.material.opacity = 0.18 + (alpha * 0.5);
+	      }
+
+	      const armPivot = player.userData.rightArmPivot;
+	      const lasgunRoot = player.userData.lasgunRoot;
+	      if (!armPivot || !lasgunRoot) return;
+	      lasgunRoot.visible = state.equippedWeapon === "lasgun";
+	      if (state.equippedWeapon !== "lasgun") return;
+
+	      let recoil = 0;
+	      if (state.lasgunFiring) {
+	        recoil = 0.22;
+	      } else if (state.lasgunFireTimer > 0) {
+	        const fireProgress = 1 - (state.lasgunFireTimer / CONFIG.lasgunFireDuration);
+	        recoil = Math.sin(fireProgress * Math.PI);
+	      }
+
+	      armPivot.rotation.x = THREE.MathUtils.lerp(0.12, -0.18, recoil);
+	      armPivot.rotation.y = THREE.MathUtils.lerp(-0.02, -0.12, recoil);
+	      armPivot.rotation.z = THREE.MathUtils.lerp(0.24, 0.08, recoil);
+
+	      lasgunRoot.rotation.x = THREE.MathUtils.lerp(1.38, 1.18, recoil);
+	      lasgunRoot.rotation.y = THREE.MathUtils.lerp(-0.04, -0.10, recoil);
+	      lasgunRoot.rotation.z = THREE.MathUtils.lerp(0.14, 0.02, recoil);
+	    }
+
+	    function updateShieldVisual(delta) {
+	      const shield = player.userData.shieldVisual;
+	      if (!shield) return;
+
+	      const effectiveActive = isShieldOperational();
+	      state.shieldAlpha = THREE.MathUtils.damp(
+	        state.shieldAlpha,
+	        effectiveActive ? 1 : 0,
+	        CONFIG.shieldTransitionSpeed,
+	        delta
+	      );
+	      state.shieldFlash = Math.max(0, state.shieldFlash - (delta * CONFIG.shieldFlashDecay));
+
+	      const visibleStrength = Math.max(state.shieldAlpha, state.shieldFlash * 0.75);
+	      shield.group.visible = visibleStrength > 0.01;
+	      if (!shield.group.visible) return;
+
+	      const pulse = 0.5 + (0.5 * Math.sin(state.elapsed * CONFIG.shieldPulseSpeed));
+	      const baseScale = 1 + (state.shieldAlpha * 0.015) + (pulse * 0.012);
+	      const flashScale = 1 + (state.shieldFlash * 0.18);
+	      const invPlayerScaleY = 1 / Math.max(0.001, player.scale.y);
+	      shield.group.position.y = THREE.MathUtils.lerp(2.22, 1.94, player.userData.crouchAmount);
+	      shield.group.scale.set(baseScale, baseScale * invPlayerScaleY, baseScale);
+
+	      shield.core.material.opacity = 0.015 + (state.shieldAlpha * 0.12) + (pulse * 0.03);
+	      shield.halo.material.opacity = 0.01 + (state.shieldAlpha * 0.09) + (state.shieldFlash * 0.12);
+	      shield.lattice.material.opacity = 0.02 + (state.shieldAlpha * 0.12) + (pulse * 0.025);
+
+	      shield.ringA.material.opacity = 0.04 + (state.shieldAlpha * 0.18);
+	      shield.ringB.material.opacity = 0.03 + (state.shieldAlpha * 0.14) + (pulse * 0.03);
+	      shield.ringA.rotation.z += delta * (0.65 + (state.shieldAlpha * 0.8));
+	      shield.ringB.rotation.y -= delta * (0.52 + (state.shieldAlpha * 0.7));
+
+	      sfx.shieldHum.setLevel(state.shieldAlpha * 0.9);
+
+	      shield.flashShell.material.opacity = state.shieldFlash * 0.26;
+	      shield.flashShell.scale.set(
+	        1.6 * flashScale,
+	        2.26 * flashScale,
+	        1.46 * flashScale
+	      );
+	    }
+
+	    function setWormTargetHotspot(target) {
       if (!target) {
         worm.targetHotspot = null;
         return;
@@ -875,6 +2063,30 @@
       worm.targetHotspot.y = sampleGroundHeight(worm.targetHotspot.x, worm.targetHotspot.z);
     }
 
+    function trackWormTargetHotspot(target, delta) {
+      if (!target) return;
+
+      if (!worm.targetHotspot) {
+        worm.targetHotspot = new THREE.Vector3();
+        worm.targetHotspot.copy(target);
+      } else {
+        worm.targetHotspot.x = THREE.MathUtils.damp(
+          worm.targetHotspot.x,
+          target.x,
+          CONFIG.wormHotspotTrackSharpness,
+          delta
+        );
+        worm.targetHotspot.z = THREE.MathUtils.damp(
+          worm.targetHotspot.z,
+          target.z,
+          CONFIG.wormHotspotTrackSharpness,
+          delta
+        );
+      }
+
+      worm.targetHotspot.y = sampleGroundHeight(worm.targetHotspot.x, worm.targetHotspot.z);
+    }
+
     function broadcastWormRadio(message) {
       state.wormRadioMessage = message;
       state.wormRadioTimer = CONFIG.wormRadioMessageDuration;
@@ -884,6 +2096,147 @@
       state.noiseImpulse = THREE.MathUtils.clamp(state.noiseImpulse + amount, 0, 1);
     }
 
+    function enableAudio() {
+      audioState.enabled = true;
+    }
+
+    function createAudioEffect(sources, options = {}) {
+      const {
+        volume = 1,
+        poolSize = 2,
+        playbackRateMin = 1,
+        playbackRateMax = 1,
+        loop = false,
+      } = options;
+      const sourceList = Array.isArray(sources) ? sources : [sources];
+
+      if (loop) {
+        const audio = new Audio(sourceList[0]);
+        audio.preload = "auto";
+        audio.loop = true;
+        return {
+          setLevel(level = 0) {
+            if (!audioState.enabled || level <= 0.01) {
+              audio.pause();
+              audio.currentTime = 0;
+              return;
+            }
+            audio.volume = THREE.MathUtils.clamp(volume * level * CONFIG.sfxMasterVolume, 0, 1);
+            if (audio.paused) {
+              const playPromise = audio.play();
+              if (playPromise && playPromise.catch) playPromise.catch(() => {});
+            }
+          },
+          stop() {
+            audio.pause();
+            audio.currentTime = 0;
+          },
+        };
+      }
+
+      const pool = [];
+      for (const source of sourceList) {
+        for (let i = 0; i < poolSize; i += 1) {
+          const audio = new Audio(source);
+          audio.preload = "auto";
+          pool.push(audio);
+        }
+      }
+      let cursor = 0;
+
+      return {
+        play({ volumeMultiplier = 1, playbackRate } = {}) {
+          if (!audioState.enabled || pool.length === 0) return null;
+          const audio = pool[cursor % pool.length];
+          cursor += 1;
+          audio.pause();
+          audio.currentTime = 0;
+          audio.volume = THREE.MathUtils.clamp(volume * volumeMultiplier * CONFIG.sfxMasterVolume, 0, 1);
+          audio.playbackRate = playbackRate ?? randomRange(playbackRateMin, playbackRateMax);
+          const playPromise = audio.play();
+          if (playPromise && playPromise.catch) playPromise.catch(() => {});
+          return audio;
+        },
+        stop() {
+          for (const audio of pool) {
+            audio.pause();
+            audio.currentTime = 0;
+          }
+        },
+      };
+    }
+
+    function createSfxBank() {
+      return {
+        sandStep: createAudioEffect([
+          "assets/audio/kenney/footsteps/footstep00.ogg",
+          "assets/audio/kenney/footsteps/footstep01.ogg",
+          "assets/audio/kenney/footsteps/footstep02.ogg",
+          "assets/audio/kenney/footsteps/footstep03.ogg",
+        ], { volume: 0.42, poolSize: 2, playbackRateMin: 0.94, playbackRateMax: 1.06 }),
+        rockStep: createAudioEffect([
+          "assets/audio/kenney/weapons/footstep_concrete_000.ogg",
+          "assets/audio/kenney/weapons/footstep_concrete_001.ogg",
+          "assets/audio/kenney/weapons/footstep_concrete_002.ogg",
+        ], { volume: 0.36, poolSize: 2, playbackRateMin: 0.96, playbackRateMax: 1.04 }),
+        knifeDraw: createAudioEffect("assets/audio/kenney/weapons/drawKnife1.ogg", { volume: 0.34, poolSize: 2 }),
+        knifeSwing: createAudioEffect("assets/audio/kenney/weapons/knifeSlice.ogg", { volume: 0.36, poolSize: 2, playbackRateMin: 0.96, playbackRateMax: 1.05 }),
+        hitSoft: createAudioEffect([
+          "assets/audio/kenney/weapons/impactPunch_medium_000.ogg",
+          "assets/audio/kenney/weapons/impactPunch_medium_001.ogg",
+        ], { volume: 0.42, poolSize: 2, playbackRateMin: 0.94, playbackRateMax: 1.06 }),
+        maulaFire: createAudioEffect("assets/audio/kenney/weapons/laserSmall_001.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 0.98 }),
+        lasgunFire: createAudioEffect("assets/audio/kenney/weapons/laserLarge_002.ogg", { volume: 0.44, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 1.02 }),
+        shieldToggle: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.82, playbackRateMax: 1.04 }),
+        shieldHum: createAudioEffect("assets/audio/kenney/shield/forceField_001.ogg", { volume: 0.26, loop: true }),
+        thumperPulse: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.3, poolSize: 2, playbackRateMin: 0.68, playbackRateMax: 0.82 }),
+        wormWarning: createAudioEffect("assets/audio/kenney/worm/spaceEngineLow_001.ogg", { volume: 0.32, poolSize: 1, playbackRateMin: 0.9, playbackRateMax: 0.96 }),
+        wormBreach: createAudioEffect("assets/audio/kenney/worm/lowFrequency_explosion_000.ogg", { volume: 0.52, poolSize: 1, playbackRateMin: 0.82, playbackRateMax: 0.9 }),
+        wormDevour: createAudioEffect("assets/audio/kenney/worm/explosionCrunch_001.ogg", { volume: 0.58, poolSize: 1, playbackRateMin: 0.82, playbackRateMax: 0.92 }),
+      };
+    }
+
+    function playSurfaceFootstep(surfaceType, volumeMultiplier = 1, playbackRate = 1) {
+      const effect = surfaceType === "rock" ? sfx.rockStep : sfx.sandStep;
+      effect.play({ volumeMultiplier, playbackRate });
+    }
+
+    function updateFootstepAudio(delta, horizSpeed, crouchActive, runActive) {
+      if (
+        !audioState.enabled ||
+        state.paused ||
+        !controls.isLocked ||
+        !player.userData.grounded ||
+        state.wormPhase !== "idle" ||
+        horizSpeed < CONFIG.footstepMinSpeed
+      ) {
+        audioState.footstepTimer = 0;
+        return;
+      }
+
+      const baseInterval = crouchActive
+        ? CONFIG.footstepCrouchInterval
+        : runActive
+          ? CONFIG.footstepRunInterval
+          : CONFIG.footstepWalkInterval;
+      const speedRatio = THREE.MathUtils.clamp(
+        horizSpeed / (CONFIG.playerSpeed * CONFIG.playerRunMultiplier),
+        0,
+        1
+      );
+
+      audioState.footstepTimer = Math.max(0, audioState.footstepTimer - delta);
+      if (audioState.footstepTimer > 0) return;
+
+      const surfaceType = getSurfaceType(player.position.x, player.position.z);
+      playSurfaceFootstep(
+        surfaceType,
+        THREE.MathUtils.lerp(0.62, 1.02, speedRatio),
+        randomRange(0.94, 1.05)
+      );
+      audioState.footstepTimer = THREE.MathUtils.lerp(baseInterval * 1.12, baseInterval * 0.72, speedRatio);
+    }
+
     function getNoiseStatus() {
       if (state.wormRecoveryTimer > 0) {
         return "Devoured. Regroup from rock.";
@@ -891,23 +2244,44 @@
       if (state.wormPhase === "devour") {
         return "Devoured by Shai-Hulud.";
       }
+      if (state.wormPhase === "recover") {
+        return "Shai-Hulud rises from the dunes.";
+      }
       if (state.wormPhase === "warning") {
-        return "Worm sign detected. Move off the marker.";
+        if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
+          return "Worm sign detected. Move off the marker.";
+        }
+        return "Worm warning marked in the distance.";
       }
       if (state.wormPhase === "breach") {
-        return "Breach imminent. Clear the impact zone.";
+        if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
+          return "Breach imminent. Clear the impact zone.";
+        }
+        return "The worm is breaching away from your position.";
       }
-      if (state.harvestNode) {
-        return "Harvesting spice. Stay still and keep the dunes quiet.";
-      }
-      if (state.wormRadioTimer > 0) {
-        return state.wormRadioMessage;
-      }
+	      if (isShieldOperational()) {
+	        if (state.surfaceType === "sand") {
+	          return "Shield hum is carrying through the sand. Worms can lock onto it.";
+	        }
+	        return "Shield is active. Rock dampens the hum, but open sand would broadcast it.";
+	      }
+	      if (state.harvestNode) {
+	        return "Harvesting spice. Stay still and keep the dunes quiet.";
+	      }
+	      if (state.maulaReloadTimer > 0) {
+	        return "Reloading maula dart. You can move, but not switch or harvest.";
+	      }
+	      if (state.wormRadioTimer > 0) {
+	        return state.wormRadioMessage;
+	      }
       if (worm.state === "hunting") {
         return "Deep vibration below the sand. The worm is hunting this sector.";
       }
       if (worm.state === "inbound") {
         return "Radio: worm sign. Contact inbound.";
+      }
+      if (thumper.active) {
+        return "Thumper pulsing on the sand. The worm can follow it.";
       }
       if (state.surfaceType === "rock") {
         if (state.signLevel > 0.45) return "Rock is slowly bleeding off heavy worm sign.";
@@ -925,6 +2299,7 @@
     function updateNoiseSystem(delta, movementState) {
       const { horizSpeed, crouchActive, runActive, slopeFactor = 0 } = movementState;
       const surfaceType = getSurfaceType(player.position.x, player.position.z);
+      const shieldOperational = isShieldOperational();
       const speedRatio = THREE.MathUtils.clamp(horizSpeed / CONFIG.playerSpeed, 0, 1);
       const stanceMultiplier = crouchActive
         ? CONFIG.noiseCrouchMultiplier
@@ -935,11 +2310,15 @@
       const surfaceMultiplier = surfaceType === "rock" ? CONFIG.noiseRockMultiplier : 1;
       const carryNoise = state.spiceCarry > 0 ? CONFIG.spiceCarryNoiseBonus * surfaceMultiplier : 0;
       const harvestNoise = state.harvestNode ? CONFIG.spiceHarvestNoiseBonus : 0;
+      const shieldNoise = shieldOperational
+        ? (surfaceType === "sand" ? CONFIG.shieldNoiseBonusSand : CONFIG.shieldNoiseBonusRock)
+        : 0;
       // Struggling up a steep sand dune vibrates the ground more
       const slopeNoise = surfaceType === "sand" ? slopeFactor * CONFIG.slopeNoiseBoost * speedRatio : 0;
       const movementNoise = (speedRatio * stanceMultiplier * groundedMultiplier * surfaceMultiplier)
         + carryNoise
         + harvestNoise
+        + shieldNoise
         + slopeNoise;
       const noiseTarget = THREE.MathUtils.clamp(movementNoise + state.noiseImpulse, 0, 1);
       const noiseResponse = noiseTarget > state.noiseLevel ? CONFIG.noiseRiseRate : CONFIG.noiseDecayRate;
@@ -956,7 +2335,10 @@
       if (surfaceType === "rock") {
         state.signLevel = THREE.MathUtils.damp(state.signLevel, 0, CONFIG.noiseSignRockDecayRate, delta);
       } else {
-        const signTarget = Math.pow(signExposure, CONFIG.noiseSignExposureCurve);
+        const signTarget = Math.max(
+          Math.pow(signExposure, CONFIG.noiseSignExposureCurve),
+          shieldOperational ? CONFIG.shieldSignFloorSand : 0
+        );
         const signResponse = signTarget > state.signLevel
           ? CONFIG.noiseSignRiseRate
           : CONFIG.noiseSignDecayRate;
@@ -983,17 +2365,22 @@
       state.harvestTimer = 0;
     }
 
-    function getSpicePrompt(canHarvest) {
-      if (state.wormPhase === "devour") return "The worm has you. Spice is lost.";
-      if (state.harvestNode) {
-        const progress = THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1);
-        return `Harvesting spice: ${Math.round(progress * 100)}%`;
+	    function getSpicePrompt(canHarvest) {
+	      if (state.wormPhase === "devour" || state.wormPhase === "recover") {
+	        return "The worm has you. Spice is lost.";
+	      }
+	      if (state.maulaReloadTimer > 0 && canHarvest && state.equippedWeapon === "maula") {
+	        return "Reloading maula. You cannot harvest yet.";
+	      }
+	      if (state.harvestNode) {
+	        const progress = THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1);
+	        return `Harvesting spice patch: ${Math.round(progress * 100)}%`;
       }
       if (state.spiceCarry > 0) {
         return "Carry spice back to any rock outcropping.";
       }
-      if (canHarvest) return "Hold E to harvest spice.";
-      return "Leave rock and find spice in the open sand.";
+      if (canHarvest) return "Stand in the spice patch and hold E to harvest.";
+      return "Leave rock and find a spice patch in the open sand.";
     }
 
     function updateSpiceObjective(delta) {
@@ -1018,15 +2405,12 @@
         }
 
         const pulse = 0.5 + (0.5 * Math.sin(pulseTime + node.phase));
-        node.glow.material.opacity = 0.22 + (pulse * 0.18);
-        node.glow.scale.setScalar(1.2 + (pulse * 0.55));
-        node.core.material.opacity = 0.68 + (pulse * 0.22);
-        node.core.position.y = 2.0 + (pulse * 0.45);
-        node.core.rotation.y += delta * 1.9;
-
-        for (const crystal of node.crystals) {
-          crystal.mesh.position.y = crystal.baseY + (Math.sin((pulseTime * 1.6) + crystal.phase) * crystal.bob);
-          crystal.mesh.rotation.y += delta * 0.6;
+        node.haze.material.opacity = 0.18 + (pulse * 0.12);
+        node.inner.material.opacity = 0.12 + (pulse * 0.1);
+        node.sparkles.material.opacity = 0.24 + (pulse * 0.28);
+        node.sparkles.rotation.y += delta * 0.06;
+        for (let i = 0; i < node.pockets.length; i += 1) {
+          node.pockets[i].material.opacity = 0.1 + (pulse * (0.12 + (i * 0.015)));
         }
 
         if (state.spiceCarry > 0) continue;
@@ -1060,8 +2444,12 @@
           } else {
             state.harvestTimer += delta;
             const harvestPulse = 0.5 + (0.5 * Math.sin((state.elapsed * 2.4) + activeNode.phase));
-            activeNode.glow.material.opacity = 0.46 + (harvestPulse * 0.16);
-            activeNode.glow.scale.setScalar(1.55 + (harvestPulse * 0.35));
+            activeNode.haze.material.opacity = 0.34 + (harvestPulse * 0.16);
+            activeNode.inner.material.opacity = 0.28 + (harvestPulse * 0.14);
+            activeNode.sparkles.material.opacity = 0.5 + (harvestPulse * 0.24);
+            for (const pocket of activeNode.pockets) {
+              pocket.material.opacity = 0.24 + (harvestPulse * 0.16);
+            }
             if (state.harvestTimer >= CONFIG.spiceHarvestDuration) {
               state.spiceCarry = 1;
               setSpiceNodeActive(activeNode, false);
@@ -1070,22 +2458,32 @@
             }
           }
         }
-      } else if (harvestHeld && canHarvest && player.userData.grounded && horizontalSpeed <= CONFIG.spiceHarvestMoveCancelSpeed) {
-        state.harvestNode = nearbyHarvestNode;
-        state.harvestTimer = 0;
-      }
+	      } else if (
+	        harvestHeld &&
+	        canHarvest &&
+	        state.maulaReloadTimer === 0 &&
+	        player.userData.grounded &&
+	        horizontalSpeed <= CONFIG.spiceHarvestMoveCancelSpeed
+	      ) {
+	        state.harvestNode = nearbyHarvestNode;
+	        state.harvestTimer = 0;
+	        emitNoiseImpulse(0.12);
+	      }
 
       state.interactHint = getSpicePrompt(canHarvest);
     }
 
     function addRockInstance(instances, inst, options = {}) {
+      instances.push(inst);
+      registerRockVolume(inst, options);
+    }
+
+    function registerRockVolume(inst, options = {}) {
       const {
         walkable = false,
         platformRadiusScale = 0.56,
         colliderRadiusScale = 0.92,
       } = options;
-
-      instances.push(inst);
 
       const visualRadius = Math.max(inst.sx, inst.sz) * 1.12;
       const topY = inst.y + inst.sy * 0.5;
@@ -1114,6 +2512,46 @@
       LEDGE_PLATFORMS.length = 0;
       ROCK_COLLIDERS.length = 0;
       const instances = [];
+      const group = new THREE.Group();
+      const startPatch = ROCK_PATCHES[0];
+      const startBase = startPatch.baseHeight + startPatch.rise;
+
+      startPlatform.x = startPatch.x;
+      startPlatform.z = startPatch.z;
+      startPlatform.radius = CONFIG.playerStartPlatformRadius;
+      startPlatform.topY = startBase + CONFIG.playerStartPlatformHeight;
+
+      const startPlatformMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(1, 1.06, 1, 12, 1, false),
+        rockMaterial
+      );
+      startPlatformMesh.position.set(
+        startPlatform.x,
+        startBase + (CONFIG.playerStartPlatformHeight * 0.5),
+        startPlatform.z
+      );
+      startPlatformMesh.scale.set(
+        startPlatform.radius,
+        CONFIG.playerStartPlatformHeight,
+        startPlatform.radius * 0.94
+      );
+      startPlatformMesh.rotation.y = 0.18;
+      startPlatformMesh.castShadow = CONFIG.shadowEnabled;
+      startPlatformMesh.receiveShadow = CONFIG.shadowEnabled;
+      group.add(startPlatformMesh);
+
+      registerRockVolume({
+        x: startPlatform.x,
+        y: startPlatformMesh.position.y,
+        z: startPlatform.z,
+        sx: startPlatform.radius,
+        sy: CONFIG.playerStartPlatformHeight,
+        sz: startPlatform.radius * 0.94,
+      }, {
+        walkable: true,
+        platformRadiusScale: 0.84,
+        colliderRadiusScale: 0.9,
+      });
 
       for (let p = 0; p < ROCK_PATCHES.length; p += 1) {
         const patch = ROCK_PATCHES[p];
@@ -1134,6 +2572,7 @@
           const baseY = sampleMesaHeight(sx, sz);
           const h = isLarge ? randomRange(30, 52, rng) : randomRange(16, 30, rng);
           const r = isLarge ? randomRange(14, 24, rng) : randomRange(8, 14, rng);
+          if (p === 0 && overlapsStartSpawn(sx, sz, r * 1.18)) continue;
           addRockInstance(instances, {
             x: sx, y: baseY + h * 0.5, z: sz,
             sx: r, sy: h, sz: r * randomRange(0.70, 1.30, rng),
@@ -1169,6 +2608,7 @@
               const terrainY = sampleMesaHeight(rx, rz);
               const rockH = Math.max(2.5, targetTopY - terrainY);
               const rockR = isLarge ? randomRange(6, 10, rng) : randomRange(4, 7, rng);
+              if (p === 0 && overlapsStartSpawn(rx, rz, rockR * 1.15)) continue;
               addRockInstance(instances, {
                 x: rx,
                 y: terrainY + rockH * 0.5,
@@ -1194,6 +2634,7 @@
             const terrainY = sampleMesaHeight(tx, tz);
             const rockH = Math.max(2.0, topY - terrainY);
             const rockR = randomRange(5, 8, rng);
+            if (p === 0 && overlapsStartSpawn(tx, tz, rockR * 1.15)) continue;
             addRockInstance(instances, {
               x: tx, y: terrainY + rockH * 0.5, z: tz,
               sx: rockR, sy: rockH, sz: rockR * randomRange(0.80, 1.20, rng),
@@ -1205,11 +2646,7 @@
         }
       }
 
-      const mesh = new THREE.InstancedMesh(
-        new THREE.CylinderGeometry(1, 1.7, 1, 6, 1, true),
-        rockMaterial,
-        instances.length
-      );
+      const mesh = new THREE.InstancedMesh(createRockGeometry(), rockMaterial, instances.length);
       mesh.castShadow = CONFIG.shadowEnabled;
       mesh.receiveShadow = CONFIG.shadowEnabled;
 
@@ -1223,7 +2660,45 @@
         mesh.setMatrixAt(i, obj.matrix);
       }
       mesh.instanceMatrix.needsUpdate = true;
-      scene.add(mesh);
+      mesh.geometry.computeBoundingSphere();
+      group.add(mesh);
+      scene.add(group);
+      return group;
+    }
+
+    function resolveCylinderDummyCollision(dummy, velocity) {
+      if (!dummy || dummy.dead) return;
+      const feetY = player.position.y;
+      const bodyHeight = THREE.MathUtils.lerp(
+        CONFIG.playerCollisionHeight,
+        CONFIG.playerCrouchCollisionHeight,
+        player.userData.crouchAmount
+      );
+      const headY = feetY + bodyHeight;
+      const pos = dummy.group.position;
+      const bottomY = pos.y;
+      const topY = pos.y + 5.5;
+      if (headY <= bottomY + 0.05 || feetY >= topY - 0.05) return;
+      const dx = player.position.x - pos.x;
+      const dz = player.position.z - pos.z;
+      const minDist = 0.72 + CONFIG.playerCollisionRadius;
+      const distSq = (dx * dx) + (dz * dz);
+      if (distSq >= minDist * minDist) return;
+      const dist = Math.sqrt(distSq);
+      const nx = dist > 0.0001 ? dx / dist : 1;
+      const nz = dist > 0.0001 ? dz / dist : 0;
+      player.position.x += nx * (minDist - dist);
+      player.position.z += nz * (minDist - dist);
+      const intoWall = (velocity.x * nx) + (velocity.z * nz);
+      if (intoWall < 0) {
+        velocity.x -= nx * intoWall;
+        velocity.z -= nz * intoWall;
+      }
+    }
+
+    function resolveDummyCollision(velocity) {
+      resolveCylinderDummyCollision(trainingDummy, velocity);
+      resolveCylinderDummyCollision(shieldedDummy, velocity);
     }
 
     function resolveRockCollisions(velocity) {
@@ -1264,38 +2739,481 @@
       }
     }
 
-    function createPlayer() {
-      const root = new THREE.Group();
-      root.position.copy(CONFIG.playerStart);
-      root.userData.velocity = new THREE.Vector3();
-      root.userData.grounded = false;
+	    function createPlayer() {
+	      const root = new THREE.Group();
+	      root.position.copy(CONFIG.playerStart);
+	      root.userData.velocity = new THREE.Vector3();
+	      root.userData.grounded = false;
       root.userData.jumpBuffer = 0;
       root.userData.coyoteTimer = 0;
       root.userData.crouchAmount = 0;
 
-      const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffd2b3, flatShading: true });
+	      const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffd2b3, flatShading: true });
+	      const sleeveMaterial = new THREE.MeshLambertMaterial({ color: 0x66523f, flatShading: true });
+	      const hoodMaterial = new THREE.MeshLambertMaterial({ color: 0x7a6852, flatShading: true });
+	      const facePlateMaterial = new THREE.MeshLambertMaterial({ color: 0x2b221a, flatShading: true });
+	      const lensMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x9fc9d2,
+	        emissive: 0x1c2c32,
+	        emissiveIntensity: 0.1,
+	        roughness: 0.42,
+	        metalness: 0.08,
+	        flatShading: true,
+	      });
 
       const body = createCapsuleBody(skinMaterial);
       body.position.y = 1.9;
       root.add(body);
 
-      const head = new THREE.Mesh(
-        new THREE.SphereGeometry(0.58, 16, 16),
-        skinMaterial
-      );
-      head.position.y = 4.1;
-      head.castShadow = CONFIG.shadowEnabled;
-      head.receiveShadow = CONFIG.shadowEnabled;
-      root.add(head);
+	      const head = new THREE.Mesh(
+	        new THREE.SphereGeometry(0.58, 16, 16),
+	        skinMaterial
+	      );
+	      head.position.y = 4.1;
+	      head.castShadow = CONFIG.shadowEnabled;
+	      head.receiveShadow = CONFIG.shadowEnabled;
+	      root.add(head);
+
+	      const hood = new THREE.Mesh(
+	        new THREE.SphereGeometry(0.68, 14, 14),
+	        hoodMaterial
+	      );
+	      hood.position.y = 4.18;
+	      hood.scale.set(1.05, 1.08, 1.08);
+	      hood.castShadow = CONFIG.shadowEnabled;
+	      hood.receiveShadow = CONFIG.shadowEnabled;
+	      root.add(hood);
+
+	      const facePlate = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.72, 0.48, 0.18),
+	        facePlateMaterial
+	      );
+	      facePlate.position.set(0, 4.03, 0.48);
+	      facePlate.castShadow = CONFIG.shadowEnabled;
+	      facePlate.receiveShadow = CONFIG.shadowEnabled;
+	      root.add(facePlate);
+
+	      const facePoint = new THREE.Mesh(
+	        new THREE.ConeGeometry(0.12, 0.34, 4),
+	        hoodMaterial
+	      );
+	      facePoint.rotation.x = Math.PI / 2;
+	      facePoint.rotation.z = Math.PI / 4;
+	      facePoint.position.set(0, 4.02, 0.72);
+	      facePoint.castShadow = CONFIG.shadowEnabled;
+	      facePoint.receiveShadow = CONFIG.shadowEnabled;
+	      root.add(facePoint);
+
+	      const leftLens = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.17, 0.12, 0.08),
+	        lensMaterial
+	      );
+	      leftLens.position.set(-0.16, 4.07, 0.59);
+	      leftLens.castShadow = CONFIG.shadowEnabled;
+	      leftLens.receiveShadow = CONFIG.shadowEnabled;
+	      root.add(leftLens);
+
+	      const rightLens = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.17, 0.12, 0.08),
+	        lensMaterial
+	      );
+	      rightLens.position.set(0.16, 4.07, 0.59);
+	      rightLens.castShadow = CONFIG.shadowEnabled;
+	      rightLens.receiveShadow = CONFIG.shadowEnabled;
+	      root.add(rightLens);
 
       const headAnchor = new THREE.Object3D();
       headAnchor.position.y = 4.1;
       root.add(headAnchor);
       root.userData.headAnchor = headAnchor;
 
-      scene.add(root);
-      return root;
-    }
+	      const rightArmPivot = new THREE.Group();
+	      rightArmPivot.position.set(-0.9, 3.32, 0.34);
+	      rightArmPivot.rotation.set(0.24, 0.12, 0.58);
+	      root.add(rightArmPivot);
+
+	      const upperArm = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.16, 0.2, 1.05, 6),
+	        sleeveMaterial
+	      );
+	      upperArm.position.set(-0.24, -0.36, 0.06);
+	      upperArm.rotation.z = 0.52;
+	      upperArm.castShadow = CONFIG.shadowEnabled;
+	      upperArm.receiveShadow = CONFIG.shadowEnabled;
+	      rightArmPivot.add(upperArm);
+
+	      const forearm = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.13, 0.16, 1.15, 6),
+	        skinMaterial
+	      );
+	      forearm.position.set(-0.64, -0.8, 0.24);
+	      forearm.rotation.set(-0.18, 0.08, 0.96);
+	      forearm.castShadow = CONFIG.shadowEnabled;
+	      forearm.receiveShadow = CONFIG.shadowEnabled;
+	      rightArmPivot.add(forearm);
+
+	      const knifeRoot = createCrysknife();
+	      knifeRoot.position.set(-0.9, -1.08, 0.46);
+	      knifeRoot.rotation.set(-0.04, -0.1, 0.12);
+	      rightArmPivot.add(knifeRoot);
+
+	      const maulaRoot = createMaulaPistol();
+	      maulaRoot.position.set(-0.7, -1.02, 0.36);
+	      maulaRoot.rotation.set(0.26, -0.02, 0.22);
+	      maulaRoot.visible = false;
+	      rightArmPivot.add(maulaRoot);
+
+	      const lasgunRoot = createLasgun();
+	      lasgunRoot.position.set(-0.56, -0.58, 0.18);
+	      lasgunRoot.rotation.set(1.38, -0.04, 0.14);
+	      lasgunRoot.visible = false;
+	      rightArmPivot.add(lasgunRoot);
+
+	      const shieldVisual = createShieldVisual();
+	      root.add(shieldVisual.group);
+
+	      root.userData.rightArmPivot = rightArmPivot;
+	      root.userData.knifeRoot = knifeRoot;
+	      root.userData.maulaRoot = maulaRoot;
+	      root.userData.maulaMuzzle = maulaRoot.userData.muzzle;
+	      root.userData.lasgunRoot = lasgunRoot;
+	      root.userData.lasgunMuzzle = lasgunRoot.userData.muzzle;
+	      root.userData.shieldVisual = shieldVisual;
+
+	      scene.add(root);
+	      return root;
+	    }
+
+    function createCrysknife() {
+      const group = new THREE.Group();
+
+      const bladeShape = new THREE.Shape();
+      bladeShape.moveTo(0, 0);
+      bladeShape.quadraticCurveTo(0.34, 1.1, 0.66, 3.5);
+      bladeShape.quadraticCurveTo(0.96, 2.74, 0.5, 0.42);
+      bladeShape.lineTo(0, 0);
+
+      const bladeGeometry = new THREE.ExtrudeGeometry(bladeShape, {
+        depth: 0.09,
+        bevelEnabled: false,
+        steps: 1,
+      });
+      bladeGeometry.center();
+      bladeGeometry.rotateX(Math.PI / 2);
+      bladeGeometry.rotateZ(0.12);
+
+      const blade = new THREE.Mesh(
+        bladeGeometry,
+        new THREE.MeshStandardMaterial({
+          color: 0xf4ecd4,
+          emissive: 0x705b32,
+          emissiveIntensity: 0.18,
+          roughness: 0.34,
+          metalness: 0.04,
+          flatShading: true,
+        })
+      );
+      blade.position.set(0.02, 1.02, 0);
+      blade.castShadow = CONFIG.shadowEnabled;
+      blade.receiveShadow = CONFIG.shadowEnabled;
+      group.add(blade);
+
+      const handle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.11, 0.14, 0.9, 6),
+        new THREE.MeshLambertMaterial({ color: 0x3c2818, flatShading: true })
+      );
+      handle.rotation.z = Math.PI / 2;
+      handle.position.set(-0.16, -0.08, 0);
+      handle.castShadow = CONFIG.shadowEnabled;
+      handle.receiveShadow = CONFIG.shadowEnabled;
+      group.add(handle);
+
+      const guard = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.34, 0.18),
+        new THREE.MeshLambertMaterial({ color: 0x7a654c, flatShading: true })
+      );
+      guard.position.set(0.12, 0.16, 0);
+      guard.castShadow = CONFIG.shadowEnabled;
+      group.add(guard);
+
+      const pommel = new THREE.Mesh(
+        new THREE.SphereGeometry(0.11, 6, 6),
+        new THREE.MeshLambertMaterial({ color: 0x9a8458, flatShading: true })
+      );
+      pommel.position.set(-0.56, -0.08, 0);
+      pommel.castShadow = CONFIG.shadowEnabled;
+      group.add(pommel);
+
+	      group.scale.setScalar(0.64);
+	      return group;
+	    }
+
+	    function createMaulaPistol() {
+	      const group = new THREE.Group();
+	      const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x4c3b2d, flatShading: true });
+	      const metalMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x8b7f70,
+	        roughness: 0.74,
+	        metalness: 0.16,
+	        flatShading: true,
+	      });
+	      const dartMaterial = new THREE.MeshStandardMaterial({
+	        color: 0xc8d1cb,
+	        emissive: 0x26322c,
+	        emissiveIntensity: 0.08,
+	        roughness: 0.42,
+	        metalness: 0.08,
+	        flatShading: true,
+	      });
+
+	      const grip = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.28, 0.92, 0.26),
+	        bodyMaterial
+	      );
+	      grip.position.set(-0.1, 0.28, 0);
+	      grip.rotation.z = -0.28;
+	      grip.castShadow = CONFIG.shadowEnabled;
+	      grip.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(grip);
+
+	      const frame = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.34, 1.42, 0.28),
+	        metalMaterial
+	      );
+	      frame.position.set(0.02, 0.8, 0);
+	      frame.castShadow = CONFIG.shadowEnabled;
+	      frame.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(frame);
+
+	      const barrel = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.08, 0.09, 1.42, 8),
+	        metalMaterial
+	      );
+	      barrel.position.set(0.04, 1.46, 0);
+	      barrel.castShadow = CONFIG.shadowEnabled;
+	      barrel.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(barrel);
+
+	      const spring = new THREE.Mesh(
+	        new THREE.TorusGeometry(0.13, 0.03, 6, 10),
+	        bodyMaterial
+	      );
+	      spring.position.set(0.02, 0.96, 0);
+	      spring.rotation.x = Math.PI / 2;
+	      group.add(spring);
+
+	      const dart = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.035, 0.05, 0.72, 6),
+	        dartMaterial
+	      );
+	      dart.position.set(0.04, 1.48, 0);
+	      dart.castShadow = CONFIG.shadowEnabled;
+	      dart.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(dart);
+
+	      const muzzle = new THREE.Object3D();
+	      muzzle.position.set(0.04, 2.18, 0);
+	      group.add(muzzle);
+	      group.userData.muzzle = muzzle;
+
+	      group.scale.setScalar(0.92);
+	      return group;
+	    }
+
+	    function createLasgun() {
+	      const group = new THREE.Group();
+	      const stockMaterial = new THREE.MeshLambertMaterial({ color: 0x544536, flatShading: true });
+	      const metalMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x8f7f68,
+	        roughness: 0.52,
+	        metalness: 0.18,
+	        flatShading: true,
+	      });
+	      const lensMaterial = new THREE.MeshStandardMaterial({
+	        color: 0xb6e1ff,
+	        emissive: 0x2c5872,
+	        emissiveIntensity: 0.24,
+	        roughness: 0.2,
+	        metalness: 0.1,
+	        flatShading: true,
+	      });
+
+	      const stock = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.28, 1.02, 0.32),
+	        stockMaterial
+	      );
+	      stock.position.set(-0.06, 0.44, 0);
+	      stock.rotation.z = -0.22;
+	      stock.castShadow = CONFIG.shadowEnabled;
+	      stock.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(stock);
+
+	      const body = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.36, 1.7, 0.3),
+	        metalMaterial
+	      );
+	      body.position.set(0.02, 1.04, 0);
+	      body.castShadow = CONFIG.shadowEnabled;
+	      body.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(body);
+
+	      const barrel = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.07, 0.08, 1.9, 8),
+	        metalMaterial
+	      );
+	      barrel.position.set(0.04, 1.95, 0);
+	      barrel.castShadow = CONFIG.shadowEnabled;
+	      barrel.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(barrel);
+
+	      const sideCell = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.18, 0.7, 0.18),
+	        lensMaterial
+	      );
+	      sideCell.position.set(0.22, 0.9, 0);
+	      group.add(sideCell);
+
+	      const muzzleCowl = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.11, 0.12, 0.22, 8),
+	        metalMaterial
+	      );
+	      muzzleCowl.position.set(0.04, 2.9, 0);
+	      group.add(muzzleCowl);
+
+	      const muzzle = new THREE.Object3D();
+	      muzzle.position.set(0.04, 3.04, 0);
+	      group.add(muzzle);
+	      group.userData.muzzle = muzzle;
+
+	      group.scale.setScalar(0.9);
+	      return group;
+	    }
+
+	    function createLasgunBeam() {
+	      const group = new THREE.Group();
+	      group.visible = false;
+	      group.renderOrder = 8;
+
+	      const core = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.05, 0.05, 1, 8),
+	        new THREE.MeshBasicMaterial({
+	          color: 0x9cf2ff,
+	          transparent: true,
+	          opacity: 0.9,
+	          depthWrite: false,
+	        })
+	      );
+	      group.add(core);
+
+	      const glow = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.11, 0.11, 1, 8),
+	        new THREE.MeshBasicMaterial({
+	          color: 0x5ed3ff,
+	          transparent: true,
+	          opacity: 0.24,
+	          depthWrite: false,
+	        })
+	      );
+	      group.add(glow);
+
+	      const flash = new THREE.Mesh(
+	        new THREE.SphereGeometry(0.18, 8, 8),
+	        new THREE.MeshBasicMaterial({
+	          color: 0xc9fbff,
+	          transparent: true,
+	          opacity: 0.72,
+	          depthWrite: false,
+	        })
+	      );
+	      group.add(flash);
+
+	      scene.add(group);
+	      return { group, core, glow, flash };
+	    }
+
+	    function createShieldVisual() {
+	      const group = new THREE.Group();
+	      group.visible = false;
+	      group.position.y = 2.22;
+	      group.renderOrder = 7;
+
+	      const core = new THREE.Mesh(
+	        new THREE.SphereGeometry(1, 22, 22),
+	        new THREE.MeshBasicMaterial({
+	          color: 0x8eeaff,
+	          transparent: true,
+	          opacity: 0,
+	          side: THREE.DoubleSide,
+	          depthWrite: false,
+	          blending: THREE.AdditiveBlending,
+	        })
+	      );
+	      core.scale.set(1.55, 2.18, 1.38);
+	      group.add(core);
+
+	      const halo = new THREE.Mesh(
+	        new THREE.SphereGeometry(1, 18, 18),
+	        new THREE.MeshBasicMaterial({
+	          color: 0xd7fbff,
+	          transparent: true,
+	          opacity: 0,
+	          side: THREE.BackSide,
+	          depthWrite: false,
+	          blending: THREE.AdditiveBlending,
+	        })
+	      );
+	      halo.scale.set(1.68, 2.32, 1.5);
+	      group.add(halo);
+
+	      const lattice = new THREE.Mesh(
+	        new THREE.SphereGeometry(1, 16, 12),
+	        new THREE.MeshBasicMaterial({
+	          color: 0x73dfff,
+	          transparent: true,
+	          opacity: 0,
+	          wireframe: true,
+	          depthWrite: false,
+	          blending: THREE.AdditiveBlending,
+	        })
+	      );
+	      lattice.scale.set(1.7, 2.36, 1.54);
+	      group.add(lattice);
+
+	      const ringMaterial = new THREE.MeshBasicMaterial({
+	        color: 0xc1f6ff,
+	        transparent: true,
+	        opacity: 0,
+	        depthWrite: false,
+	        blending: THREE.AdditiveBlending,
+	      });
+
+	      const ringA = new THREE.Mesh(new THREE.TorusGeometry(1.44, 0.038, 8, 40), ringMaterial.clone());
+	      ringA.rotation.x = Math.PI / 2;
+	      ringA.scale.set(1.08, 1, 0.78);
+	      group.add(ringA);
+
+	      const ringB = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.03, 8, 36), ringMaterial.clone());
+	      ringB.position.y = 0.42;
+	      ringB.rotation.set(0.76, 0.14, 0.28);
+	      ringB.scale.set(1, 1, 0.74);
+	      group.add(ringB);
+
+	      const flashShell = new THREE.Mesh(
+	        new THREE.SphereGeometry(1, 18, 18),
+	        new THREE.MeshBasicMaterial({
+	          color: 0xf0feff,
+	          transparent: true,
+	          opacity: 0,
+	          side: THREE.BackSide,
+	          depthWrite: false,
+	          blending: THREE.AdditiveBlending,
+	        })
+	      );
+	      flashShell.scale.set(1.6, 2.26, 1.46);
+	      group.add(flashShell);
+
+	      return { group, core, halo, lattice, ringA, ringB, flashShell };
+	    }
 
     function createCapsuleBody(material) {
       const mesh = new THREE.Mesh(
@@ -1664,8 +3582,375 @@
       };
     }
 
+	    function createThumper() {
+	      const group = new THREE.Group();
+	      group.visible = false;
+
+      const pulseOuter = new THREE.Mesh(
+        new THREE.RingGeometry(0.86, 1, 48),
+        new THREE.MeshBasicMaterial({
+          color: 0xffcf70,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        })
+      );
+      pulseOuter.rotation.x = -Math.PI / 2;
+      pulseOuter.position.y = 0.09;
+      group.add(pulseOuter);
+
+      const pulseInner = new THREE.Mesh(
+        new THREE.RingGeometry(0.8, 1, 36),
+        new THREE.MeshBasicMaterial({
+          color: 0xf08c2c,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        })
+      );
+      pulseInner.rotation.x = -Math.PI / 2;
+      pulseInner.position.y = 0.12;
+      group.add(pulseInner);
+
+      const bodyMaterial = new THREE.MeshStandardMaterial({
+        color: 0x5b4330,
+        roughness: 0.92,
+        metalness: 0.08,
+        flatShading: true,
+      });
+      const braceMaterial = new THREE.MeshStandardMaterial({
+        color: 0x8b7357,
+        roughness: 0.74,
+        metalness: 0.14,
+        flatShading: true,
+      });
+      const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffe09a,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+      });
+
+      const base = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.9, 1.02, 0.56, 8),
+        bodyMaterial
+      );
+      base.position.y = 0.34;
+      base.castShadow = CONFIG.shadowEnabled;
+      base.receiveShadow = CONFIG.shadowEnabled;
+      group.add(base);
+
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.62, 0.8, 2.1, 8),
+        braceMaterial
+      );
+      body.position.y = 1.5;
+      body.castShadow = CONFIG.shadowEnabled;
+      body.receiveShadow = CONFIG.shadowEnabled;
+      group.add(body);
+
+      const collar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.74, 0.86, 0.3, 8),
+        bodyMaterial
+      );
+      collar.position.y = 2.58;
+      collar.castShadow = CONFIG.shadowEnabled;
+      collar.receiveShadow = CONFIG.shadowEnabled;
+      group.add(collar);
+
+      const antenna = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.08, 2.2, 6),
+        braceMaterial
+      );
+      antenna.position.y = 3.78;
+      antenna.castShadow = CONFIG.shadowEnabled;
+      group.add(antenna);
+
+      const emitter = new THREE.Mesh(
+        new THREE.SphereGeometry(0.24, 8, 8),
+        glowMaterial
+      );
+      emitter.position.y = 4.95;
+      group.add(emitter);
+
+      const emitterHalo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.42, 10, 10),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd172,
+          transparent: true,
+          opacity: 0.18,
+          depthWrite: false,
+        })
+      );
+      emitterHalo.position.copy(emitter.position);
+      group.add(emitterHalo);
+
+      const legGeometry = new THREE.BoxGeometry(0.2, 1.6, 0.34);
+      for (let i = 0; i < 3; i += 1) {
+        const angle = (i / 3) * Math.PI * 2;
+        const leg = new THREE.Mesh(legGeometry, bodyMaterial);
+        leg.position.set(Math.cos(angle) * 0.68, 0.82, Math.sin(angle) * 0.68);
+        leg.rotation.z = 0.26;
+        leg.rotation.y = angle;
+        leg.castShadow = CONFIG.shadowEnabled;
+        leg.receiveShadow = CONFIG.shadowEnabled;
+        group.add(leg);
+      }
+
+      const finGeometry = new THREE.BoxGeometry(0.14, 0.88, 0.62);
+      for (let i = 0; i < 3; i += 1) {
+        const angle = (i / 3) * Math.PI * 2;
+        const fin = new THREE.Mesh(finGeometry, braceMaterial);
+        fin.position.set(Math.cos(angle) * 0.72, 2.1, Math.sin(angle) * 0.72);
+        fin.rotation.y = angle;
+        fin.castShadow = CONFIG.shadowEnabled;
+        fin.receiveShadow = CONFIG.shadowEnabled;
+        group.add(fin);
+      }
+
+      scene.add(group);
+      return {
+        group,
+        pulseOuter,
+        pulseInner,
+        body,
+        emitter,
+        emitterHalo,
+        active: false,
+        timer: 0,
+        pulseAge: 0,
+        signal: 0,
+        flash: 0,
+	      };
+	    }
+
+	    function createTrainingDummy(opts = {}) {
+	      const ox = opts.offsetX !== undefined ? opts.offsetX : CONFIG.trainingDummyOffsetX;
+	      const oz = opts.offsetZ !== undefined ? opts.offsetZ : CONFIG.trainingDummyOffsetZ;
+	      const group = new THREE.Group();
+	      group.position.set(
+	        startPlatform.x + ox,
+	        startPlatform.topY,
+	        startPlatform.z + oz
+	      );
+
+	      const postMaterial = new THREE.MeshLambertMaterial({ color: 0x5c4633, flatShading: true });
+	      const braceMaterial = new THREE.MeshLambertMaterial({ color: 0x756553, flatShading: true });
+	      const targetMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x7f8e93,
+	        emissive: 0x8c3424,
+	        emissiveIntensity: 0.04,
+	        roughness: 0.72,
+	        metalness: 0.06,
+	        flatShading: true,
+	      });
+	      const plateMaterial = new THREE.MeshBasicMaterial({
+	        color: 0xffb07a,
+	        transparent: true,
+	        opacity: 0.36,
+	        depthWrite: false,
+	      });
+
+	      const base = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.85, 1.15, 0.46, 8),
+	        rockMaterial
+	      );
+	      base.position.y = 0.23;
+	      base.castShadow = CONFIG.shadowEnabled;
+	      base.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(base);
+
+	      const post = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.18, 0.24, 3.4, 8),
+	        postMaterial
+	      );
+	      post.position.y = 1.9;
+	      post.castShadow = CONFIG.shadowEnabled;
+	      post.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(post);
+
+	      const brace = new THREE.Mesh(
+	        new THREE.BoxGeometry(0.24, 0.8, 1.08),
+	        braceMaterial
+	      );
+	      brace.position.set(0, 3.18, -0.18);
+	      brace.rotation.x = 0.42;
+	      brace.castShadow = CONFIG.shadowEnabled;
+	      brace.receiveShadow = CONFIG.shadowEnabled;
+	      group.add(brace);
+
+	      const targetPivot = new THREE.Group();
+	      targetPivot.position.y = 4.15;
+	      group.add(targetPivot);
+
+	      const target = new THREE.Mesh(
+	        new THREE.CapsuleGeometry(0.62, 1.85, 6, 12),
+	        targetMaterial
+	      );
+	      target.castShadow = CONFIG.shadowEnabled;
+	      target.receiveShadow = CONFIG.shadowEnabled;
+	      targetPivot.add(target);
+
+	      const frontPlate = new THREE.Mesh(
+	        new THREE.CircleGeometry(0.34, 18),
+	        plateMaterial
+	      );
+	      frontPlate.position.set(0, 0.18, 0.64);
+	      frontPlate.rotation.x = 0;
+	      targetPivot.add(frontPlate);
+
+	      const headDot = new THREE.Mesh(
+	        new THREE.SphereGeometry(0.08, 8, 8),
+	        new THREE.MeshBasicMaterial({ color: 0x20150f })
+	      );
+	      headDot.position.set(0, 0.52, 0.62);
+	      targetPivot.add(headDot);
+
+	      // Floating 3D health bar — billboarded to face camera each frame
+	      const healthBarGroup = new THREE.Group();
+	      healthBarGroup.position.set(0, 7.0, 0);
+	      const hpBg = new THREE.Mesh(
+	        new THREE.PlaneGeometry(2.2, 0.32),
+	        new THREE.MeshBasicMaterial({ color: 0x1a1a1a, depthWrite: false, transparent: true, opacity: 0.72 })
+	      );
+	      healthBarGroup.add(hpBg);
+	      const hpFill = new THREE.Mesh(
+	        new THREE.PlaneGeometry(2.0, 0.22),
+	        new THREE.MeshBasicMaterial({ color: 0x44cc44, depthWrite: false })
+	      );
+	      hpFill.position.z = 0.01;
+	      healthBarGroup.add(hpFill);
+	      group.add(healthBarGroup);
+
+	      let shieldSphere = null;
+	      if (opts.hasShield) {
+	        shieldSphere = new THREE.Mesh(
+	          new THREE.SphereGeometry(1.8, 16, 16),
+	          new THREE.MeshStandardMaterial({
+	            color: 0x4488ff,
+	            emissive: 0x1133aa,
+	            emissiveIntensity: 0.28,
+	            transparent: true,
+	            opacity: 0.22,
+	            depthWrite: false,
+	            side: THREE.DoubleSide,
+	          })
+	        );
+	        shieldSphere.position.y = 3.9;
+	        shieldSphere.renderOrder = 6;
+	        group.add(shieldSphere);
+	      }
+	      scene.add(group);
+	      return {
+	        group,
+	        targetPivot,
+	        target,
+	        frontPlate,
+	        headDot,
+	        targetMaterial,
+	        plateMaterial,
+	        healthBarGroup,
+	        hpFill,
+	        health: CONFIG.dummyMaxHealth,
+	        maxHealth: CONFIG.dummyMaxHealth,
+	        dead: false,
+	        respawnTimer: 0,
+	        deadFallTimer: 0,
+	        spawnPos: group.position.clone(),
+	        hitFlash: 0,
+	        wobble: 0,
+	        shieldActive: !!opts.hasShield,
+	        shieldSphere,
+	        shieldHitFlash: 0,
+	      };
+	    }
+
+	    function hitTrainingDummy(intensity = 1, damage = 0) {
+	      if (trainingDummy.dead) return;
+	      trainingDummy.hitFlash = Math.max(trainingDummy.hitFlash, intensity);
+	      trainingDummy.wobble = Math.max(trainingDummy.wobble, intensity);
+	      if (damage > 0) {
+	        trainingDummy.health = Math.max(0, trainingDummy.health - damage);
+	        if (trainingDummy.health <= 0) killTrainingDummy();
+	      }
+	    }
+
+	    function killTrainingDummy() {
+	      trainingDummy.dead = true;
+	      trainingDummy.deadFallTimer = 0;
+	      trainingDummy.respawnTimer = CONFIG.dummyRespawnDelay;
+	      trainingDummy.healthBarGroup.visible = false;
+	    }
+
+	    function respawnTrainingDummy() {
+	      trainingDummy.health = CONFIG.dummyMaxHealth;
+	      trainingDummy.dead = false;
+	      trainingDummy.deadFallTimer = 0;
+	      trainingDummy.respawnTimer = 0;
+	      trainingDummy.hitFlash = 0;
+	      trainingDummy.wobble = 0;
+	      trainingDummy.group.position.copy(trainingDummy.spawnPos);
+	      trainingDummy.group.rotation.set(0, 0, 0);
+	      trainingDummy.healthBarGroup.visible = true;
+	    }
+
+	    function updateShieldedDummy(delta) {
+	      shieldedDummy.hitFlash = Math.max(0, shieldedDummy.hitFlash - (delta * 2.8));
+	      shieldedDummy.wobble = Math.max(0, shieldedDummy.wobble - (delta * 1.9));
+	      shieldedDummy.shieldHitFlash = Math.max(0, shieldedDummy.shieldHitFlash - (delta * 3.0));
+
+	      if (shieldedDummy.dead) {
+	        shieldedDummy.deadFallTimer = Math.min(1, shieldedDummy.deadFallTimer + delta / 0.55);
+	        const fall = shieldedDummy.deadFallTimer * shieldedDummy.deadFallTimer;
+	        shieldedDummy.group.rotation.x = fall * (Math.PI * 0.48);
+	        shieldedDummy.group.position.y = shieldedDummy.spawnPos.y - fall * 1.8;
+	        shieldedDummy.respawnTimer = Math.max(0, shieldedDummy.respawnTimer - delta);
+	        if (shieldedDummy.respawnTimer <= 0) {
+	          shieldedDummy.health = CONFIG.dummyMaxHealth;
+	          shieldedDummy.dead = false;
+	          shieldedDummy.deadFallTimer = 0;
+	          shieldedDummy.respawnTimer = 0;
+	          shieldedDummy.hitFlash = 0;
+	          shieldedDummy.wobble = 0;
+	          shieldedDummy.group.position.copy(shieldedDummy.spawnPos);
+	          shieldedDummy.group.rotation.set(0, 0, 0);
+	          shieldedDummy.healthBarGroup.visible = true;
+	          if (shieldedDummy.shieldSphere) shieldedDummy.shieldSphere.visible = true;
+	        }
+	        return;
+	      }
+
+	      const idleSway = Math.sin((state.elapsed * 1.6) + 2.4) * 0.018;
+	      const wobbleWave = Math.sin((1 - shieldedDummy.wobble) * 15.5) * shieldedDummy.wobble * 0.26;
+	      shieldedDummy.targetPivot.rotation.z = idleSway + wobbleWave;
+	      shieldedDummy.targetPivot.rotation.x = Math.sin((1 - shieldedDummy.wobble) * 8.2) * shieldedDummy.wobble * 0.08;
+
+	      shieldedDummy.targetMaterial.emissiveIntensity = 0.04 + (Math.min(shieldedDummy.hitFlash, 1.6) * 0.5);
+	      shieldedDummy.frontPlate.material.opacity = Math.min(0.88, 0.36 + (shieldedDummy.hitFlash * 0.32));
+	      shieldedDummy.frontPlate.scale.setScalar(1 + (shieldedDummy.hitFlash * 0.18));
+
+	      // Shield sphere pulse
+	      shieldedDummy.shieldMessageTimer = (shieldedDummy.shieldMessageTimer || 0) - delta;
+	      if (shieldedDummy.shieldSphere) {
+	        const pulse = 0.5 + Math.sin(state.elapsed * 2.4) * 0.5;
+	        const hitGlow = shieldedDummy.shieldHitFlash;
+	        shieldedDummy.shieldSphere.material.opacity = 0.14 + pulse * 0.06 + hitGlow * 0.60;
+	        shieldedDummy.shieldSphere.material.emissiveIntensity = 0.22 + pulse * 0.10 + hitGlow * 1.4;
+	        const s = 1 + pulse * 0.015 + hitGlow * 0.18;
+	        shieldedDummy.shieldSphere.scale.setScalar(s);
+	      }
+
+	      shieldedDummy.healthBarGroup.quaternion.copy(camera.quaternion);
+	      const hp = shieldedDummy.health / shieldedDummy.maxHealth;
+	      shieldedDummy.hpFill.scale.x = Math.max(0.001, hp);
+	      shieldedDummy.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
+	      shieldedDummy.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
+	    }
+
     function createSpiceObjective() {
-      const nodes = [];
+	      const nodes = [];
       const halfWorld = (CONFIG.worldSize * 0.5) - CONFIG.spiceNodeEdgePadding;
       const minSpacingSq = CONFIG.spiceNodeMinSpacing * CONFIG.spiceNodeMinSpacing;
 
@@ -1712,7 +3997,94 @@
         node.x = x;
         node.z = z;
         node.phase = randomRange(0, Math.PI * 2, rng);
+        node.seed = randomRange(0, Math.PI * 2, rng);
         node.group.position.set(x, sampleGroundHeight(x, z), z);
+        updateSpicePatchVisual(node);
+      }
+
+      function replaceMeshGeometry(mesh, geometry) {
+        if (mesh.geometry) mesh.geometry.dispose();
+        mesh.geometry = geometry;
+      }
+
+      function buildSparkleGeometry(worldX, worldZ, radius, baseY, seed) {
+        const sparkleRng = mulberry32((Math.floor(seed * 1000000) ^ MAP_SEED) >>> 0);
+        const positions = new Float32Array(CONFIG.spicePatchSparkleCount * 3);
+
+        for (let i = 0; i < CONFIG.spicePatchSparkleCount; i += 1) {
+          const angle = sparkleRng() * Math.PI * 2;
+          const dist = radius * Math.sqrt(0.12 + (sparkleRng() * 0.88));
+          const localX = Math.cos(angle) * dist;
+          const localZ = Math.sin(angle) * dist;
+          const localY = (sampleGroundHeight(worldX + localX, worldZ + localZ) - baseY)
+            + 0.18
+            + (sparkleRng() * 0.18);
+          const index = i * 3;
+          positions[index] = localX;
+          positions[index + 1] = localY;
+          positions[index + 2] = localZ;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        return geometry;
+      }
+
+      function updateSpicePatchVisual(node) {
+        const baseY = sampleGroundHeight(node.x, node.z);
+        const patchRadius = CONFIG.spicePatchRadius;
+        const pocketRng = mulberry32((Math.floor(node.seed * 1000000) ^ 0x5f35791d) >>> 0);
+        node.group.position.set(node.x, baseY, node.z);
+
+        replaceMeshGeometry(
+          node.haze,
+          createSpicePatchGeometry(node.x, node.z, patchRadius, 52, node.seed + 0.2, baseY, 0.08, 0.22)
+        );
+        replaceMeshGeometry(
+          node.inner,
+          createSpicePatchGeometry(
+            node.x,
+            node.z,
+            CONFIG.spiceHarvestRadius * 0.82,
+            40,
+            node.seed + 1.1,
+            baseY,
+            0.12,
+            0.18
+          )
+        );
+
+        for (let i = 0; i < node.pockets.length; i += 1) {
+          const angle = pocketRng() * Math.PI * 2;
+          const dist = randomRange(CONFIG.spiceHarvestRadius * 0.12, CONFIG.spiceHarvestRadius * 0.42, pocketRng);
+          const offsetX = Math.cos(angle) * dist;
+          const offsetZ = Math.sin(angle) * dist;
+          const radius = randomRange(CONFIG.spicePatchPocketRadius * 0.7, CONFIG.spicePatchPocketRadius * 1.2, pocketRng);
+          const pocket = node.pockets[i];
+          pocket.position.set(offsetX, 0, offsetZ);
+          replaceMeshGeometry(
+            pocket,
+            createSpicePatchGeometry(
+              node.x + offsetX,
+              node.z + offsetZ,
+              radius,
+              24,
+              node.seed + (i * 1.7) + 2.4,
+              baseY,
+              0.16,
+              0.16
+            )
+          );
+        }
+
+        if (node.sparkles.geometry) node.sparkles.geometry.dispose();
+        node.sparkles.geometry = buildSparkleGeometry(
+          node.x,
+          node.z,
+          CONFIG.spiceHarvestRadius * 0.92,
+          baseY,
+          node.seed + 3.6
+        );
       }
 
       while (nodes.length < CONFIG.spiceNodeCount) {
@@ -1723,65 +4095,79 @@
         const group = new THREE.Group();
         group.position.set(x, sampleGroundHeight(x, z), z);
 
-        const glow = new THREE.Mesh(
-          new THREE.CircleGeometry(1, 28),
+        const haze = new THREE.Mesh(
+          new THREE.BufferGeometry(),
           new THREE.MeshBasicMaterial({
-            color: 0xffd26d,
+            color: 0xd98e33,
             transparent: true,
-            opacity: 0.34,
+            opacity: 0.24,
             depthWrite: false,
+            side: THREE.DoubleSide,
           })
         );
-        glow.rotation.x = -Math.PI / 2;
-        glow.position.y = 0.08;
-        group.add(glow);
+        haze.renderOrder = 3;
+        group.add(haze);
 
-        const crystals = [];
-        for (let i = 0; i < 6; i += 1) {
-          const radius = randomRange(0.45, 1.45, rng);
-          const angle = randomRange(0, Math.PI * 2, rng);
-          const height = randomRange(1.4, 3.2, rng);
-          const crystal = new THREE.Mesh(
-            new THREE.ConeGeometry(randomRange(0.22, 0.58, rng), height, 5),
-            new THREE.MeshLambertMaterial({ color: 0xef9d35, flatShading: true })
+        const inner = new THREE.Mesh(
+          new THREE.BufferGeometry(),
+          new THREE.MeshBasicMaterial({
+            color: 0xffd56f,
+            transparent: true,
+            opacity: 0.18,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          })
+        );
+        inner.renderOrder = 4;
+        group.add(inner);
+
+        const pockets = [];
+        for (let i = 0; i < 3; i += 1) {
+          const pocket = new THREE.Mesh(
+            new THREE.BufferGeometry(),
+            new THREE.MeshBasicMaterial({
+              color: 0xffefb0,
+              transparent: true,
+              opacity: 0.16,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            })
           );
-          crystal.position.set(Math.cos(angle) * radius, height * 0.5, Math.sin(angle) * radius);
-          crystal.rotation.y = angle + randomRange(-0.4, 0.4, rng);
-          crystal.castShadow = CONFIG.shadowEnabled;
-          crystal.receiveShadow = CONFIG.shadowEnabled;
-          group.add(crystal);
-          crystals.push({
-            mesh: crystal,
-            baseY: crystal.position.y,
-            phase: randomRange(0, Math.PI * 2, rng),
-            bob: randomRange(0.05, 0.16, rng),
-          });
+          pocket.renderOrder = 5;
+          group.add(pocket);
+          pockets.push(pocket);
         }
 
-        const core = new THREE.Mesh(
-          new THREE.OctahedronGeometry(0.52, 0),
-          new THREE.MeshBasicMaterial({
-            color: 0xfff1bf,
+        const sparkles = new THREE.Points(
+          new THREE.BufferGeometry(),
+          new THREE.PointsMaterial({
+            color: 0xfff2c4,
+            size: 0.72,
             transparent: true,
-            opacity: 0.82,
+            opacity: 0.44,
             depthWrite: false,
+            sizeAttenuation: true,
           })
         );
-        core.position.y = 2.15;
-        group.add(core);
+        sparkles.renderOrder = 6;
+        group.add(sparkles);
 
         scene.add(group);
-        nodes.push({
+        const node = {
           x,
           z,
           group,
-          glow,
-          core,
-          crystals,
+          haze,
+          inner,
+          pockets,
+          sparkles,
           phase: randomRange(0, Math.PI * 2, rng),
+          seed: randomRange(0, Math.PI * 2, rng),
           active: true,
           respawnTimer: 0,
-        });
+        };
+        updateSpicePatchVisual(node);
+        nodes.push(node);
       }
 
       return {
@@ -1840,19 +4226,111 @@
       return tempWormTarget;
     }
 
-    function sampleStrongestNoiseHotspot() {
-      if (state.wormPhase === "devour") return null;
+	    function updateThumper(delta) {
+	      if (!thumper.active) return;
+
+      thumper.timer = Math.max(0, thumper.timer - delta);
+      thumper.pulseAge += delta;
+
+      if (thumper.pulseAge >= CONFIG.thumperPulseInterval) {
+        thumper.pulseAge %= CONFIG.thumperPulseInterval;
+        triggerThumperPulse(false);
+      }
+
+      thumper.signal = THREE.MathUtils.damp(thumper.signal, 0, CONFIG.thumperSignalDecayRate, delta);
+      thumper.flash = THREE.MathUtils.damp(thumper.flash, 0, 7.5, delta);
+
+      const pulseProgress = THREE.MathUtils.clamp(thumper.pulseAge / CONFIG.thumperPulseInterval, 0, 1);
+      const wave = 1 - pulseProgress;
+      const pulseRadius = CONFIG.wormWarningRadius * 0.56;
+
+      thumper.body.rotation.y += delta * 1.2;
+      thumper.emitter.position.y = 4.92 + (Math.sin((state.elapsed * 9) + (thumper.group.position.x * 0.02)) * 0.08);
+      thumper.emitter.material.opacity = 0.34 + (thumper.flash * 0.46);
+      thumper.emitterHalo.position.copy(thumper.emitter.position);
+      thumper.emitterHalo.scale.setScalar(0.9 + (thumper.flash * 1.15));
+      thumper.emitterHalo.material.opacity = 0.06 + (thumper.flash * 0.18);
+
+      thumper.pulseOuter.material.opacity = wave * 0.28;
+      thumper.pulseOuter.scale.setScalar(2 + (pulseProgress * pulseRadius));
+      thumper.pulseInner.material.opacity = wave * 0.38;
+      thumper.pulseInner.scale.setScalar(1.2 + (pulseProgress * pulseRadius * 0.78));
+      thumper.pulseInner.rotation.z += delta * 0.9;
+
+	      if (thumper.timer === 0) {
+	        setThumperActive(false);
+	      }
+	    }
+
+	    function updateTrainingDummy(delta) {
+	      trainingDummy.hitFlash = Math.max(0, trainingDummy.hitFlash - (delta * 2.8));
+	      trainingDummy.wobble = Math.max(0, trainingDummy.wobble - (delta * 1.9));
+
+	      if (trainingDummy.dead) {
+	        // Fall-over animation: rotate forward over 0.55s
+	        trainingDummy.deadFallTimer = Math.min(1, trainingDummy.deadFallTimer + delta / 0.55);
+	        const fall = trainingDummy.deadFallTimer * trainingDummy.deadFallTimer; // ease-in
+	        trainingDummy.group.rotation.x = fall * (Math.PI * 0.48);
+	        trainingDummy.group.position.y = trainingDummy.spawnPos.y - fall * 1.8;
+	        // Tick respawn
+	        trainingDummy.respawnTimer = Math.max(0, trainingDummy.respawnTimer - delta);
+	        if (trainingDummy.respawnTimer <= 0) respawnTrainingDummy();
+	        return;
+	      }
+
+	      const idleSway = Math.sin((state.elapsed * 1.6) + 0.8) * 0.018;
+	      const wobbleWave = Math.sin((1 - trainingDummy.wobble) * 15.5) * trainingDummy.wobble * 0.26;
+	      trainingDummy.targetPivot.rotation.z = idleSway + wobbleWave;
+	      trainingDummy.targetPivot.rotation.x = Math.sin((1 - trainingDummy.wobble) * 8.2) * trainingDummy.wobble * 0.08;
+
+	      const poisonStrength = THREE.MathUtils.clamp(trainingDummy.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
+	      const poisonPulse = poisonStrength > 0 ? 0.5 + Math.sin(state.elapsed * 6) * 0.5 : 0;
+	      trainingDummy.targetMaterial.emissive.setRGB(
+	        0.55 - poisonStrength * 0.45,
+	        0.20 + poisonStrength * 0.55,
+	        0.14 - poisonStrength * 0.10
+	      );
+	      trainingDummy.targetMaterial.emissiveIntensity = 0.04 + (Math.min(trainingDummy.hitFlash, 1.6) * 0.5) + (poisonPulse * 0.35);
+	      trainingDummy.frontPlate.material.opacity = Math.min(0.88, 0.36 + (trainingDummy.hitFlash * 0.32));
+	      trainingDummy.frontPlate.scale.setScalar(1 + (trainingDummy.hitFlash * 0.18));
+
+	      // Tick poison damage
+	      if (trainingDummy.poisonTimer > 0) {
+	        trainingDummy.poisonTimer = Math.max(0, trainingDummy.poisonTimer - delta);
+	        const poisonDmg = CONFIG.maulaPoisonDamagePerSecond * delta;
+	        trainingDummy.health = Math.max(0, trainingDummy.health - poisonDmg);
+	        if (trainingDummy.health <= 0) killTrainingDummy();
+	      }
+
+	      // Billboard health bar to always face camera
+	      trainingDummy.healthBarGroup.quaternion.copy(camera.quaternion);
+	      const hp = trainingDummy.health / trainingDummy.maxHealth;
+	      trainingDummy.hpFill.scale.x = Math.max(0.001, hp);
+	      trainingDummy.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
+	      trainingDummy.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
+	    }
+
+	    function sampleStrongestNoiseHotspot() {
+      if (state.wormPhase === "devour" || state.wormPhase === "recover") return null;
 
       let strongest = null;
       for (const actor of getWormTrackedActors()) {
         if (actor.surfaceType !== "sand") continue;
+
+        const shieldStrength = getShieldHotspotStrength(
+          actor.surfaceType,
+          actor.noiseLevel,
+          actor.signLevel,
+          actor.shieldActive
+        );
 
         const strength = THREE.MathUtils.clamp(
           Math.max(
             actor.signLevel,
             (actor.noiseLevel * 0.65)
               + (actor.spiceCarry > 0 ? 0.08 : 0)
-              + (actor.harvestActive ? 0.12 : 0)
+              + (actor.harvestActive ? 0.12 : 0),
+            shieldStrength
           ),
           0,
           1
@@ -1865,6 +4343,11 @@
           signLevel: actor.signLevel,
           strength,
         };
+      }
+
+      const thumperHotspot = getThumperHotspot();
+      if (thumperHotspot && (!strongest || thumperHotspot.strength > strongest.strength)) {
+        strongest = thumperHotspot;
       }
 
       return strongest;
@@ -1940,8 +4423,18 @@
       worm.velocity.set(0, 0, 0);
       state.wormPhase = "warning";
       state.wormTimer = CONFIG.wormWarningDuration;
-      state.signLevel = Math.max(state.signLevel, CONFIG.wormWarningSignFloor);
+      sfx.wormWarning.play({ volumeMultiplier: 1 });
+      state.signLevel = Math.max(
+        state.signLevel,
+        CONFIG.wormWarningSignFloor * getWormThreatFactor(CONFIG.wormWarningRadius)
+      );
       worm.noisePressure *= 0.72;
+    }
+
+    function anchorWormAtStrikeTarget() {
+      worm.position.copy(state.wormTarget);
+      worm.position.y = sampleGroundHeight(worm.position.x, worm.position.z);
+      worm.velocity.set(0, 0, 0);
     }
 
     function updateTrackedWormTarget(delta, progress) {
@@ -2033,14 +4526,11 @@
         delta
       );
 
-      if (hotspot) {
-        setWormTargetHotspot(hotspot.position);
-      } else if (worm.state === "off_map") {
-        setWormTargetHotspot(null);
+      if (state.wormPhase === "warning" && hotspot) {
+        trackWormTargetHotspot(hotspot.position, delta);
       }
 
       if (state.wormPhase !== "idle") {
-        worm.position.copy(state.wormTarget);
         worm.velocity.set(0, 0, 0);
         return;
       }
@@ -2056,13 +4546,14 @@
       }
 
       if (worm.state === "off_map") {
+        setWormTargetHotspot(null);
         worm.velocity.set(0, 0, 0);
         return;
       }
 
       if (worm.state === "inbound") {
         if (hotspot) {
-          setWormTargetHotspot(hotspot.position);
+          trackWormTargetHotspot(hotspot.position, delta);
         }
         if (!worm.targetHotspot) {
           startWormRetreat();
@@ -2088,7 +4579,7 @@
 
       if (worm.state === "hunting") {
         if (hotspot) {
-          setWormTargetHotspot(hotspot.position);
+          trackWormTargetHotspot(hotspot.position, delta);
         } else {
           startWormRetreat();
           return;
@@ -2154,9 +4645,20 @@
       state.noiseImpulse = 0;
       state.wormPhase = "devour";
       state.wormTimer = CONFIG.wormDevourDuration;
+      sfx.wormDevour.play({ volumeMultiplier: 1 });
+    }
+
+    function beginRecoverFromDevour() {
+      anchorWormAtStrikeTarget();
+      player.position.set(state.wormTarget.x, state.wormTarget.y - 28, state.wormTarget.z);
+      player.userData.velocity.set(0, 0, 0);
+      player.userData.grounded = false;
+      state.wormPhase = "recover";
+      state.wormTimer = CONFIG.wormRespawnDelayDuration;
     }
 
     function finishDevour() {
+      anchorWormAtStrikeTarget();
       player.position.copy(state.wormRespawnPoint);
       player.userData.velocity.set(0, 0, 0);
       state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
@@ -2181,7 +4683,13 @@
 
       if (state.wormPhase === "devour") {
         const progress = 1 - (state.wormTimer / CONFIG.wormDevourDuration);
-        const sink = smoothstep(progress);
+        const sink = smoothstep(THREE.MathUtils.clamp((progress - 0.08) / 0.42, 0, 1));
+        const breachRise = smoothstep(THREE.MathUtils.clamp(progress / 0.26, 0, 1));
+        const reveal = smoothstep(THREE.MathUtils.clamp(
+          (progress - CONFIG.wormDevourRevealStart) / (1 - CONFIG.wormDevourRevealStart),
+          0,
+          1
+        ));
         const holeRadius = CONFIG.wormKillRadius * (1.02 + (sink * 0.23));
         tempDevourTarget.set(
           state.wormTarget.x,
@@ -2216,9 +4724,51 @@
         wormHazard.dust.scale.setScalar(1.02 + (sink * 0.55));
         wormHazard.dust.position.y = 20 + (sink * 10.5);
         wormHazard.mouthRoot.visible = true;
-        wormHazard.mouthRoot.position.y = -1.5 + ((1 - sink) * 8.5);
-        wormHazard.mouthRoot.scale.setScalar(1.02 + ((1 - sink) * 0.05));
-        updateWormMawPose(delta, 0.7 + ((1 - sink) * 0.22), 1.25, 0.18);
+        wormHazard.mouthRoot.position.y = -10 + (breachRise * 26) + (reveal * 18);
+        wormHazard.mouthRoot.scale.setScalar(0.98 + (breachRise * 0.16) + (reveal * 0.1));
+        updateWormMawPose(
+          delta,
+          0.68 + (breachRise * 0.46) + (reveal * 0.12),
+          1.08,
+          0.1
+        );
+
+        state.wormTimer = Math.max(0, state.wormTimer - delta);
+        if (state.wormTimer === 0) {
+          beginRecoverFromDevour();
+        }
+        return;
+      }
+
+      if (state.wormPhase === "recover") {
+        const progress = 1 - (state.wormTimer / CONFIG.wormRespawnDelayDuration);
+        const holeRadius = CONFIG.wormKillRadius * (1.18 + (progress * 0.24));
+
+        wormHazard.warningShadow.material.opacity = 0;
+        wormHazard.warningRing.material.opacity = 0;
+        wormHazard.rippleRing.material.opacity = 0.18 * (1 - progress);
+        wormHazard.rippleRing.scale.setScalar(CONFIG.wormKillRadius * (1.6 + (progress * 1.1)));
+        wormHazard.vortexOuter.material.opacity = 0.16 * (1 - progress);
+        wormHazard.vortexOuter.scale.set(holeRadius * 1.34, 1, holeRadius);
+        wormHazard.vortexOuter.rotation.y = state.elapsed * 0.72;
+        wormHazard.vortexInner.material.opacity = 0.24 * (1 - progress);
+        wormHazard.vortexInner.scale.set(holeRadius * 1.08, 1, holeRadius * 0.82);
+        wormHazard.vortexInner.rotation.y = -state.elapsed * 1.08;
+        wormHazard.holeDisk.material.opacity = 0.42 - (progress * 0.14);
+        wormHazard.holeDisk.scale.setScalar(holeRadius);
+        wormHazard.holeWell.material.opacity = 0.58 - (progress * 0.18);
+        wormHazard.holeWell.scale.set(holeRadius * 0.98, 1, holeRadius * 0.98);
+        wormHazard.holeRing.material.opacity = 0.36 - (progress * 0.16);
+        wormHazard.holeRing.scale.setScalar(holeRadius * 1.14);
+        wormHazard.holeRing.position.y = 0.84 + (progress * 0.44);
+        wormHazard.dust.material.opacity = 0.42 - (progress * 0.16);
+        wormHazard.dust.scale.setScalar(1.28 + (progress * 0.72));
+        wormHazard.dust.position.y = 26 + (progress * 16);
+        wormHazard.mouthRoot.visible = true;
+        wormHazard.mouthRoot.position.y = 26 + (progress * 24);
+        wormHazard.mouthRoot.scale.setScalar(1.18 + (progress * 0.16));
+        updateWormMawPose(delta, 1.16 + (progress * 0.12), 0.82, 0.04);
+        state.wormShake = THREE.MathUtils.damp(state.wormShake, CONFIG.wormShakeBreach * 0.48, 6, delta);
 
         state.wormTimer = Math.max(0, state.wormTimer - delta);
         if (state.wormTimer === 0) {
@@ -2228,7 +4778,10 @@
       }
 
       if (state.wormPhase === "warning") {
-        state.signLevel = Math.max(state.signLevel, CONFIG.wormWarningSignFloor);
+        state.signLevel = Math.max(
+          state.signLevel,
+          CONFIG.wormWarningSignFloor * getWormThreatFactor(CONFIG.wormWarningRadius)
+        );
         const progress = 1 - (state.wormTimer / CONFIG.wormWarningDuration);
         const pulse = 0.5 + (0.5 * Math.sin(state.elapsed * 15));
         const ripple = (progress * 1.7) % 1;
@@ -2277,6 +4830,7 @@
         if (state.wormTimer === 0) {
           state.wormPhase = "breach";
           state.wormTimer = CONFIG.wormBreachDuration;
+          sfx.wormBreach.play({ volumeMultiplier: 1 });
           emitNoiseImpulse(0.32);
         }
         return;
@@ -2284,7 +4838,10 @@
 
       const breachElapsed = CONFIG.wormBreachDuration - state.wormTimer;
       const breachProgress = THREE.MathUtils.clamp(breachElapsed / CONFIG.wormBreachDuration, 0, 1);
-      state.signLevel = Math.max(state.signLevel, CONFIG.wormWarningSignFloor);
+      state.signLevel = Math.max(
+        state.signLevel,
+        CONFIG.wormWarningSignFloor * getWormThreatFactor(CONFIG.wormWarningRadius)
+      );
       const strikeActive = breachElapsed >= CONFIG.wormStrikeDelay
         && breachElapsed <= (CONFIG.wormStrikeDelay + CONFIG.wormStrikeWindow);
       const rise = smoothstep(THREE.MathUtils.clamp(breachProgress / 0.42, 0, 1));
@@ -2337,6 +4894,16 @@
       state.wormShake = THREE.MathUtils.damp(state.wormShake, CONFIG.wormShakeBreach, 9, delta);
 
       if (strikeActive) {
+        // Thumper in kill zone — worm consumes it
+        if (thumper.active) {
+          const tdx = thumper.group.position.x - state.wormTarget.x;
+          const tdz = thumper.group.position.z - state.wormTarget.z;
+          if ((tdx * tdx) + (tdz * tdz) <= CONFIG.wormKillRadius * CONFIG.wormKillRadius) {
+            setThumperActive(false);
+            broadcastWormRadio("Worm consumed the thumper.");
+          }
+        }
+        // Player in kill zone
         const dx = player.position.x - state.wormTarget.x;
         const dz = player.position.z - state.wormTarget.z;
         const distanceSq = (dx * dx) + (dz * dz);
@@ -2348,6 +4915,7 @@
 
       state.wormTimer = Math.max(0, state.wormTimer - delta);
       if (state.wormTimer === 0) {
+        anchorWormAtStrikeTarget();
         state.wormPhase = "idle";
         state.wormCooldown = CONFIG.wormCooldownDuration;
         state.wormShake = 0;
@@ -2357,6 +4925,11 @@
     }
 
     function placePlayerOnGround() {
+      const startSpawn = getStartSpawnPoint(tempWormTarget);
+      if (state.elapsed === 0 && state.wormRecoveryTimer === 0) {
+        player.position.x = startSpawn.x;
+        player.position.z = startSpawn.z;
+      }
       player.position.y = sampleGroundHeight(player.position.x, player.position.z) + CONFIG.playerStandHeight;
       player.userData.velocity.set(0, 0, 0);
       player.userData.grounded = true;
@@ -2365,10 +4938,11 @@
       updateCameraRig(1);
     }
 
-    function bindEvents() {
+	    function bindEvents() {
       window.addEventListener("resize", onWindowResize);
 
-      document.addEventListener("keydown", (event) => {
+	      document.addEventListener("keydown", (event) => {
+        enableAudio();
         keyState.Shift = event.shiftKey;
         keyState.Control = event.ctrlKey;
 
@@ -2382,7 +4956,23 @@
         if (event.code in keyState) {
           keyState[event.code] = true;
         }
-      });
+
+	        if (event.code === "KeyQ" && !event.repeat) {
+	          tryDeployThumper();
+	        }
+	        if (event.code === "Digit1" && !event.repeat) {
+	          equipWeapon("knife");
+	        }
+	        if (event.code === "Digit2" && !event.repeat) {
+	          equipWeapon("maula");
+	        }
+	        if (event.code === "Digit3" && !event.repeat) {
+	          equipWeapon("lasgun");
+	        }
+	        if (event.code === "KeyF" && !event.repeat) {
+	          toggleShieldVisual();
+	        }
+	      });
 
       document.addEventListener("keyup", (event) => {
         keyState.Shift = event.shiftKey;
@@ -2393,7 +4983,19 @@
         }
       });
 
+	      document.addEventListener("pointerdown", (event) => {
+	        enableAudio();
+	        if (event.button !== 0) return;
+	        tryPrimaryAttack();
+	      });
+
+	      document.addEventListener("pointerup", (event) => {
+	        if (event.button !== 0) return;
+	        state.lasgunFiring = false;
+	      });
+
       ui.overlay.addEventListener("click", () => {
+        enableAudio();
         controls.lock();
       });
 
@@ -2406,21 +5008,21 @@
         state.paused = true;
         clearMovementInput();
         ui.overlay.classList.remove("hidden");
-        setOverlay(
-          "Paused",
-          "The desert is waiting.",
-          "Click to resume. WASD to move, Space to jump, Shift to run, Hold E to harvest.",
-          "Click to Resume"
-        );
-      });
+	        setOverlay(
+	          "Paused",
+	          "The desert is waiting.",
+	          "Click to resume. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a spice patch, Q to deploy a thumper.",
+	          "Click to Resume"
+	        );
+	      });
 
-      setOverlay(
-        "Spice Jam",
-        "Harvest spice in the open dunes, then get it back to rock before the worm takes you.",
-        "Click to lock the mouse. WASD to move, Space to jump, Shift to run, Hold E to harvest.",
-        "Click to Play"
-      );
-    }
+	      setOverlay(
+	        "Spice Jam",
+	        "Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.",
+	        "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper.",
+	        "Click to Play"
+	      );
+	    }
 
     function clearMovementInput() {
       for (const code of Object.keys(keyState)) {
@@ -2481,7 +5083,7 @@
         player.userData.jumpBuffer = 0;
       }
 
-      if (state.wormPhase === "devour") {
+      if (state.wormPhase === "devour" || state.wormPhase === "recover") {
         velocity.set(0, 0, 0);
         player.userData.grounded = false;
         updateNoiseSystem(delta, { horizSpeed: 0, crouchActive: false, runActive: false });
@@ -2545,6 +5147,7 @@
       player.position.z = THREE.MathUtils.clamp(player.position.z, -halfWorld, halfWorld);
 
       resolveRockCollisions(velocity);
+      resolveDummyCollision(velocity);
 
       const impactSpeed = Math.max(0, -velocity.y);
       const groundHeight = sampleGroundHeight(player.position.x, player.position.z) + CONFIG.playerStandHeight;
@@ -2557,19 +5160,118 @@
       }
 
       if (!wasGrounded && player.userData.grounded && impactSpeed > 1.0) {
-        const landingImpulse = getSurfaceType(player.position.x, player.position.z) === "rock"
+        const landingSurface = getSurfaceType(player.position.x, player.position.z);
+        const landingImpulse = landingSurface === "rock"
           ? CONFIG.noiseLandImpulseRock
           : CONFIG.noiseLandImpulseSand;
         const landingStrength = THREE.MathUtils.clamp(impactSpeed / CONFIG.playerJumpVelocity, 0, 1);
         emitNoiseImpulse(landingImpulse * landingStrength);
+        playSurfaceFootstep(
+          landingSurface,
+          THREE.MathUtils.lerp(0.72, 1.12, landingStrength),
+          landingSurface === "rock"
+            ? randomRange(0.78, 0.9)
+            : randomRange(0.86, 0.96)
+        );
+        audioState.footstepTimer = CONFIG.footstepWalkInterval * 0.7;
       }
 
+      updateFootstepAudio(delta, horizSpeed, crouchActive, runActive);
       const slopeFactorNoise = player.userData.grounded
         ? sampleSlopeFactor(player.position.x, player.position.z) : 0;
       updateNoiseSystem(delta, { horizSpeed, crouchActive, runActive, slopeFactor: slopeFactorNoise });
     }
 
+    function resolveCameraObstruction(origin, target, out = target) {
+      if (!rockMesh) {
+        out.copy(target);
+        return out;
+      }
+
+      tempCameraDir.subVectors(target, origin);
+      const distance = tempCameraDir.length();
+      if (distance <= 0.001) {
+        out.copy(origin);
+        return out;
+      }
+
+      tempCameraDir.divideScalar(distance);
+      cameraRaycaster.set(origin, tempCameraDir);
+      cameraRaycaster.far = distance;
+
+      const hit = cameraRaycaster.intersectObject(rockMesh, true)
+        .find((intersection) => intersection.distance > 0.24);
+
+      if (!hit) {
+        out.copy(target);
+        return out;
+      }
+
+      out.copy(origin).addScaledVector(tempCameraDir, Math.max(0.85, hit.distance - 0.3));
+      return out;
+    }
+
+    function updateDevourCamera(delta) {
+      const isRecover = state.wormPhase === "recover";
+      const progress = isRecover
+        ? 1 - (state.wormTimer / CONFIG.wormRespawnDelayDuration)
+        : 1 - (state.wormTimer / CONFIG.wormDevourDuration);
+      const revealBlend = isRecover
+        ? 1
+        : smoothstep(THREE.MathUtils.clamp(
+          (progress - CONFIG.wormDevourRevealStart) / (1 - CONFIG.wormDevourRevealStart),
+          0,
+          1
+        ));
+      const orbitAngle = (state.elapsed * CONFIG.wormDevourCameraOrbitSpeed) + 0.55 + (revealBlend * 0.22);
+      const distance = THREE.MathUtils.lerp(
+        CONFIG.wormDevourCameraDistance,
+        CONFIG.wormDevourRevealDistance,
+        revealBlend
+      ) * (isRecover ? THREE.MathUtils.lerp(1, 1.08, progress) : 1);
+      const height = THREE.MathUtils.lerp(
+        CONFIG.wormDevourCameraHeight,
+        CONFIG.wormDevourRevealHeight,
+        revealBlend
+      ) + (isRecover ? progress * 4 : 0);
+      const focusHeight = THREE.MathUtils.lerp(
+        CONFIG.wormDevourCameraFocusHeight,
+        CONFIG.wormDevourRevealFocusHeight,
+        revealBlend
+      );
+
+      tempCameraLook.copy(state.wormTarget);
+      tempCameraLook.y += focusHeight + (Math.sin(progress * Math.PI) * (isRecover ? 1.2 : 2.4));
+
+      tempCameraPos.set(
+        state.wormTarget.x + (Math.cos(orbitAngle) * distance),
+        state.wormTarget.y + height,
+        state.wormTarget.z + (Math.sin(orbitAngle) * distance)
+      );
+      resolveCameraObstruction(tempCameraLook, tempCameraPos, tempCameraPos);
+
+      const followAlpha = 1 - Math.exp(-CONFIG.wormDevourCameraSharpness * delta);
+      camera.position.lerp(tempCameraPos, followAlpha);
+
+      const camGroundY = sampleGroundHeight(camera.position.x, camera.position.z);
+      camera.position.y = Math.max(camera.position.y, camGroundY + 3.5);
+
+      if (state.wormShake > 0.001) {
+        const shakeScale = isRecover ? 0.12 : 0.18;
+        camera.position.x += Math.sin(state.elapsed * 57) * state.wormShake * shakeScale;
+        camera.position.y += Math.sin((state.elapsed * 79) + 0.6) * state.wormShake * (shakeScale * 0.58);
+        camera.position.z += Math.cos((state.elapsed * 63) + 1.4) * state.wormShake * shakeScale;
+      }
+
+      camera.lookAt(tempCameraLook);
+    }
+
     function updateCameraRig(delta) {
+      if (state.wormPhase === "devour" || state.wormPhase === "recover") {
+        updateDevourCamera(delta);
+        return;
+      }
+
       camera.getWorldDirection(tempForward);
       tempForward.y = 0;
       if (tempForward.lengthSq() < 0.0001) tempForward.set(0, 0, -1);
@@ -2578,12 +5280,15 @@
       const crouchAmount = player.userData.crouchAmount;
       const cameraHeight = THREE.MathUtils.lerp(CONFIG.cameraHeight, CONFIG.crouchCameraHeight, crouchAmount);
       const cameraDistance = THREE.MathUtils.lerp(CONFIG.cameraDistance, CONFIG.crouchCameraDistance, crouchAmount);
-      tempCameraPos.copy(player.position);
-      tempCameraPos.y += cameraHeight;
+      tempCameraLook.copy(player.position);
+      tempCameraLook.y += cameraHeight;
+      tempCameraPos.copy(tempCameraLook);
       tempCameraPos.addScaledVector(tempForward, -cameraDistance);
+      resolveCameraObstruction(tempCameraLook, tempCameraPos, tempCameraPos);
 
       const followAlpha = 1 - Math.exp(-CONFIG.cameraFollowSharpness * delta);
       camera.position.lerp(tempCameraPos, followAlpha);
+      resolveCameraObstruction(tempCameraLook, camera.position, camera.position);
 
       const camGroundY = sampleGroundHeight(camera.position.x, camera.position.z);
       camera.position.y = Math.max(camera.position.y, camGroundY + 1.5);
@@ -2653,31 +5358,92 @@
       const crouchActive = keyState.KeyC || controlActive;
       const runActive = shiftActive && !crouchActive;
       const moveMode = crouchActive ? "Crouch" : runActive ? "Run" : "Walk";
+      const shieldChargePercent = Math.round(state.shieldCharge * 100);
+      const shieldMeter = getShieldHotspotStrength(
+        state.surfaceType,
+        state.noiseLevel,
+        state.signLevel,
+        isShieldOperational()
+      );
+      const thumperStrength = thumper.active
+        ? THREE.MathUtils.lerp(CONFIG.thumperAmbientStrength, CONFIG.thumperPulseStrength, thumper.signal)
+        : 0;
+      const wormMeter = state.wormPhase !== "idle"
+        ? 1
+        : Math.max(worm.noisePressure, thumperStrength, shieldMeter);
+      const harvestProgress = state.harvestNode
+        ? Math.round(THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1) * 100)
+        : 0;
 
-      ui.hudDay.textContent = `Time: ${formatCycleTime(state.dayTime)}`;
-      ui.hudPhase.textContent = `Phase: ${state.cyclePhaseName}`;
-      ui.hudSpeed.textContent = `Speed: ${horizontalSpeed.toFixed(1)} (${moveMode})`;
-      ui.hudPos.textContent = `Pos: (${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
-      ui.hudSurface.textContent = `Surface: ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
-      ui.hudCargo.textContent = `Cargo: ${state.spiceCarry > 0 ? "Spice" : "Empty"}`;
-      ui.hudScore.textContent = `Secured: ${state.spiceScore}`;
+	      ui.hudDay.textContent = `Time ${formatCycleTime(state.dayTime)}`;
+	      ui.hudPhase.textContent = `Phase: ${state.cyclePhaseName}`;
+	      ui.hudSpeed.textContent = `Spd ${horizontalSpeed.toFixed(1)} ${moveMode}`;
+	      ui.hudPos.textContent = `Pos: (${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
+	      ui.hudSurface.textContent = `Surf ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
+	      if (state.harvestNode) {
+	        ui.hudCargo.textContent = `Harvesting: ${harvestProgress}%`;
+	      } else if (state.spiceCarry > 0) {
+	        ui.hudCargo.textContent = "Holding: 1 spice";
+	      } else {
+	        ui.hudCargo.textContent = "Holding: none";
+	      }
+	      if (state.equippedWeapon === "maula") {
+	        if (state.maulaReloadTimer > 0) {
+	          const reloadProgress = Math.round(
+	            (1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * 100
+	          );
+	          ui.hudWeapon.textContent = `Weapon: Maula loaded ${state.maulaLoaded ? 1 : 0} · spare ${state.maulaReserveAmmo} · reload ${reloadProgress}%`;
+	        } else {
+	          ui.hudWeapon.textContent = `Weapon: Maula loaded ${state.maulaLoaded ? 1 : 0} · spare ${state.maulaReserveAmmo}`;
+	        }
+	      } else if (state.equippedWeapon === "lasgun") {
+	        const lasgunPct = Math.round(state.lasgunCharge * 100);
+	        ui.hudWeapon.textContent = state.lasgunFiring
+	          ? `Weapon: Lasgun [FIRING] · pwr ${lasgunPct}%`
+	          : `Weapon: Lasgun · pwr ${lasgunPct}%`;
+	      } else {
+	        ui.hudWeapon.textContent = "Weapon: Crysknife";
+	      }
+	      ui.hudWeapon.textContent += ` · Shd ${shieldChargePercent}%`;
+	      ui.hudCargo.classList.toggle("active", state.spiceCarry > 0);
+      ui.hudCargo.classList.toggle("harvesting", Boolean(state.harvestNode));
+      ui.hudScore.textContent = `Spice secured: ${state.spiceScore}`;
       const noiseHue = Math.round(170 - state.noiseLevel * 170);
       const signHue = Math.round(42 - state.signLevel * 42);
+      const wormHue = Math.round(58 - wormMeter * 58);
+      const hpFraction = state.playerHealth / CONFIG.playerMaxHealth;
+      const hpHue = Math.round(hpFraction * 120);
+      ui.healthFill.style.width = `${(hpFraction * 100).toFixed(1)}%`;
+      ui.healthFill.style.backgroundColor = `hsl(${hpHue}, 85%, 42%)`;
+      ui.hudLasgunCharge.style.display = state.equippedWeapon === "lasgun" ? "" : "none";
+      if (state.equippedWeapon === "lasgun") {
+        const lasHue = Math.round(state.lasgunCharge * 190);
+        ui.lasgunFill.style.width = `${(state.lasgunCharge * 100).toFixed(1)}%`;
+        ui.lasgunFill.style.backgroundColor = `hsl(${lasHue}, 85%, 48%)`;
+      }
       ui.noiseFill.style.width = `${(state.noiseLevel * 100).toFixed(1)}%`;
       ui.noiseFill.style.backgroundColor = `hsl(${noiseHue}, 78%, 46%)`;
       ui.signFill.style.width = `${(state.signLevel * 100).toFixed(1)}%`;
       ui.signFill.style.backgroundColor = `hsl(${signHue}, 88%, 48%)`;
+      ui.wormFill.style.width = `${(wormMeter * 100).toFixed(1)}%`;
+      ui.wormFill.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
       ui.hudObjective.textContent = state.interactHint;
       ui.hudNoiseText.textContent = getNoiseStatus();
     }
 
     function refreshDeathFeedback() {
-      if (state.wormPhase === "devour") {
-        const progress = 1 - (state.wormTimer / CONFIG.wormDevourDuration);
+      if (state.wormPhase === "devour" || state.wormPhase === "recover") {
+        const phaseDuration = state.wormPhase === "recover"
+          ? CONFIG.wormRespawnDelayDuration
+          : CONFIG.wormDevourDuration;
+        const progress = 1 - (state.wormTimer / phaseDuration);
         const flash = 0.5 + (0.5 * Math.sin(state.elapsed * 34));
-        ui.deathFlash.style.opacity = `${Math.min(0.92, 0.34 + (progress * 0.42) + (flash * 0.08))}`;
+        const recoverDim = state.wormPhase === "recover" ? 0.18 : 0;
+        ui.deathFlash.style.opacity = `${Math.min(0.92, 0.28 + recoverDim + (progress * 0.36) + (flash * 0.06))}`;
         ui.deathText.textContent = "Devoured";
-        ui.deathHint.textContent = "Shai-Hulud drags you under";
+        ui.deathHint.textContent = state.wormPhase === "recover"
+          ? "The worm towers above the dunes"
+          : "Shai-Hulud drags you under";
         return;
       }
 
@@ -2695,10 +5461,20 @@
     function animate() {
       requestAnimationFrame(animate);
       const delta = Math.min(clock.getDelta(), 0.05);
-      updateDayNight(delta);
-      updateMovement(delta);
-      updateWormActor(delta);
-      updateWormBreach(delta);
+	      updateDayNight(delta);
+	      updateShieldSystem(delta);
+	      updateMovement(delta);
+	      updateKnifeCombat(delta);
+	      updateMaulaCombat(delta);
+	      updateMaulaProjectiles(delta);
+	      updateLasgunCombat(delta);
+	      updateShieldVisual(delta);
+	      updateThumper(delta);
+	      updateTrainingDummy(delta);
+	      updateShieldedDummy(delta);
+	      updateLasgunBeam(delta);
+	      updateWormActor(delta);
+	      updateWormBreach(delta);
       updateSpiceObjective(delta);
       updateCameraRig(delta);
       refreshHud();
