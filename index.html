@@ -532,8 +532,8 @@
       patches.push({
         x: 0,
         z: 0,
-        radius: 62 + rng() * 12,
-        rise: 8 + rng() * 2,
+        radius: 90 + rng() * 20,
+        rise: 10 + rng() * 4,
         approachAngle: rng() * Math.PI * 2,
       });
       // Large #2 — far away on the opposite side
@@ -541,8 +541,8 @@
       patches.push({
         x: Math.cos(lg2Angle) * (400 + rng() * 150),
         z: Math.sin(lg2Angle) * (400 + rng() * 150),
-        radius: 55 + rng() * 15,
-        rise: 8 + rng() * 2,
+        radius: 80 + rng() * 20,
+        rise: 10 + rng() * 4,
         approachAngle: rng() * Math.PI * 2,
       });
       // Five smaller outcroppings
@@ -551,8 +551,8 @@
         patches.push({
           x: Math.cos(angle) * (150 + rng() * 340),
           z: Math.sin(angle) * (150 + rng() * 340),
-          radius: 25 + rng() * 20,
-          rise: 5 + rng() * 2,
+          radius: 35 + rng() * 20,
+          rise: 5 + rng() * 3,
           approachAngle: rng() * Math.PI * 2,
         });
       }
@@ -690,7 +690,7 @@
 
       const positions = geometry.attributes.position;
       const sandColor = new THREE.Color(0xd4a870);
-      const rockColor = new THREE.Color(0x5c5240);
+      const rockColor = new THREE.Color(0x2e2d2b);
       const colorData = new Float32Array(positions.count * 3);
 
       for (let i = 0; i < positions.count; i += 1) {
@@ -706,7 +706,9 @@
           const dist = Math.sqrt(dx * dx + dz * dz);
           if (dist < patch.radius) {
             const t = 1 - dist / patch.radius;
-            rockBlend = Math.max(rockBlend, t * t * (3 - 2 * t));
+            // cubic smoothstep then squared — sharper dark interior, quick edge transition
+            const s = t * t * (3 - 2 * t);
+            rockBlend = Math.max(rockBlend, s * s);
           }
         }
 
@@ -795,11 +797,10 @@
     }
 
     // Returns slope steepness [0..1] where 1 = CONFIG.slopeSpeedAngleMax degrees
-    const _slopeStep = 0.8;
     function sampleSlopeFactor(worldX, worldZ) {
-      const dx = sampleGroundHeight(worldX + _slopeStep, worldZ) - sampleGroundHeight(worldX - _slopeStep, worldZ);
-      const dz = sampleGroundHeight(worldX, worldZ + _slopeStep) - sampleGroundHeight(worldX, worldZ - _slopeStep);
-      const rise = Math.sqrt(dx * dx + dz * dz) / (2 * _slopeStep);
+      const dx = sampleGroundHeight(worldX + 0.8, worldZ) - sampleGroundHeight(worldX - 0.8, worldZ);
+      const dz = sampleGroundHeight(worldX, worldZ + 0.8) - sampleGroundHeight(worldX, worldZ - 0.8);
+      const rise = Math.sqrt(dx * dx + dz * dz) / 1.6;
       const angleDeg = Math.atan(rise) * (180 / Math.PI);
       return THREE.MathUtils.clamp(angleDeg / CONFIG.slopeSpeedAngleMax, 0, 1);
     }
@@ -1109,89 +1110,103 @@
       });
     }
 
-    function buildClimbPath(instances, patch, approachAngle, isLarge) {
-      const ringFractions = isLarge ? [0.91, 0.79, 0.65, 0.49] : [0.90, 0.75, 0.58];
-      const laneOffsets = isLarge ? [-0.18, 0, 0.18] : [-0.12, 0.12];
-
-      for (let i = 0; i < ringFractions.length; i += 1) {
-        for (let j = 0; j < laneOffsets.length; j += 1) {
-          const angle = approachAngle + laneOffsets[j] + randomRange(-0.05, 0.05, rng);
-          const radial = patch.radius * ringFractions[i] + randomRange(-patch.radius * 0.03, patch.radius * 0.03, rng);
-          const x = patch.x + Math.cos(angle) * radial;
-          const z = patch.z + Math.sin(angle) * radial;
-          const baseY = sampleMesaHeight(x, z);
-          const height = isLarge ? randomRange(1.5, 2.3, rng) : randomRange(1.3, 2.0, rng);
-          const radius = isLarge ? randomRange(2.6, 4.1, rng) : randomRange(2.1, 3.3, rng);
-          addRockInstance(instances, {
-            x,
-            y: baseY + (height * 0.5),
-            z,
-            sx: radius,
-            sy: height,
-            sz: radius * randomRange(0.82, 1.18, rng),
-            tiltX: randomRange(-0.16, 0.16, rng),
-            tiltZ: randomRange(-0.16, 0.16, rng),
-            rotY: randomRange(0, Math.PI, rng),
-          }, {
-            walkable: true,
-            platformRadiusScale: 0.62,
-            colliderRadiusScale: 0.78,
-          });
-        }
-      }
-    }
-
     function buildRockInstances() {
       LEDGE_PLATFORMS.length = 0;
       ROCK_COLLIDERS.length = 0;
-
       const instances = [];
 
       for (let p = 0; p < ROCK_PATCHES.length; p += 1) {
         const patch = ROCK_PATCHES[p];
         const isLarge = p < 2;
+        // Mesa top is the rock-floor level for this formation
+        const centerBase = patch.baseHeight + patch.rise;
 
-        buildClimbPath(instances, patch, patch.approachAngle, isLarge);
-        if (isLarge) {
-          buildClimbPath(instances, patch, patch.approachAngle + Math.PI, isLarge);
+        // --- Central formation mass: wide, building-sized columns rooted at terrain ---
+        // Large radius relative to height gives solidity rather than tower look.
+        const massCount = isLarge ? 8 : 3;
+        const massZoneR = patch.radius * (isLarge ? 0.30 : 0.38);
+        for (let s = 0; s < massCount; s += 1) {
+          const angle = rng() * Math.PI * 2;
+          const dist = Math.sqrt(rng()) * massZoneR;
+          const sx = patch.x + Math.cos(angle) * dist;
+          const sz = patch.z + Math.sin(angle) * dist;
+          if (p === 0 && sx * sx + sz * sz < 16 * 16) continue;
+          const baseY = sampleMesaHeight(sx, sz);
+          const h = isLarge ? randomRange(30, 52, rng) : randomRange(16, 30, rng);
+          const r = isLarge ? randomRange(14, 24, rng) : randomRange(8, 14, rng);
+          addRockInstance(instances, {
+            x: sx, y: baseY + h * 0.5, z: sz,
+            sx: r, sy: h, sz: r * randomRange(0.70, 1.30, rng),
+            tiltX: randomRange(-0.05, 0.05, rng),
+            tiltZ: randomRange(-0.05, 0.05, rng),
+            rotY: rng() * Math.PI * 2,
+          }, { walkable: false, colliderRadiusScale: 0.88 });
         }
 
-        // Place pillars only on the top plateau (r < 0.28 of radius).
-        const plateauR = patch.radius * 0.20;
-        const formationCount = isLarge ? randomInt(2, 3, rng) : randomInt(1, 2, rng);
+        // --- Climbable ledge shelves: 2-3 paths up the cliff face ---
+        // Rocks grow FROM terrain surface to their target height — no floating.
+        const levels = isLarge ? 4 : 2;
+        const ledgeStep = 3.0;
+        const pathCount = isLarge ? 3 : 2;
 
-        for (let f = 0; f < formationCount; f += 1) {
-          const fAngle = randomRange(0, Math.PI * 2, rng);
-          const fDist  = Math.sqrt(rng()) * plateauR * 0.85;
-          const fx = patch.x + Math.cos(fAngle) * fDist;
-          const fz = patch.z + Math.sin(fAngle) * fDist;
-          const baseY = sampleGroundHeight(fx, fz);
+        for (let path = 0; path < pathCount; path += 1) {
+          const pathAngle = (path / pathCount) * Math.PI * 2 + randomRange(-0.2, 0.2, rng);
 
-          const colCount = randomInt(1, isLarge ? 3 : 2, rng);
-          for (let c = 0; c < colCount; c += 1) {
-            const height = isLarge ? randomRange(15, 28, rng) : randomRange(10, 18, rng);
-            const radius = isLarge ? randomRange(4.8, 8.5, rng) : randomRange(3.2, 5.8, rng);
-            const x = fx + randomRange(-6, 6, rng);
-            const z = fz + randomRange(-6, 6, rng);
-            if (p === 0 && ((x * x) + (z * z) < 18 * 18)) continue;
+          for (let level = 0; level < levels; level += 1) {
+            const targetTopY = centerBase + (level + 1) * ledgeStep;
+            // Step inward for each higher level
+            const radialFrac = 0.86 - level * 0.14;
+            const shelfCount = isLarge ? 3 : 2;
+
+            for (let i = 0; i < shelfCount; i += 1) {
+              const spread = isLarge ? 0.20 : 0.15;
+              const aOff = (i - (shelfCount - 1) / 2) * spread + randomRange(-0.06, 0.06, rng);
+              const radial = patch.radius * radialFrac + randomRange(-4, 4, rng);
+              const rx = patch.x + Math.cos(pathAngle + aOff) * radial;
+              const rz = patch.z + Math.sin(pathAngle + aOff) * radial;
+              if (p === 0 && rx * rx + rz * rz < 12 * 12) continue;
+              // Root rock at terrain, extend upward to targetTopY — no floating
+              const terrainY = sampleMesaHeight(rx, rz);
+              const rockH = Math.max(2.5, targetTopY - terrainY);
+              const rockR = isLarge ? randomRange(6, 10, rng) : randomRange(4, 7, rng);
+              addRockInstance(instances, {
+                x: rx,
+                y: terrainY + rockH * 0.5,
+                z: rz,
+                sx: rockR, sy: rockH, sz: rockR * randomRange(0.80, 1.20, rng),
+                tiltX: randomRange(-0.06, 0.06, rng),
+                tiltZ: randomRange(-0.06, 0.06, rng),
+                rotY: rng() * Math.PI * 2,
+              }, { walkable: true, platformRadiusScale: 0.62, colliderRadiusScale: 0.78 });
+            }
+          }
+        }
+
+        // --- Summit rocks: flat safe zone at the top ---
+        if (isLarge) {
+          const topY = centerBase + levels * ledgeStep;
+          for (let i = 0; i < 5; i += 1) {
+            const angle = (i / 5) * Math.PI * 2 + randomRange(-0.2, 0.2, rng);
+            const dist = randomRange(5, patch.radius * 0.18, rng);
+            const tx = patch.x + Math.cos(angle) * dist;
+            const tz = patch.z + Math.sin(angle) * dist;
+            if (p === 0 && tx * tx + tz * tz < 10 * 10) continue;
+            const terrainY = sampleMesaHeight(tx, tz);
+            const rockH = Math.max(2.0, topY - terrainY);
+            const rockR = randomRange(5, 8, rng);
             addRockInstance(instances, {
-              x,
-              y: baseY + height * 0.5,
-              z,
-              sx: radius, sy: height, sz: radius,
-              tiltX: randomRange(-0.05, 0.05, rng),
-              tiltZ: randomRange(-0.05, 0.05, rng),
-              rotY: randomRange(0, Math.PI, rng),
-            }, {
-              walkable: false,
-              colliderRadiusScale: 0.94,
-            });
+              x: tx, y: terrainY + rockH * 0.5, z: tz,
+              sx: rockR, sy: rockH, sz: rockR * randomRange(0.80, 1.20, rng),
+              tiltX: randomRange(-0.04, 0.04, rng),
+              tiltZ: randomRange(-0.04, 0.04, rng),
+              rotY: rng() * Math.PI * 2,
+            }, { walkable: true, platformRadiusScale: 0.68, colliderRadiusScale: 0.82 });
           }
         }
       }
 
       const mesh = new THREE.InstancedMesh(
-        new THREE.CylinderGeometry(1, 1.6, 1, 5, 1, true),
+        new THREE.CylinderGeometry(1, 1.7, 1, 6, 1, true),
         rockMaterial,
         instances.length
       );
@@ -1207,7 +1222,6 @@
         obj.updateMatrix();
         mesh.setMatrixAt(i, obj.matrix);
       }
-
       mesh.instanceMatrix.needsUpdate = true;
       scene.add(mesh);
     }
@@ -1222,6 +1236,10 @@
       const headY = feetY + bodyHeight;
 
       for (const collider of ROCK_COLLIDERS) {
+        // Walkable ledge rocks: landing/standing handled entirely by LEDGE_PLATFORMS disc snap.
+        // No lateral cylinder wall — player must be able to approach and jump up freely.
+        if (collider.walkable) continue;
+
         if (headY <= collider.bottomY + 0.05 || feetY >= collider.topY - 0.05) continue;
 
         const dx = player.position.x - collider.x;
@@ -1229,10 +1247,6 @@
         const minDist = collider.radius + CONFIG.playerCollisionRadius;
         const distSq = (dx * dx) + (dz * dz);
         if (distSq >= minDist * minDist) continue;
-
-        if (collider.walkable && velocity.y <= 0 && feetY >= collider.topY - CONFIG.playerLandSnapHeight) {
-          continue;
-        }
 
         const dist = Math.sqrt(distSq);
         const nx = dist > 0.0001 ? dx / dist : 1;
