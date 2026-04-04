@@ -345,6 +345,8 @@
       wormAttackTriggerDistance: 36,
       wormOffMapTravelDistance: 1900,
       wormRadioMessageDuration: 3.5,
+      wormAttackMinSign: 0.32,
+      wormWarningSignFloor: 0.72,
       wormWarningDuration: 1.65,
       wormBreachDuration: 1.3,
       wormStrikeDelay: 0.18,
@@ -1826,6 +1828,7 @@
 
         strongest = {
           position: pickWormTargetForActor(actor).clone(),
+          signLevel: actor.signLevel,
           strength,
         };
       }
@@ -1903,7 +1906,7 @@
       worm.velocity.set(0, 0, 0);
       state.wormPhase = "warning";
       state.wormTimer = CONFIG.wormWarningDuration;
-      state.signLevel *= 0.88;
+      state.signLevel = Math.max(state.signLevel, CONFIG.wormWarningSignFloor);
       worm.noisePressure *= 0.72;
     }
 
@@ -2052,7 +2055,7 @@
       if (worm.state === "hunting") {
         if (hotspot) {
           setWormTargetHotspot(hotspot.position);
-        } else if (worm.noisePressure < CONFIG.wormHotspotMinIntensity) {
+        } else {
           startWormRetreat();
           return;
         }
@@ -2068,7 +2071,11 @@
           CONFIG.wormSteering,
           delta
         );
-        if (state.wormCooldown <= 0 && distance <= CONFIG.wormAttackTriggerDistance) {
+        if (
+          state.wormCooldown <= 0 &&
+          hotspot.signLevel >= CONFIG.wormAttackMinSign &&
+          distance <= CONFIG.wormAttackTriggerDistance
+        ) {
           beginWormWarning();
         }
         return;
@@ -2187,6 +2194,7 @@
       }
 
       if (state.wormPhase === "warning") {
+        state.signLevel = Math.max(state.signLevel, CONFIG.wormWarningSignFloor);
         const progress = 1 - (state.wormTimer / CONFIG.wormWarningDuration);
         const pulse = 0.5 + (0.5 * Math.sin(state.elapsed * 15));
         const ripple = (progress * 1.7) % 1;
@@ -2242,6 +2250,7 @@
 
       const breachElapsed = CONFIG.wormBreachDuration - state.wormTimer;
       const breachProgress = THREE.MathUtils.clamp(breachElapsed / CONFIG.wormBreachDuration, 0, 1);
+      state.signLevel = Math.max(state.signLevel, CONFIG.wormWarningSignFloor);
       const strikeActive = breachElapsed >= CONFIG.wormStrikeDelay
         && breachElapsed <= (CONFIG.wormStrikeDelay + CONFIG.wormStrikeWindow);
       const rise = smoothstep(THREE.MathUtils.clamp(breachProgress / 0.42, 0, 1));
