@@ -295,11 +295,17 @@
       playerCollisionHeight: 4.9,
       playerCrouchCollisionHeight: 3.6,
       playerLandSnapHeight: 0.95,
-      playerGroundSnapEpsilon: 0.08,
+      playerGroundSnapEpsilon: 0.45,
       playerTurnSpeed: 10,
+      playerCoyoteTime: 0.12,
+      playerJumpBuffer: 0.14,
       playerStandHeight: 0,
       crouchScale: 0.68,
       crouchTransitionSpeed: 14,
+
+      slopeSpeedAngleMax: 38,   // degrees — full speed penalty at this slope
+      slopeSpeedMin: 0.55,      // min speed multiplier on steepest climbable slope
+      slopeNoiseBoost: 0.35,    // extra noise added at max slope (sand only)
 
       noiseWalkMultiplier: 0.55,
       noiseRunMultiplier: 1.0,
@@ -788,6 +794,16 @@
       return height;
     }
 
+    // Returns slope steepness [0..1] where 1 = CONFIG.slopeSpeedAngleMax degrees
+    const _slopeStep = 0.8;
+    function sampleSlopeFactor(worldX, worldZ) {
+      const dx = sampleGroundHeight(worldX + _slopeStep, worldZ) - sampleGroundHeight(worldX - _slopeStep, worldZ);
+      const dz = sampleGroundHeight(worldX, worldZ + _slopeStep) - sampleGroundHeight(worldX, worldZ - _slopeStep);
+      const rise = Math.sqrt(dx * dx + dz * dz) / (2 * _slopeStep);
+      const angleDeg = Math.atan(rise) * (180 / Math.PI);
+      return THREE.MathUtils.clamp(angleDeg / CONFIG.slopeSpeedAngleMax, 0, 1);
+    }
+
     function isOnRockPatch(worldX, worldZ) {
       for (const patch of ROCK_PATCHES) {
         const dx = worldX - patch.x;
@@ -906,7 +922,7 @@
     }
 
     function updateNoiseSystem(delta, movementState) {
-      const { horizSpeed, crouchActive, runActive } = movementState;
+      const { horizSpeed, crouchActive, runActive, slopeFactor = 0 } = movementState;
       const surfaceType = getSurfaceType(player.position.x, player.position.z);
       const speedRatio = THREE.MathUtils.clamp(horizSpeed / CONFIG.playerSpeed, 0, 1);
       const stanceMultiplier = crouchActive
@@ -918,9 +934,12 @@
       const surfaceMultiplier = surfaceType === "rock" ? CONFIG.noiseRockMultiplier : 1;
       const carryNoise = state.spiceCarry > 0 ? CONFIG.spiceCarryNoiseBonus * surfaceMultiplier : 0;
       const harvestNoise = state.harvestNode ? CONFIG.spiceHarvestNoiseBonus : 0;
+      // Struggling up a steep sand dune vibrates the ground more
+      const slopeNoise = surfaceType === "sand" ? slopeFactor * CONFIG.slopeNoiseBoost * speedRatio : 0;
       const movementNoise = (speedRatio * stanceMultiplier * groundedMultiplier * surfaceMultiplier)
         + carryNoise
-        + harvestNoise;
+        + harvestNoise
+        + slopeNoise;
       const noiseTarget = THREE.MathUtils.clamp(movementNoise + state.noiseImpulse, 0, 1);
       const noiseResponse = noiseTarget > state.noiseLevel ? CONFIG.noiseRiseRate : CONFIG.noiseDecayRate;
 
@@ -1236,7 +1255,8 @@
       root.position.copy(CONFIG.playerStart);
       root.userData.velocity = new THREE.Vector3();
       root.userData.grounded = false;
-      root.userData.jumpQueued = false;
+      root.userData.jumpBuffer = 0;
+      root.userData.coyoteTimer = 0;
       root.userData.crouchAmount = 0;
 
       const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffd2b3, flatShading: true });
@@ -2112,7 +2132,7 @@
       state.wormDevourStart.copy(player.position);
       player.userData.velocity.set(0, 0, 0);
       player.userData.grounded = false;
-      player.userData.jumpQueued = false;
+      player.userData.jumpBuffer = 0;
       state.spiceCarry = 0;
       cancelHarvest();
       state.noiseLevel = 0;
@@ -2326,7 +2346,7 @@
       player.position.y = sampleGroundHeight(player.position.x, player.position.z) + CONFIG.playerStandHeight;
       player.userData.velocity.set(0, 0, 0);
       player.userData.grounded = true;
-      player.userData.jumpQueued = false;
+      player.userData.jumpBuffer = 0;
       state.surfaceType = getSurfaceType(player.position.x, player.position.z);
       updateCameraRig(1);
     }
@@ -2341,7 +2361,7 @@
         if (event.code === "Space") {
           event.preventDefault();
           if (!event.repeat) {
-            player.userData.jumpQueued = true;
+            player.userData.jumpBuffer = CONFIG.playerJumpBuffer;
           }
         }
 
@@ -2392,7 +2412,7 @@
       for (const code of Object.keys(keyState)) {
         keyState[code] = false;
       }
-      player.userData.jumpQueued = false;
+      player.userData.jumpBuffer = 0;
     }
 
     function setOverlay(title, body, hint, cta) {
@@ -2424,7 +2444,18 @@
 
       const wasGrounded = player.userData.grounded;
 
-      if (player.userData.jumpQueued && wasGrounded && !crouchActive && !state.paused && controls.isLocked) {
+      // Tick coyote timer down
+      if (wasGrounded) {
+        player.userData.coyoteTimer = CONFIG.playerCoyoteTime;
+      } else {
+        player.userData.coyoteTimer = Math.max(0, player.userData.coyoteTimer - delta);
+      }
+
+      // Tick jump buffer down
+      player.userData.jumpBuffer = Math.max(0, player.userData.jumpBuffer - delta);
+
+      const canJump = player.userData.coyoteTimer > 0;
+      if (player.userData.jumpBuffer > 0 && canJump && !crouchActive && !state.paused && controls.isLocked) {
         emitNoiseImpulse(
           getSurfaceType(player.position.x, player.position.z) === "rock"
             ? CONFIG.noiseJumpImpulseRock
@@ -2432,8 +2463,9 @@
         );
         velocity.y = CONFIG.playerJumpVelocity;
         player.userData.grounded = false;
+        player.userData.coyoteTimer = 0;
+        player.userData.jumpBuffer = 0;
       }
-      player.userData.jumpQueued = false;
 
       if (state.wormPhase === "devour") {
         velocity.set(0, 0, 0);
@@ -2470,8 +2502,11 @@
           const stanceMultiplier = (
             crouchActive ? CONFIG.playerCrouchMultiplier : runActive ? CONFIG.playerRunMultiplier : 1
           ) * carryMultiplier;
-          targetVelocityX = tempInput.x * CONFIG.playerSpeed * stanceMultiplier;
-          targetVelocityZ = tempInput.z * CONFIG.playerSpeed * stanceMultiplier;
+          const slopeFactor = player.userData.grounded
+            ? sampleSlopeFactor(player.position.x, player.position.z) : 0;
+          const slopeSpeedMult = 1 - slopeFactor * (1 - CONFIG.slopeSpeedMin);
+          targetVelocityX = tempInput.x * CONFIG.playerSpeed * stanceMultiplier * slopeSpeedMult;
+          targetVelocityZ = tempInput.z * CONFIG.playerSpeed * stanceMultiplier * slopeSpeedMult;
 
           const targetYaw = Math.atan2(tempInput.x, tempInput.z);
           player.rotation.y = THREE.MathUtils.lerp(
@@ -2507,15 +2542,17 @@
         player.userData.grounded = false;
       }
 
-      if (!wasGrounded && player.userData.grounded) {
+      if (!wasGrounded && player.userData.grounded && impactSpeed > 1.0) {
         const landingImpulse = getSurfaceType(player.position.x, player.position.z) === "rock"
           ? CONFIG.noiseLandImpulseRock
           : CONFIG.noiseLandImpulseSand;
-        const landingStrength = THREE.MathUtils.clamp(impactSpeed / CONFIG.playerJumpVelocity, 0.35, 1);
+        const landingStrength = THREE.MathUtils.clamp(impactSpeed / CONFIG.playerJumpVelocity, 0, 1);
         emitNoiseImpulse(landingImpulse * landingStrength);
       }
 
-      updateNoiseSystem(delta, { horizSpeed, crouchActive, runActive });
+      const slopeFactorNoise = player.userData.grounded
+        ? sampleSlopeFactor(player.position.x, player.position.z) : 0;
+      updateNoiseSystem(delta, { horizSpeed, crouchActive, runActive, slopeFactor: slopeFactorNoise });
     }
 
     function updateCameraRig(delta) {
