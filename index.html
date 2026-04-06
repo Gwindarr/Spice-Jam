@@ -46,11 +46,13 @@
     #playerHud {
       left: 16px;
       bottom: 16px;
-      max-width: 360px;
-      padding: 12px 14px;
+      width: min(272px, calc(100vw - 32px));
+      padding: 10px 11px;
       background:
+        radial-gradient(circle at top left, rgba(250, 186, 82, 0.11), transparent 42%),
         linear-gradient(180deg, rgba(46, 24, 7, 0.92), rgba(16, 10, 4, 0.9)),
         var(--panel);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
     }
 
 	    #devHud {
@@ -82,52 +84,100 @@
       color: var(--muted);
     }
 
-    .cargo-pill {
+    .player-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .hud-tag {
       display: inline-flex;
       align-items: center;
-      min-height: 36px;
-      padding: 8px 12px;
-      border: 1px solid rgba(255, 212, 138, 0.22);
+      min-height: 28px;
+      padding: 5px 9px;
+      border: 1px solid rgba(255, 214, 153, 0.14);
       border-radius: 999px;
-      background: rgba(255, 244, 220, 0.05);
-      color: #f7e9cf;
-      font-size: 14px;
+      background: rgba(255, 248, 232, 0.06);
+      color: #e8cc9a;
+      font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
+      white-space: nowrap;
     }
 
-    .cargo-pill.active {
-      border-color: rgba(255, 210, 109, 0.44);
+    #hudWeapon {
+      color: #fff3d8;
+      border-color: rgba(255, 226, 164, 0.24);
+      background: rgba(255, 244, 220, 0.08);
+    }
+
+    #hudCargo.active {
+      border-color: rgba(255, 210, 109, 0.36);
       background: rgba(240, 160, 40, 0.16);
       color: #ffd88a;
-      box-shadow: 0 0 24px rgba(240, 160, 40, 0.16);
+      box-shadow: 0 0 20px rgba(240, 160, 40, 0.12);
     }
 
-    .cargo-pill.harvesting {
-      border-color: rgba(255, 214, 130, 0.36);
-      background: rgba(255, 200, 90, 0.12);
+    #hudCargo.harvesting {
+      border-color: rgba(255, 214, 130, 0.3);
+      background: rgba(255, 200, 90, 0.14);
       color: #ffe2aa;
     }
 
-    #hudScore {
-      margin-top: 10px;
-      font-size: 13px;
-      color: var(--muted);
-      letter-spacing: 0.04em;
+    .compact-meter-stack {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .compact-meter {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) 40px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .compact-label,
+    .compact-value {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
-    #hudObjective {
-      margin-top: 12px;
-      font-size: 13px;
-      color: #f2e7d3;
+    .compact-label {
+      color: #f6e7ca;
     }
 
-    #hudNoiseText {
+    .compact-value {
+      color: #f2e7d3;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .compact-track {
+      display: block;
+      width: 100%;
+      height: 10px;
+      min-width: 0;
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .compact-track .noise-fill {
+      box-shadow: 0 0 16px rgba(255, 255, 255, 0.08);
+    }
+
+    .hud-status {
       margin-top: 8px;
+      min-height: 1.2em;
       font-size: 12px;
-      color: var(--muted);
+      line-height: 1.25;
+      color: #dec7a0;
     }
 
     .noise-row {
@@ -286,17 +336,56 @@
       width: 2px;
       height: 14px;
     }
+
+    @media (max-width: 640px) {
+      #playerHud {
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        width: auto;
+      }
+
+      #devHud {
+        top: 10px;
+        right: 10px;
+      }
+
+      .compact-meter {
+        grid-template-columns: 32px minmax(0, 1fr) 36px;
+      }
+    }
   </style>
 </head>
 <body>
   <div id="playerHud" class="hud-panel">
-    <div id="hudCargo" class="cargo-pill">Holding: none</div>
-    <div id="hudWeapon" class="hint">Weapon: Crysknife</div>
-    <div class="line">HP <span class="noise-track"><span id="healthFill" class="noise-fill" style="background:#44cc44;width:100%;"></span></span></div>
-    <div id="hudLasgunCharge" class="line" style="display:none">LAS <span class="noise-track"><span id="lasgunFill" class="noise-fill" style="background:#5ed3ff;width:100%;"></span></span></div>
-    <div id="hudScore">Spice secured: 0</div>
-    <div id="hudObjective" class="hint">Leave rock and find a spice patch in the open sand.</div>
-    <div id="hudNoiseText" class="hint">Rock dampens vibration.</div>
+    <div class="player-strip">
+      <div id="hudWeapon" class="hud-tag">Knife</div>
+      <div id="hudCargo" class="hud-tag">Carry 0</div>
+      <div id="hudScore" class="hud-tag">Bank 0</div>
+    </div>
+    <div class="compact-meter-stack">
+      <div class="compact-meter">
+        <span class="compact-label">HP</span>
+        <span class="compact-track"><span id="healthFill" class="noise-fill" style="background:#44cc44;width:100%;"></span></span>
+        <span id="hudHealthValue" class="compact-value">100%</span>
+      </div>
+      <div class="compact-meter">
+        <span class="compact-label">Shd</span>
+        <span class="compact-track"><span id="shieldFill" class="noise-fill" style="background:#85cfff;width:100%;"></span></span>
+        <span id="hudShieldValue" class="compact-value">100%</span>
+      </div>
+      <div class="compact-meter">
+        <span class="compact-label">Wrm</span>
+        <span class="compact-track"><span id="hudWormFillPlayer" class="noise-fill" style="background:#ffb84a;width:0%;"></span></span>
+        <span id="hudWormValue" class="compact-value">0%</span>
+      </div>
+      <div id="hudContextMeter" class="compact-meter" style="display:none">
+        <span id="hudContextLabel" class="compact-label">Use</span>
+        <span class="compact-track"><span id="hudContextFill" class="noise-fill" style="background:#f0c860;width:0%;"></span></span>
+        <span id="hudContextValue" class="compact-value">0%</span>
+      </div>
+    </div>
+    <div id="hudStatus" class="hud-status">Find spice in open sand.</div>
   </div>
 
 	  <div id="devHud" class="hud-panel">
@@ -340,10 +429,36 @@
   </div>
 
   <div id="explosionFlash" style="position:fixed;inset:0;z-index:24;background:radial-gradient(circle,#ffffff,#ffe066 30%,#ff8800 65%,#cc2200 100%);pointer-events:none;opacity:0;transition:none;"></div>
-  <script async src="https://jam.pieter.com/2026/widget.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.7.3/build/index.module.js"
+    }
+  }
+  </script>
   <script type="module">
-    import * as THREE from "https://esm.sh/three@0.183.0";
-    import { PointerLockControls } from "https://esm.sh/three@0.183.0/examples/jsm/controls/PointerLockControls.js";
+    import * as THREE from "three";
+    import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+    import { Capsule } from "three/addons/math/Capsule.js";
+    import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+    import {
+      MeshBVH,
+      StaticGeometryGenerator,
+      acceleratedRaycast,
+    } from "three-mesh-bvh";
+
+    THREE.Mesh.prototype.raycast = acceleratedRaycast;
+
+    if (location.protocol !== "file:") {
+      const jamWidgetScript = document.createElement("script");
+      jamWidgetScript.async = true;
+      jamWidgetScript.src = "https://jam.pieter.com/2026/widget.js";
+      document.head.appendChild(jamWidgetScript);
+    } else {
+      console.warn("Serve this project over http://localhost:8000 instead of opening index.html via file://");
+    }
 
     const CONFIG = {
       worldSize: 1500,
@@ -370,8 +485,8 @@
       playerLandSnapHeight: 0.95,
       playerGroundSnapEpsilon: 0.45,
       playerSpawnClearance: 4,
-      playerStartPlatformRadius: 18,
-      playerStartPlatformHeight: 3.5,
+      playerStartPlatformRadius: 22,
+      playerStartPlatformHeight: 18,
       playerTurnSpeed: 10,
       playerCoyoteTime: 0.12,
       playerJumpBuffer: 0.14,
@@ -383,6 +498,10 @@
       footstepWalkInterval: 0.42,
       footstepRunInterval: 0.28,
       footstepCrouchInterval: 0.58,
+      footstepSandVolumeMultiplier: 0.56,
+      footstepSandCadenceMultiplier: 1.2,
+      footstepSandPitchMin: 0.86,
+      footstepSandPitchMax: 0.95,
 
       slopeSpeedAngleMax: 38,   // degrees — full speed penalty at this slope
       slopeSpeedMin: 0.55,      // min speed multiplier on steepest climbable slope
@@ -620,21 +739,31 @@
 	      hudCargo: document.getElementById("hudCargo"),
 	      hudWeapon: document.getElementById("hudWeapon"),
 	      hudScore: document.getElementById("hudScore"),
+      hudHealthValue: document.getElementById("hudHealthValue"),
       healthFill: document.getElementById("healthFill"),
-      hudLasgunCharge: document.getElementById("hudLasgunCharge"),
-      lasgunFill: document.getElementById("lasgunFill"),
+      hudShieldValue: document.getElementById("hudShieldValue"),
+      shieldFill: document.getElementById("shieldFill"),
+      hudWormValue: document.getElementById("hudWormValue"),
+      hudWormFillPlayer: document.getElementById("hudWormFillPlayer"),
+      hudContextMeter: document.getElementById("hudContextMeter"),
+      hudContextLabel: document.getElementById("hudContextLabel"),
+      hudContextValue: document.getElementById("hudContextValue"),
+      hudContextFill: document.getElementById("hudContextFill"),
+      hudStatus: document.getElementById("hudStatus"),
       explosionFlash: document.getElementById("explosionFlash"),
       noiseFill: document.getElementById("noiseFill"),
       signFill: document.getElementById("signFill"),
       wormFill: document.getElementById("wormFill"),
-      hudObjective: document.getElementById("hudObjective"),
-      hudNoiseText: document.getElementById("hudNoiseText"),
       hudSeed: document.getElementById("hudSeed"),
     };
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x5ab4e8);
     scene.fog = new THREE.Fog(0xd8c09a, 70, 220);
+
+    const StaticCollisionGroup = new THREE.Group();
+    StaticCollisionGroup.name = "StaticCollisionGroup";
+    scene.add(StaticCollisionGroup);
 
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 900);
     camera.rotation.x = CONFIG.cameraPitchDown;
@@ -701,46 +830,9 @@
       return { amp, xf: Math.cos(angle) * mag, zf: Math.sin(angle) * mag, phase: rng() * Math.PI * 2 };
     });
 
-    // Rocky safe zones — worms cannot surface here.
-    // Each patch is a raised mesa with one or two seeded approach routes made of smaller boulders.
-    // baseHeight is computed in createTerrain() once sampleDuneHeight is available.
-    // Two guaranteed large formations (indices 0 and 1), five smaller ones.
-    const ROCK_PATCHES = (() => {
-      const patches = [];
-      // Large #1 — starting zone, always at origin
-      patches.push({
-        x: 0,
-        z: 0,
-        radius: 90 + rng() * 20,
-        rise: 10 + rng() * 4,
-        approachAngle: rng() * Math.PI * 2,
-      });
-      // Large #2 — far away on the opposite side
-      const lg2Angle = rng() * Math.PI * 2;
-      patches.push({
-        x: Math.cos(lg2Angle) * (400 + rng() * 150),
-        z: Math.sin(lg2Angle) * (400 + rng() * 150),
-        radius: 80 + rng() * 20,
-        rise: 10 + rng() * 4,
-        approachAngle: rng() * Math.PI * 2,
-      });
-      // Five smaller outcroppings
-      for (let i = 0; i < 5; i += 1) {
-        const angle = rng() * Math.PI * 2;
-        patches.push({
-          x: Math.cos(angle) * (150 + rng() * 340),
-          z: Math.sin(angle) * (150 + rng() * 340),
-          radius: 35 + rng() * 20,
-          rise: 5 + rng() * 3,
-          approachAngle: rng() * Math.PI * 2,
-        });
-      }
-      return patches;
-    })();
-
-    // Walkable rock tops and blocking rock bodies are registered separately from the sand heightfield.
-    const LEDGE_PLATFORMS = [];
-    const ROCK_COLLIDERS = [];
+	    const ROCK_PATCHES = createRockPatches();
+	    const ROCK_PLATFORMS = [];
+	    const ROCK_COLLIDERS = [];
 
     const state = {
       elapsed: 0,
@@ -749,12 +841,12 @@
       noiseLevel: 0,
       signLevel: 0,
       noiseImpulse: 0,
-      surfaceType: "rock",
+      surfaceType: "sand",
       spiceCarry: 0,
       spiceScore: 0,
       harvestNode: null,
       harvestTimer: 0,
-      interactHint: "Leave rock and find a spice patch in the open sand.",
+      interactHint: "Find a spice patch in the open sand.",
       wormPhase: "idle",
       wormTimer: 0,
       wormCooldown: 0,
@@ -843,14 +935,27 @@
 	    const tempLasgunEnd = new THREE.Vector3();
 	    const cameraRaycaster = new THREE.Raycaster();
 	    const textureLoader = new THREE.TextureLoader();
-	    const rockMaterial = createRockMaterial();
-	    const maulaProjectiles = [];
-    const startPlatform = {
-      x: CONFIG.playerStart.x,
-      z: CONFIG.playerStart.z,
-      topY: CONFIG.playerStart.y,
-      radius: CONFIG.playerStartPlatformRadius,
+	    const tempCollisionBox = new THREE.Box3();
+    const tempCollisionMatrix = new THREE.Matrix4();
+    const tempCollisionNormalMatrix = new THREE.Matrix3();
+    const tempCollisionSegment = new THREE.Line3();
+    const tempCollisionLocalNormal = new THREE.Vector3();
+    const tempCollisionWorldNormal = new THREE.Vector3();
+    const tempCollisionAccumulatedNormal = new THREE.Vector3();
+    const tempCollisionTrianglePoint = new THREE.Vector3();
+    const tempCollisionCapsulePoint = new THREE.Vector3();
+    const tempStaticRay = new THREE.Ray();
+    const tempSupportRayOrigin = new THREE.Vector3();
+    const tempSupportNormal = new THREE.Vector3();
+    const tempDown = new THREE.Vector3(0, -1, 0);
+    const tempPlayerCapsule = new Capsule(new THREE.Vector3(), new THREE.Vector3(), CONFIG.playerCollisionRadius);
+    const tempCapsuleHit = {
+      normal: new THREE.Vector3(),
+      depth: 0,
     };
+      const tempRockColor = new THREE.Color();
+	    const maulaProjectiles = [];
+    const rockMaterial = createRockMaterial();
     const worm = {
       position: new THREE.Vector3(),
       velocity: new THREE.Vector3(),
@@ -862,7 +967,9 @@
 
     ui.hudSeed.textContent = `Seed: ${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")}`;
     createTerrain();
-	    const rockMesh = buildRockInstances();
+      const { visualGroup: rockMesh, collisionMesh: rockCollisionMesh } = buildRockInstances();
+      StaticCollisionGroup.add(rockMesh);
+      const worldCollisionMesh = generateCollisionBVH(rockCollisionMesh);
 	    const wormHazard = createWormHazard();
 	    const thumper = createThumper();
 	    const spiceObjective = createSpiceObjective();
@@ -875,55 +982,6 @@
     updateDayNight(0);
     refreshHud();
     animate();
-
-    function createRockMaterial() {
-      const diffuseMap = textureLoader.load("assets/textures/rock_01/rock_01_diff_1k.jpg");
-      const normalMap = textureLoader.load("assets/textures/rock_01/rock_01_nor_gl_1k.jpg");
-      const roughnessMap = textureLoader.load("assets/textures/rock_01/rock_01_rough_1k.jpg");
-
-      diffuseMap.colorSpace = THREE.SRGBColorSpace;
-
-      for (const texture of [diffuseMap, normalMap, roughnessMap]) {
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(1.1, 1.8);
-        texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      }
-
-      return new THREE.MeshStandardMaterial({
-        color: 0xc9c0b2,
-        map: diffuseMap,
-        normalMap,
-        normalScale: new THREE.Vector2(1.2, 1.2),
-        roughnessMap,
-        roughness: 1,
-        metalness: 0,
-        flatShading: false,
-      });
-    }
-
-    function createRockGeometry() {
-      const geometry = new THREE.CylinderGeometry(1.02, 1.7, 1, 7, 3, false);
-      const positions = geometry.attributes.position;
-
-      for (let i = 0; i < positions.count; i += 1) {
-        const x = positions.getX(i);
-        const y = positions.getY(i);
-        const z = positions.getZ(i);
-        const angle = Math.atan2(z, x);
-        const capScale = Math.abs(y) > 0.49 ? 1.08 : 1;
-        const radialScale = capScale
-          * (1 + (0.12 * Math.sin((angle * 2.7) + (y * 5.1))) + (0.08 * Math.cos((angle * 5.2) - (y * 3.4))));
-
-        positions.setX(i, (x * radialScale) + (0.04 * Math.sin((y + angle) * 4.3)));
-        positions.setY(i, y + (0.05 * Math.sin((x * 6.1) + (z * 4.7))));
-        positions.setZ(i, (z * radialScale) + (0.04 * Math.cos((y - angle) * 4.9)));
-      }
-
-      positions.needsUpdate = true;
-      geometry.computeVertexNormals();
-      return geometry;
-    }
 
     function createSpicePatchGeometry(worldX, worldZ, radius, segments, seed, baseY, heightOffset, edgeWarp) {
       const geometry = new THREE.CircleGeometry(radius, segments);
@@ -973,12 +1031,696 @@
       return h;
     }
 
-    function createTerrain() {
-      // Compute flat base height for each rocky patch from the raw dune function.
-      for (const patch of ROCK_PATCHES) {
+    function smoothstep(t) {
+      const c = THREE.MathUtils.clamp(t, 0, 1);
+      return c * c * (3 - 2 * c);
+    }
+
+    function shortestAngleDelta(a, b) {
+      return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+    }
+
+	    function createRockPatches() {
+	      const patches = [];
+	      const halfWorld = (CONFIG.worldSize * 0.5) - 90;
+
+	      function canPlacePatch(x, z, radius, gap = 12) {
+	        if (Math.abs(x) > halfWorld || Math.abs(z) > halfWorld) return false;
+	        for (const patch of patches) {
+	          const dx = x - patch.x;
+	          const dz = z - patch.z;
+	          const minDist = patch.radius + radius + gap;
+	          if ((dx * dx) + (dz * dz) < minDist * minDist) return false;
+	        }
+	        return true;
+	      }
+
+	      function pushPatch(x, z, radius, plateauRadius, rise, major, approachAngle, gap = 12) {
+	        if (!canPlacePatch(x, z, radius, gap)) return false;
+	        patches.push({
+	          x,
+	          z,
+	          radius,
+	          plateauRadius,
+	          rise,
+	          major,
+	          approachAngle,
+	          seed: Math.floor(rng() * 0x7fffffff),
+	        });
+	        return true;
+	      }
+
+	      pushPatch(
+	        CONFIG.playerStart.x,
+	        CONFIG.playerStart.z,
+	        28,
+	        15.5,
+	        8.2,
+	        true,
+	        rng() * Math.PI * 2,
+	        0
+	      );
+
+	      // Sparse mid-distance ring: only a couple reachable safe spots after leaving spawn.
+	      let nearStartPlaced = 0;
+	      for (let attempt = 0; attempt < 180 && nearStartPlaced < 2; attempt += 1) {
+	        const slot = attempt % 8;
+	        const angle = ((slot / 8) * Math.PI * 2) + randomRange(-0.2, 0.2, rng);
+	        const dist = randomRange(80, 160, rng);
+	        const x = Math.cos(angle) * dist;
+	        const z = Math.sin(angle) * dist;
+	        if (isInStartZone(x, z)) continue;
+	        if (
+	          pushPatch(
+	            x,
+	            z,
+	            randomRange(10.5, 16.5, rng),
+	            randomRange(4.2, 7.8, rng),
+	            randomRange(3.4, 5.8, rng),
+	            false,
+	            angle + Math.PI + randomRange(-0.55, 0.55, rng),
+	            16
+	          )
+	        ) {
+	          nearStartPlaced += 1;
+	        }
+	      }
+
+	      // Far landmarks: visible on the horizon and rare.
+	      let landmarkPlaced = 0;
+	      for (let attempt = 0; attempt < 140 && landmarkPlaced < 2; attempt += 1) {
+	        const angle = rng() * Math.PI * 2;
+	        const dist = randomRange(420, halfWorld - 16, rng);
+	        const x = Math.cos(angle) * dist;
+	        const z = Math.sin(angle) * dist;
+	        if (
+	          pushPatch(
+	            x,
+	            z,
+	            randomRange(27, 38, rng),
+	            randomRange(12, 18, rng),
+	            randomRange(8.4, 12.8, rng),
+	            true,
+	            angle + Math.PI + randomRange(-0.4, 0.4, rng),
+	            18
+	          )
+	        ) {
+	          landmarkPlaced += 1;
+	        }
+	      }
+
+	      // Sparse outposts: long dangerous sand stretches between safe positions.
+	      let outpostPlaced = 0;
+	      for (let attempt = 0; attempt < 260 && outpostPlaced < 5; attempt += 1) {
+	        const angle = rng() * Math.PI * 2;
+	        const dist = randomRange(320, halfWorld - 24, rng);
+	        const x = Math.cos(angle) * dist;
+	        const z = Math.sin(angle) * dist;
+	        const major = rng() < 0.16;
+	        const radius = major
+	          ? randomRange(18, 28, rng)
+	          : randomRange(10.5, 17.5, rng);
+	        const plateauRadius = major
+	          ? randomRange(8, 12.5, rng)
+	          : randomRange(4.2, 7.4, rng);
+	        const rise = major
+	          ? randomRange(6, 8.8, rng)
+	          : randomRange(3.2, 5.4, rng);
+	        if (
+	          pushPatch(
+	            x,
+	            z,
+	            radius,
+	            plateauRadius,
+	            rise,
+	            major,
+	            angle + Math.PI + randomRange(-0.55, 0.55, rng),
+	            major ? 18 : 14
+	          )
+	        ) {
+	          outpostPlaced += 1;
+	        }
+	      }
+
+	      return patches;
+	    }
+
+	    function createRockMaterial() {
+	      const diffuseMap = textureLoader.load("assets/textures/rock_01/rock_01_diff_1k.jpg");
+	      const normalMap = textureLoader.load("assets/textures/rock_01/rock_01_nor_gl_1k.jpg");
+	      const roughnessMap = textureLoader.load("assets/textures/rock_01/rock_01_rough_1k.jpg");
+	      diffuseMap.colorSpace = THREE.SRGBColorSpace;
+
+	      for (const texture of [diffuseMap, normalMap, roughnessMap]) {
+	        texture.wrapS = THREE.RepeatWrapping;
+	        texture.wrapT = THREE.RepeatWrapping;
+	        texture.repeat.set(1.2, 1.8);
+	        texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+	      }
+
+	      return new THREE.MeshStandardMaterial({
+	        color: 0xc8b296,
+	        map: diffuseMap,
+	        normalMap,
+	        normalScale: new THREE.Vector2(1.05, 1.05),
+	        roughnessMap,
+	        roughness: 1,
+	        metalness: 0.02,
+	      });
+	    }
+
+	    function createRockGeometry(seed = 1, family = 0) {
+	      const rockRng = mulberry32(((seed >>> 0) ^ ((family + 1) * 0x9e3779b9)) >>> 0);
+	      const radialSegments = family === 2 ? 9 : 7;
+	      const heightSegments = family === 1 ? 2 : 3;
+	      const geometry = new THREE.CylinderGeometry(0.98, 1.46, 1, radialSegments, heightSegments, false);
+	      const positions = geometry.attributes.position;
+	      const phaseA = rockRng() * Math.PI * 2;
+	      const phaseB = rockRng() * Math.PI * 2;
+	      const ridgeA = randomRange(2.2, 4.1, rockRng);
+	      const ridgeB = randomRange(4.4, 6.8, rockRng);
+	      const squatness = family === 1 ? 0.76 : family === 2 ? 1.14 : 0.94;
+	      const bulge = family === 2 ? 1.18 : family === 1 ? 1.28 : 1.1;
+
+	      for (let i = 0; i < positions.count; i += 1) {
+	        const vx = positions.getX(i);
+	        const vy = positions.getY(i);
+	        const vz = positions.getZ(i);
+	        const angle = Math.atan2(vz, vx);
+	        const ringNoise = 1
+	          + (0.1 * Math.sin((angle * ridgeA) + (vy * 4.6) + phaseA))
+	          + (0.08 * Math.cos((angle * ridgeB) - (vy * 3.7) + phaseB));
+	        const capScale = Math.abs(vy) > 0.49 ? 1.08 : 1;
+	        const radialScale = ringNoise * capScale * bulge;
+	        const x = (vx * radialScale) + (0.035 * Math.sin((vy + angle) * 5.2));
+	        const y = (vy * squatness) + (0.045 * Math.sin((vx * 5.8) + (vz * 4.2) + phaseB));
+	        const z = (vz * radialScale) + (0.035 * Math.cos((vy - angle) * 4.8));
+	        positions.setXYZ(i, x, y, z);
+	      }
+
+	      positions.needsUpdate = true;
+	      geometry.computeVertexNormals();
+	      return geometry;
+	    }
+
+    function getRockPatchBaseHeight(patch) {
+      if (patch.baseHeight === undefined) {
         patch.baseHeight = sampleDuneHeight(patch.x, patch.z);
       }
+      return patch.baseHeight;
+    }
 
+    function getRockPatchTopY(patch) {
+      return getRockPatchBaseHeight(patch) + patch.rise;
+    }
+
+    function sampleRockPatchBlend(worldX, worldZ) {
+      let blend = 0;
+      for (const patch of ROCK_PATCHES) {
+        const dx = worldX - patch.x;
+        const dz = worldZ - patch.z;
+        const dist = Math.sqrt((dx * dx) + (dz * dz));
+        const colorRadius = patch.plateauRadius + (patch.major ? 3.2 : 2.1);
+        if (dist >= colorRadius) continue;
+        const t = dist <= patch.plateauRadius
+          ? 1
+          : 1 - smoothstep((dist - patch.plateauRadius) / Math.max(0.001, colorRadius - patch.plateauRadius));
+        blend = Math.max(blend, t);
+      }
+      return blend;
+    }
+
+    function sampleRockPatchHeight(worldX, worldZ) {
+      let height = -Infinity;
+      for (const patch of ROCK_PATCHES) {
+        const dx = worldX - patch.x;
+        const dz = worldZ - patch.z;
+        const dist = Math.sqrt((dx * dx) + (dz * dz));
+        if (dist > patch.plateauRadius) continue;
+        height = Math.max(height, getRockPatchTopY(patch));
+      }
+
+      return height;
+    }
+
+    function registerRockVolume(inst, options = {}) {
+      const {
+        walkable = false,
+        platformRadiusScale = 0.56,
+        colliderRadiusScale = 0.84,
+        radiusOverride = null,
+        radiusXOverride = null,
+        radiusZOverride = null,
+        platformRadiusOverride = null,
+        platformRadiusXOverride = null,
+        platformRadiusZOverride = null,
+        topYOverride = null,
+        bottomYOverride = null,
+      } = options;
+      const baseRadiusX = inst.sx * 0.82;
+      const baseRadiusZ = inst.sz * 0.82;
+      const colliderRadiusX = radiusXOverride ?? radiusOverride ?? (baseRadiusX * colliderRadiusScale);
+      const colliderRadiusZ = radiusZOverride ?? radiusOverride ?? (baseRadiusZ * colliderRadiusScale);
+      const topY = topYOverride ?? (inst.y + (inst.sy * 0.5));
+      const bottomY = bottomYOverride ?? (inst.y - (inst.sy * 0.5));
+      let platformRadiusX = 0;
+      let platformRadiusZ = 0;
+      const rotY = inst.rotY ?? 0;
+
+      if (walkable) {
+        platformRadiusX = platformRadiusXOverride ?? platformRadiusOverride ?? (baseRadiusX * platformRadiusScale);
+        platformRadiusZ = platformRadiusZOverride ?? platformRadiusOverride ?? (baseRadiusZ * platformRadiusScale);
+        ROCK_PLATFORMS.push({
+          x: inst.x,
+          z: inst.z,
+          radiusX: platformRadiusX,
+          radiusZ: platformRadiusZ,
+          topY,
+          rotY,
+        });
+      }
+
+      ROCK_COLLIDERS.push({
+        x: inst.x,
+        z: inst.z,
+        radiusX: colliderRadiusX,
+        radiusZ: colliderRadiusZ,
+        bottomY,
+        topY,
+        walkable,
+        platformRadiusX,
+        platformRadiusZ,
+        rotY,
+      });
+    }
+
+    function isPointInsideOrientedEllipse(worldX, worldZ, shape, padding = 0) {
+      const dx = worldX - shape.x;
+      const dz = worldZ - shape.z;
+      const rotY = shape.rotY ?? 0;
+      const cos = Math.cos(rotY);
+      const sin = Math.sin(rotY);
+      const localX = (dx * cos) + (dz * sin);
+      const localZ = (-dx * sin) + (dz * cos);
+      const radiusX = Math.max(0.001, (shape.radiusX ?? shape.radius ?? 0) + padding);
+      const radiusZ = Math.max(0.001, (shape.radiusZ ?? shape.radius ?? 0) + padding);
+      return ((localX * localX) / (radiusX * radiusX)) + ((localZ * localZ) / (radiusZ * radiusZ)) <= 1;
+    }
+
+	    function buildRockInstances() {
+	      ROCK_PLATFORMS.length = 0;
+	      ROCK_COLLIDERS.length = 0;
+
+	      const visualGroup = new THREE.Group();
+	      visualGroup.name = "RockVisualGroup";
+	      const collisionGeometries = [];
+	      const collisionTransform = new THREE.Object3D();
+	      const slabGeometry = new THREE.CylinderGeometry(1, 1.06, 1, 10, 1, false);
+	      const rockGeometry = createRockGeometry((MAP_SEED ^ 0x81f4cb37) >>> 0, 0);
+	      const slabInstances = [];
+	      const rockInstances = [];
+
+	      function addRockInstance(inst, options = {}) {
+	        const shape = options.shape ?? "rock";
+	        const geometry = shape === "slab" ? slabGeometry : rockGeometry;
+	        const targetList = shape === "slab" ? slabInstances : rockInstances;
+	        targetList.push({
+	          geometry,
+	          inst: { ...inst },
+	        });
+
+	        collisionTransform.position.set(inst.x, inst.y, inst.z);
+	        collisionTransform.rotation.set(inst.tiltX ?? 0, inst.rotY ?? 0, inst.tiltZ ?? 0);
+	        collisionTransform.scale.set(inst.sx, inst.sy, inst.sz);
+	        collisionTransform.updateMatrix();
+
+	        const collisionGeometry = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+	        collisionGeometry.deleteAttribute("normal");
+	        if (collisionGeometry.getAttribute("uv")) collisionGeometry.deleteAttribute("uv");
+	        collisionGeometry.applyMatrix4(collisionTransform.matrix);
+	        collisionGeometries.push(collisionGeometry);
+	        registerRockVolume(inst, options);
+	      }
+
+	      function overlapsExistingRock(inst, padding = 1.6) {
+	        const reach = Math.max(inst.sx, inst.sz);
+	        for (const collider of ROCK_COLLIDERS) {
+	          const dx = inst.x - collider.x;
+	          const dz = inst.z - collider.z;
+	          const minDist = Math.max(collider.radiusX, collider.radiusZ) + (reach * 0.54) + padding;
+	          if ((dx * dx) + (dz * dz) < minDist * minDist) return true;
+	        }
+	        return false;
+	      }
+
+	      for (let patchIndex = 0; patchIndex < ROCK_PATCHES.length; patchIndex += 1) {
+	        const patch = ROCK_PATCHES[patchIndex];
+	        const patchRng = mulberry32((patch.seed ^ 0x4f1bbcdc) >>> 0);
+	        const isStartPatch = patchIndex === 0;
+	        const topY = getRockPatchTopY(patch);
+	        const baseY = getRockPatchBaseHeight(patch);
+	        const mesaHeight = Math.max(2.8, (topY - baseY) + (patch.major ? 3.2 : 1.9));
+	        const mesaInst = {
+	          x: patch.x,
+	          y: baseY + (mesaHeight * 0.5) - 4,
+	          z: patch.z,
+	          sx: patch.plateauRadius * (patch.major ? 1.04 : 0.98),
+	          sy: mesaHeight + 8,
+	          sz: patch.plateauRadius * randomRange(0.86, 1.04, patchRng),
+	          rotY: patch.approachAngle + randomRange(-0.12, 0.12, patchRng),
+	          tiltX: randomRange(-0.03, 0.03, patchRng),
+	          tiltZ: randomRange(-0.03, 0.03, patchRng),
+	        };
+
+	        addRockInstance(mesaInst, {
+	          shape: "slab",
+	          registerCollider: true,
+	          walkable: true,
+	          radiusXOverride: mesaInst.sx * 0.9,
+	          radiusZOverride: mesaInst.sz * 0.9,
+	          platformRadiusXOverride: patch.plateauRadius * 0.94,
+	          platformRadiusZOverride: patch.plateauRadius * 0.88,
+	          topYOverride: topY + 0.12,
+	          bottomYOverride: baseY - 0.2,
+	        });
+
+	        const wallCount = patch.major ? (isStartPatch ? 0 : 6) : 3;
+	        for (let i = 0; i < wallCount; i += 1) {
+	          const angle = patch.approachAngle + ((i / wallCount) * Math.PI * 2) + randomRange(-0.35, 0.35, patchRng);
+	          if (isStartPatch) {
+	            const escapeDelta = Math.abs(shortestAngleDelta(angle, patch.approachAngle));
+	            const oppositeDelta = Math.abs(shortestAngleDelta(angle, patch.approachAngle + Math.PI));
+	            if (escapeDelta < 0.62 || oppositeDelta < 0.62) continue;
+	          }
+	          const radial = isStartPatch
+	            ? randomRange(patch.radius * 0.84, patch.radius * 1.04, patchRng)
+	            : randomRange(patch.plateauRadius * 1.08, patch.radius * 0.92, patchRng);
+	          const x = patch.x + (Math.cos(angle) * radial);
+	          const z = patch.z + (Math.sin(angle) * radial);
+	          if (isStartPatch && isInStartZone(x, z)) continue;
+
+	          const duneY = sampleDuneHeight(x, z);
+	          const topTarget = topY - randomRange(0.8, 2.8, patchRng);
+	          const height = isStartPatch
+	            ? Math.max(2.4, (topTarget - duneY) + randomRange(1.2, 2.8, patchRng))
+	            : Math.max(3, (topTarget - duneY) + randomRange(2.2, 4.8, patchRng));
+	          const inst = {
+	            x,
+	            y: duneY + (height * 0.5) - 2,
+	            z,
+	            sx: randomRange(isStartPatch ? 2.2 : 3.1, isStartPatch ? 3.8 : patch.major ? 5.9 : 4.4, patchRng),
+	            sy: height + 4,
+	            sz: randomRange(isStartPatch ? 2 : 2.8, isStartPatch ? 3.5 : patch.major ? 5.2 : 4, patchRng),
+	            rotY: angle + randomRange(-0.25, 0.25, patchRng),
+	            tiltX: randomRange(-0.11, 0.11, patchRng),
+	            tiltZ: randomRange(-0.11, 0.11, patchRng),
+	          };
+	          if (overlapsExistingRock(inst, 1.1)) continue;
+	          addRockInstance(inst, {
+	            shape: "rock",
+	            registerCollider: true,
+	            walkable: false,
+	            colliderRadiusScale: 0.86,
+	          });
+	        }
+
+	        const topPieces = patch.major ? 4 : 2;
+	        for (let i = 0; i < topPieces; i += 1) {
+	          const angle = randomRange(0, Math.PI * 2, patchRng);
+	          const radial = randomRange(0, patch.plateauRadius * 0.52, patchRng);
+	          const x = patch.x + (Math.cos(angle) * radial);
+	          const z = patch.z + (Math.sin(angle) * radial);
+	          const height = randomRange(1, patch.major ? 2.1 : 1.5, patchRng);
+	          const inst = {
+	            x,
+	            y: topY + (height * 0.44),
+	            z,
+	            sx: randomRange(patch.plateauRadius * 0.22, patch.plateauRadius * 0.42, patchRng),
+	            sy: height,
+	            sz: randomRange(patch.plateauRadius * 0.18, patch.plateauRadius * 0.34, patchRng),
+	            rotY: randomRange(0, Math.PI * 2, patchRng),
+	            tiltX: randomRange(-0.06, 0.06, patchRng),
+	            tiltZ: randomRange(-0.06, 0.06, patchRng),
+	          };
+	          addRockInstance(inst, {
+	            shape: "slab",
+	            registerCollider: true,
+	            walkable: true,
+	            platformRadiusScale: 0.84,
+	            colliderRadiusScale: 0.92,
+	          });
+	        }
+	      }
+
+	      const slopeRockRng = mulberry32((MAP_SEED ^ 0x7f4a7c15) >>> 0);
+	      const scatterHalfWorld = (CONFIG.worldSize * 0.5) - 30;
+	      const slopeThreshold = CONFIG.slopeSpeedAngleMax * 0.93;
+	      const slopeSpawnAttempts = 130;
+	      let slopeRockCount = 0;
+
+	      for (let attempt = 0; attempt < slopeSpawnAttempts; attempt += 1) {
+	        const x = randomRange(-scatterHalfWorld, scatterHalfWorld, slopeRockRng);
+	        const z = randomRange(-scatterHalfWorld, scatterHalfWorld, slopeRockRng);
+	        if (isInStartZone(x, z)) continue;
+	        if (sampleRockPatchHeight(x, z) > -Infinity) continue;
+
+	        const slopeAngle = sampleSlopeAngle(x, z);
+	        if (slopeAngle < slopeThreshold) continue;
+	        const steepness = THREE.MathUtils.clamp(
+	          (slopeAngle - slopeThreshold) / Math.max(0.001, 90 - slopeThreshold),
+	          0,
+	          1
+	        );
+	        const baseScale = THREE.MathUtils.lerp(1.9, 4.4, steepness);
+	        const inst = {
+	          x,
+	          y: sampleGroundHeight(x, z) + (baseScale * randomRange(0.5, 0.72, slopeRockRng)),
+	          z,
+	          sx: baseScale * randomRange(0.7, 1.14, slopeRockRng),
+	          sy: baseScale * randomRange(0.55, 0.95, slopeRockRng),
+	          sz: baseScale * randomRange(0.72, 1.1, slopeRockRng),
+	          rotY: randomRange(0, Math.PI * 2, slopeRockRng),
+	          tiltX: randomRange(-0.16, 0.16, slopeRockRng),
+	          tiltZ: randomRange(-0.16, 0.16, slopeRockRng),
+	        };
+	        if (overlapsExistingRock(inst, 1.4)) continue;
+
+	        addRockInstance(inst, {
+	          shape: "rock",
+	          registerCollider: true,
+	          walkable: false,
+	          colliderRadiusScale: 0.84,
+	        });
+	        slopeRockCount += 1;
+	        if (slopeRockCount >= 22) break;
+	      }
+
+	      const instancedMeshes = [];
+	      function buildInstancedMesh(bucket, defaultGeometry) {
+	        if (bucket.length === 0) return null;
+	        const mesh = new THREE.InstancedMesh(defaultGeometry, rockMaterial, bucket.length);
+	        mesh.castShadow = CONFIG.shadowEnabled;
+	        mesh.receiveShadow = CONFIG.shadowEnabled;
+	        const obj = new THREE.Object3D();
+	        for (let i = 0; i < bucket.length; i += 1) {
+	          const { inst } = bucket[i];
+	          obj.position.set(inst.x, inst.y, inst.z);
+	          obj.rotation.set(inst.tiltX ?? 0, inst.rotY ?? 0, inst.tiltZ ?? 0);
+	          obj.scale.set(inst.sx, inst.sy, inst.sz);
+	          obj.updateMatrix();
+	          mesh.setMatrixAt(i, obj.matrix);
+	        }
+	        mesh.instanceMatrix.needsUpdate = true;
+	        mesh.frustumCulled = false;
+	        instancedMeshes.push(mesh);
+	        visualGroup.add(mesh);
+	        return mesh;
+	      }
+
+	      buildInstancedMesh(slabInstances, slabGeometry);
+	      buildInstancedMesh(rockInstances, rockGeometry);
+	      for (const mesh of instancedMeshes) {
+	        mesh.matrixAutoUpdate = false;
+	      }
+
+	      const fallbackGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+	      const mergedCollisionGeometry = collisionGeometries.length > 1
+	        ? (mergeGeometries(collisionGeometries, false) ?? collisionGeometries[0])
+	        : (collisionGeometries[0] ?? fallbackGeometry);
+	      const collisionMesh = new THREE.Mesh(
+	        mergedCollisionGeometry,
+	        new THREE.MeshBasicMaterial({ visible: false })
+	      );
+	      collisionMesh.name = "RockCollisionMesh";
+
+	      return { visualGroup, collisionMesh };
+	    }
+
+    function generateCollisionBVH(mesh) {
+      mesh.updateMatrixWorld(true);
+      let collisionGeometry;
+      if (mesh.isMesh) {
+        collisionGeometry = mesh.geometry.clone();
+        collisionGeometry.applyMatrix4(mesh.matrixWorld);
+      } else {
+        const generator = new StaticGeometryGenerator(mesh);
+        generator.attributes = ["position"];
+        collisionGeometry = generator.generate();
+      }
+      collisionGeometry.computeBoundingBox();
+      collisionGeometry.computeBoundingSphere();
+      collisionGeometry.boundsTree = new MeshBVH(collisionGeometry);
+
+      const collider = new THREE.Mesh(
+        collisionGeometry,
+        new THREE.MeshBasicMaterial({
+          color: 0x00ff88,
+          wireframe: true,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        })
+      );
+      collider.name = `${mesh.name || "StaticCollisionGroup"}BVH`;
+      collider.visible = false;
+      scene.add(collider);
+      collider.updateMatrixWorld(true);
+      return collider;
+    }
+
+    function raycastWorldCollision(origin, direction, maxDistance, minDistance = 0) {
+      if (!worldCollisionMesh?.geometry?.boundsTree || maxDistance <= minDistance) return null;
+
+      tempCollisionMatrix.copy(worldCollisionMesh.matrixWorld).invert();
+      tempStaticRay.origin.copy(origin).addScaledVector(direction, minDistance).applyMatrix4(tempCollisionMatrix);
+      tempStaticRay.direction.copy(direction).transformDirection(tempCollisionMatrix);
+
+      const hit = worldCollisionMesh.geometry.boundsTree.raycastFirst(tempStaticRay, THREE.DoubleSide);
+      if (!hit) return null;
+
+      hit.point.applyMatrix4(worldCollisionMesh.matrixWorld);
+      hit.distance = origin.distanceTo(hit.point);
+      return hit.distance <= maxDistance ? hit : null;
+    }
+
+    function getWorldCollisionHitNormal(hit, out = tempSupportNormal) {
+      if (hit.face?.normal) {
+        out.copy(hit.face.normal);
+        tempCollisionNormalMatrix.getNormalMatrix(worldCollisionMesh.matrixWorld);
+        out.applyMatrix3(tempCollisionNormalMatrix).normalize();
+        return out;
+      }
+
+      return out.set(0, 1, 0);
+    }
+
+    function getRockPlatformSupport(worldX, worldZ, feetY = Infinity, velocityY = 0) {
+      const descending = velocityY <= 0.45;
+      const supportWindow = CONFIG.playerLandSnapHeight + 0.5;
+      let bestSupport = null;
+
+      for (const platform of ROCK_PLATFORMS) {
+        if (!isPointInsideOrientedEllipse(worldX, worldZ, platform, CONFIG.playerCollisionRadius * 0.34)) continue;
+        if (Number.isFinite(feetY) && (!descending || feetY < platform.topY - supportWindow)) continue;
+
+        const rayOriginY = Number.isFinite(feetY)
+          ? Math.max(platform.topY + 2.5, feetY + supportWindow + 1.8)
+          : platform.topY + 4.5;
+        tempSupportRayOrigin.set(worldX, rayOriginY, worldZ);
+
+        const hit = raycastWorldCollision(
+          tempSupportRayOrigin,
+          tempDown,
+          Math.max(4.5, rayOriginY - (platform.topY - 4)),
+          0
+        );
+        if (!hit) continue;
+
+        const normal = getWorldCollisionHitNormal(hit, tempSupportNormal);
+        if (normal.y < 0.45) continue;
+        if (hit.point.y < platform.topY - 3) continue;
+
+        if (!bestSupport || hit.point.y > bestSupport.y) {
+          bestSupport = {
+            platform,
+            y: hit.point.y,
+            normalY: normal.y,
+          };
+        }
+      }
+
+      return bestSupport;
+    }
+
+    function detectRockSurfaceBelow(feetY = player.position.y) {
+      if (!worldCollisionMesh?.geometry?.boundsTree) return null;
+
+      tempSupportRayOrigin.set(
+        player.position.x,
+        feetY + CONFIG.playerGroundSnapEpsilon,
+        player.position.z
+      );
+
+      const hit = raycastWorldCollision(
+        tempSupportRayOrigin,
+        tempDown,
+        CONFIG.playerGroundSnapEpsilon + 0.05,
+        0
+      );
+      if (!hit) return null;
+
+      const normal = getWorldCollisionHitNormal(hit, tempSupportNormal);
+      if (normal.y < 0.45) return null;
+      return hit.distance <= CONFIG.playerGroundSnapEpsilon + 0.001 ? hit : null;
+    }
+
+    function sampleWorldCollisionSupportHeight(worldX, worldZ, feetY = Infinity, velocityY = 0) {
+      if (!worldCollisionMesh?.geometry?.boundsTree) return -Infinity;
+      const descending = velocityY <= 0.45;
+      if (Number.isFinite(feetY) && !descending) return -Infinity;
+
+      const rayOriginY = Number.isFinite(feetY)
+        ? feetY + CONFIG.playerLandSnapHeight + 1.6
+        : sampleGroundHeight(worldX, worldZ) + CONFIG.playerLandSnapHeight + 3.2;
+      tempSupportRayOrigin.set(worldX, rayOriginY, worldZ);
+
+      const hit = raycastWorldCollision(
+        tempSupportRayOrigin,
+        tempDown,
+        CONFIG.playerLandSnapHeight + 3.6,
+        0
+      );
+      if (!hit) return -Infinity;
+
+      const normal = getWorldCollisionHitNormal(hit, tempSupportNormal);
+      if (normal.y < 0.52) return -Infinity;
+      if (Number.isFinite(feetY) && hit.point.y < feetY - (CONFIG.playerLandSnapHeight + 0.2)) return -Infinity;
+      if (Number.isFinite(feetY) && hit.point.y > feetY + (CONFIG.playerLandSnapHeight + 0.55)) return -Infinity;
+      return hit.point.y;
+    }
+
+    function sampleRockPatchSupportHeight(worldX, worldZ, feetY = Infinity, velocityY = 0) {
+      const patchY = sampleRockPatchHeight(worldX, worldZ);
+      if (patchY === -Infinity) return -Infinity;
+      if (velocityY > 0.45) return -Infinity;
+      if (!Number.isFinite(feetY)) return patchY;
+
+      const maxStepUp = (CONFIG.playerLandSnapHeight * 0.45) + 0.14;
+      const maxDrop = CONFIG.playerLandSnapHeight + 0.9;
+      if (patchY > feetY + maxStepUp) return -Infinity;
+      if (patchY < feetY - maxDrop) return -Infinity;
+      return patchY;
+    }
+
+    function getPlayerSurfaceType(feetY = player.position.y, velocityY = player.userData.velocity.y) {
+      if (sampleRockPatchSupportHeight(player.position.x, player.position.z, feetY, velocityY) > -Infinity) {
+        return "rock";
+      }
+      if (detectRockSurfaceBelow(feetY)) return "rock";
+      return getRockPlatformSupport(player.position.x, player.position.z, feetY, velocityY) ? "rock" : "sand";
+    }
+
+    function createTerrain() {
       const geometry = new THREE.PlaneGeometry(
         CONFIG.worldSize, CONFIG.worldSize,
         CONFIG.terrainSegments, CONFIG.terrainSegments
@@ -987,32 +1729,18 @@
 
       const positions = geometry.attributes.position;
       const sandColor = new THREE.Color(0xd4a870);
-      const rockColor = new THREE.Color(0x2e2d2b);
+      const rockColor = new THREE.Color(0x8d6f4d);
       const colorData = new Float32Array(positions.count * 3);
 
       for (let i = 0; i < positions.count; i += 1) {
         const x = positions.getX(i);
         const z = positions.getZ(i);
         positions.setY(i, sampleGroundHeight(x, z));
-
-        // Blend vertex colour toward rocky grey inside patches.
-        let rockBlend = 0;
-        for (const patch of ROCK_PATCHES) {
-          const dx = x - patch.x;
-          const dz = z - patch.z;
-          const dist = Math.sqrt(dx * dx + dz * dz);
-          if (dist < patch.radius) {
-            const t = 1 - dist / patch.radius;
-            // cubic smoothstep then squared — sharper dark interior, quick edge transition
-            const s = t * t * (3 - 2 * t);
-            rockBlend = Math.max(rockBlend, s * s);
-          }
-        }
-
-        const col = sandColor.clone().lerp(rockColor, rockBlend);
-        colorData[i * 3]     = col.r;
-        colorData[i * 3 + 1] = col.g;
-        colorData[i * 3 + 2] = col.b;
+        const blend = sampleRockPatchBlend(x, z);
+        tempRockColor.copy(sandColor).lerp(rockColor, blend * 0.85);
+        colorData[i * 3] = tempRockColor.r;
+        colorData[i * 3 + 1] = tempRockColor.g;
+        colorData[i * 3 + 2] = tempRockColor.b;
       }
 
       positions.needsUpdate = true;
@@ -1028,103 +1756,73 @@
     }
 
     function getStartSpawnPoint(out = tempWormTarget) {
-      out.set(startPlatform.x, startPlatform.topY, startPlatform.z);
+      out.set(
+        CONFIG.playerStart.x,
+        samplePlayerGroundHeight(CONFIG.playerStart.x, CONFIG.playerStart.z),
+        CONFIG.playerStart.z
+      );
       return out;
     }
 
-    function overlapsStartSpawn(worldX, worldZ, radius = 0) {
-      const dx = worldX - startPlatform.x;
-      const dz = worldZ - startPlatform.z;
-      const clearance = startPlatform.radius + CONFIG.playerSpawnClearance + radius;
-      return (dx * dx) + (dz * dz) < clearance * clearance;
-    }
-
-    function smoothstep(t) {
-      const c = Math.max(0, Math.min(1, t));
-      return c * c * (3 - 2 * c);
-    }
-
-    // Four-tier stepped mesa profile.
-    // r zones (normalised distance from patch centre):
-    //   0.00–0.24  top plateau        (full rise)
-    //   0.24–0.34  drop to shoulder   (→ 74 % rise)
-    //   0.34–0.52  upper shelf        (74 % rise)
-    //   0.52–0.62  drop to mid tier   (→ 48 % rise)
-    //   0.62–0.78  middle shelf       (48 % rise)
-    //   0.78–0.88  drop to low tier   (→ 24 % rise)
-    //   0.88–0.96  lower shelf        (24 % rise)
-    //   0.96–1.00  ramp to ground     (→ base)
-    // The tallest large patch now caps each cliff band below a single-jump height.
-    function sampleMesaHeight(worldX, worldZ) {
-      let height = sampleDuneHeight(worldX, worldZ);
-      for (const patch of ROCK_PATCHES) {
-        if (patch.baseHeight === undefined) continue;
-        const dx = worldX - patch.x;
-        const dz = worldZ - patch.z;
-        const r = Math.sqrt(dx * dx + dz * dz) / patch.radius;
-        if (r > 1.0) continue;
-
-        const top = patch.baseHeight + patch.rise;
-        const upper = patch.baseHeight + patch.rise * 0.74;
-        const mid = patch.baseHeight + patch.rise * 0.48;
-        const low = patch.baseHeight + patch.rise * 0.24;
-
-        let targetH;
-        if (r < 0.24) {
-          targetH = top;
-        } else if (r < 0.34) {
-          targetH = THREE.MathUtils.lerp(top, upper, smoothstep((r - 0.24) / 0.10));
-        } else if (r < 0.52) {
-          targetH = upper;
-        } else if (r < 0.62) {
-          targetH = THREE.MathUtils.lerp(upper, mid, smoothstep((r - 0.52) / 0.10));
-        } else if (r < 0.78) {
-          targetH = mid;
-        } else if (r < 0.88) {
-          targetH = THREE.MathUtils.lerp(mid, low, smoothstep((r - 0.78) / 0.10));
-        } else if (r < 0.96) {
-          targetH = low;
-        } else {
-          targetH = THREE.MathUtils.lerp(low, patch.baseHeight, smoothstep((r - 0.96) / 0.04));
-        }
-
-        height = Math.max(height, targetH);
-      }
-      return height;
-    }
-
     function sampleGroundHeight(worldX, worldZ) {
-      let height = sampleMesaHeight(worldX, worldZ);
-      for (const platform of LEDGE_PLATFORMS) {
-        const dx = worldX - platform.x;
-        const dz = worldZ - platform.z;
-        if ((dx * dx) + (dz * dz) <= platform.radius * platform.radius) {
-          height = Math.max(height, platform.topY);
-        }
+      return Math.max(sampleDuneHeight(worldX, worldZ), sampleRockPatchHeight(worldX, worldZ));
+    }
+
+    function samplePlayerGroundHeight(worldX, worldZ, feetY = Infinity, velocityY = 0) {
+      let height = sampleDuneHeight(worldX, worldZ);
+      const patchSupportY = sampleRockPatchSupportHeight(worldX, worldZ, feetY, velocityY);
+      if (patchSupportY > -Infinity) {
+        height = Math.max(height, patchSupportY);
       }
+      const platformSupport = getRockPlatformSupport(worldX, worldZ, feetY, velocityY);
+      if (platformSupport) {
+        height = Math.max(height, platformSupport.y);
+      }
+      const worldSupportY = sampleWorldCollisionSupportHeight(worldX, worldZ, feetY, velocityY);
+      if (worldSupportY > -Infinity) {
+        height = Math.max(height, worldSupportY);
+      }
+
       return height;
     }
 
-    // Returns slope steepness [0..1] where 1 = CONFIG.slopeSpeedAngleMax degrees
-    function sampleSlopeFactor(worldX, worldZ) {
+    function sampleSlopeAngle(worldX, worldZ) {
       const dx = sampleGroundHeight(worldX + 0.8, worldZ) - sampleGroundHeight(worldX - 0.8, worldZ);
       const dz = sampleGroundHeight(worldX, worldZ + 0.8) - sampleGroundHeight(worldX, worldZ - 0.8);
       const rise = Math.sqrt(dx * dx + dz * dz) / 1.6;
-      const angleDeg = Math.atan(rise) * (180 / Math.PI);
-      return THREE.MathUtils.clamp(angleDeg / CONFIG.slopeSpeedAngleMax, 0, 1);
+      return Math.atan(rise) * (180 / Math.PI);
     }
 
-    function isOnRockPatch(worldX, worldZ) {
-      for (const patch of ROCK_PATCHES) {
-        const dx = worldX - patch.x;
-        const dz = worldZ - patch.z;
-        if (dx * dx + dz * dz < patch.radius * patch.radius) return true;
-      }
-      return false;
+    // Returns slope steepness [0..1] where 1 = CONFIG.slopeSpeedAngleMax degrees.
+    function sampleSlopeFactor(worldX, worldZ) {
+      return THREE.MathUtils.clamp(sampleSlopeAngle(worldX, worldZ) / CONFIG.slopeSpeedAngleMax, 0, 1);
     }
 
     function getSurfaceType(worldX, worldZ) {
-      return isOnRockPatch(worldX, worldZ) ? "rock" : "sand";
+      if (sampleRockPatchHeight(worldX, worldZ) > -Infinity) return "rock";
+      return getRockPlatformSupport(worldX, worldZ) ? "rock" : "sand";
+    }
+
+    function findNearestRockPatch(worldX, worldZ) {
+      let nearestPatch = ROCK_PATCHES[0];
+      let nearestDistSq = Infinity;
+      for (const patch of ROCK_PATCHES) {
+        const dx = worldX - patch.x;
+        const dz = worldZ - patch.z;
+        const distSq = (dx * dx) + (dz * dz);
+        if (distSq < nearestDistSq) {
+          nearestDistSq = distSq;
+          nearestPatch = patch;
+        }
+      }
+      return nearestPatch;
+    }
+
+    function isInStartZone(worldX, worldZ) {
+      const dx = worldX - CONFIG.playerStart.x;
+      const dz = worldZ - CONFIG.playerStart.z;
+      const radius = 12;
+      return (dx * dx) + (dz * dz) <= radius * radius;
     }
 
     function isInsideWorldBounds(worldX, worldZ, padding = 0) {
@@ -1719,13 +2417,10 @@
 	      const strikeDir = tempKnifeDir;
 	      const origin = getLasgunOrigin(tempMaulaOrigin);
 	      let maxDistance = CONFIG.lasgunRange;
-	      cameraRaycaster.set(origin, strikeDir);
-	      const rockHit = cameraRaycaster
-	        .intersectObject(rockMesh, true)
-	        .find((intersection) => intersection.distance > 0.35);
-	      if (rockHit && rockHit.distance < maxDistance) {
-	        maxDistance = rockHit.distance;
-	      }
+        const rockHit = raycastWorldCollision(origin, strikeDir, maxDistance, 0.35);
+        if (rockHit && rockHit.distance < maxDistance) {
+          maxDistance = rockHit.distance;
+        }
 
 	      tempLasgunEnd.copy(origin).addScaledVector(strikeDir, maxDistance);
 	      let bestDistance = maxDistance + 1;
@@ -1900,9 +2595,10 @@
 	      const origin = getLasgunOrigin(tempMaulaOrigin);
 
 	      let maxDistance = CONFIG.lasgunRange;
-	      cameraRaycaster.set(origin, strikeDir);
-	      const rockHit = cameraRaycaster.intersectObject(rockMesh, true).find(i => i.distance > 0.35);
-	      if (rockHit && rockHit.distance < maxDistance) maxDistance = rockHit.distance;
+        const rockHit = raycastWorldCollision(origin, strikeDir, maxDistance, 0.35);
+        if (rockHit && rockHit.distance < maxDistance) {
+          maxDistance = rockHit.distance;
+        }
 
 	      tempLasgunEnd.copy(origin).addScaledVector(strikeDir, maxDistance);
 	      let bestDistance = maxDistance + 1;
@@ -2192,19 +2888,19 @@
       };
     }
 
-    function createSfxBank() {
-      return {
-        sandStep: createAudioEffect([
-          "assets/audio/kenney/footsteps/footstep00.ogg",
-          "assets/audio/kenney/footsteps/footstep01.ogg",
-          "assets/audio/kenney/footsteps/footstep02.ogg",
-          "assets/audio/kenney/footsteps/footstep03.ogg",
-        ], { volume: 0.42, poolSize: 2, playbackRateMin: 0.94, playbackRateMax: 1.06 }),
-        rockStep: createAudioEffect([
-          "assets/audio/kenney/weapons/footstep_concrete_000.ogg",
-          "assets/audio/kenney/weapons/footstep_concrete_001.ogg",
-          "assets/audio/kenney/weapons/footstep_concrete_002.ogg",
-        ], { volume: 0.36, poolSize: 2, playbackRateMin: 0.96, playbackRateMax: 1.04 }),
+	    function createSfxBank() {
+	      return {
+	        sandStep: createAudioEffect([
+	          "assets/audio/kenney/footsteps/footstep00.ogg",
+	          "assets/audio/kenney/footsteps/footstep01.ogg",
+	          "assets/audio/kenney/footsteps/footstep02.ogg",
+	          "assets/audio/kenney/footsteps/footstep03.ogg",
+	        ], { volume: 0.28, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 0.98 }),
+	        rockStep: createAudioEffect([
+	          "assets/audio/kenney/weapons/footstep_concrete_000.ogg",
+	          "assets/audio/kenney/weapons/footstep_concrete_001.ogg",
+	          "assets/audio/kenney/weapons/footstep_concrete_002.ogg",
+	        ], { volume: 0.36, poolSize: 2, playbackRateMin: 0.96, playbackRateMax: 1.04 }),
         knifeDraw: createAudioEffect("assets/audio/kenney/weapons/drawKnife1.ogg", { volume: 0.34, poolSize: 2 }),
         knifeSwing: createAudioEffect("assets/audio/kenney/weapons/knifeSlice.ogg", { volume: 0.36, poolSize: 2, playbackRateMin: 0.96, playbackRateMax: 1.05 }),
         hitSoft: createAudioEffect([
@@ -2222,10 +2918,24 @@
       };
     }
 
-    function playSurfaceFootstep(surfaceType, volumeMultiplier = 1, playbackRate = 1) {
-      const effect = surfaceType === "rock" ? sfx.rockStep : sfx.sandStep;
-      effect.play({ volumeMultiplier, playbackRate });
-    }
+	    function playSurfaceFootstep(surfaceType, volumeMultiplier = 1, playbackRate = 1) {
+	      const effect = surfaceType === "rock" ? sfx.rockStep : sfx.sandStep;
+	      if (surfaceType === "rock") {
+	        effect.play({ volumeMultiplier, playbackRate });
+	        return;
+	      }
+
+	      const shapedVolume = volumeMultiplier * CONFIG.footstepSandVolumeMultiplier;
+	      const shapedPlayback = THREE.MathUtils.clamp(
+	        playbackRate * randomRange(CONFIG.footstepSandPitchMin, CONFIG.footstepSandPitchMax),
+	        0.6,
+	        1.1
+	      );
+	      effect.play({
+	        volumeMultiplier: shapedVolume,
+	        playbackRate: shapedPlayback,
+	      });
+	    }
 
     function updateFootstepAudio(delta, horizSpeed, crouchActive, runActive) {
       if (
@@ -2254,14 +2964,18 @@
       audioState.footstepTimer = Math.max(0, audioState.footstepTimer - delta);
       if (audioState.footstepTimer > 0) return;
 
-      const surfaceType = getSurfaceType(player.position.x, player.position.z);
-      playSurfaceFootstep(
-        surfaceType,
-        THREE.MathUtils.lerp(0.62, 1.02, speedRatio),
-        randomRange(0.94, 1.05)
-      );
-      audioState.footstepTimer = THREE.MathUtils.lerp(baseInterval * 1.12, baseInterval * 0.72, speedRatio);
-    }
+	      const surfaceType = state.surfaceType;
+	      const cadenceMultiplier = surfaceType === "sand"
+	        ? CONFIG.footstepSandCadenceMultiplier
+	        : 1;
+	      playSurfaceFootstep(
+	        surfaceType,
+	        THREE.MathUtils.lerp(0.62, 1.02, speedRatio),
+	        randomRange(0.94, 1.05)
+	      );
+	      audioState.footstepTimer = THREE.MathUtils.lerp(baseInterval * 1.12, baseInterval * 0.72, speedRatio)
+	        * cadenceMultiplier;
+	    }
 
     function getNoiseStatus() {
       if (state.wormRecoveryTimer > 0) {
@@ -2324,7 +3038,7 @@
 
     function updateNoiseSystem(delta, movementState) {
       const { horizSpeed, crouchActive, runActive, slopeFactor = 0 } = movementState;
-      const surfaceType = getSurfaceType(player.position.x, player.position.z);
+      const surfaceType = state.surfaceType;
       const shieldOperational = isShieldOperational();
       const speedRatio = THREE.MathUtils.clamp(horizSpeed / CONFIG.playerSpeed, 0, 1);
       const stanceMultiplier = crouchActive
@@ -2347,7 +3061,9 @@
         + shieldNoise
         + slopeNoise;
       const noiseTarget = THREE.MathUtils.clamp(movementNoise + state.noiseImpulse, 0, 1);
-      const noiseResponse = noiseTarget > state.noiseLevel ? CONFIG.noiseRiseRate : CONFIG.noiseDecayRate;
+      const noiseResponse = noiseTarget > state.noiseLevel
+        ? CONFIG.noiseRiseRate * (surfaceType === "rock" ? CONFIG.noiseRockMultiplier : 1)
+        : CONFIG.noiseDecayRate;
 
       state.noiseLevel = THREE.MathUtils.damp(state.noiseLevel, noiseTarget, noiseResponse, delta);
       state.noiseImpulse = THREE.MathUtils.damp(state.noiseImpulse, 0, CONFIG.noiseImpulseDecayRate, delta);
@@ -2499,199 +3215,6 @@
       state.interactHint = getSpicePrompt(canHarvest);
     }
 
-    function addRockInstance(instances, inst, options = {}) {
-      instances.push(inst);
-      registerRockVolume(inst, options);
-    }
-
-    function registerRockVolume(inst, options = {}) {
-      const {
-        walkable = false,
-        platformRadiusScale = 0.56,
-        colliderRadiusScale = 0.92,
-      } = options;
-
-      const visualRadius = Math.max(inst.sx, inst.sz) * 1.12;
-      const topY = inst.y + inst.sy * 0.5;
-      const bottomY = inst.y - inst.sy * 0.5;
-
-      if (walkable) {
-        LEDGE_PLATFORMS.push({
-          x: inst.x,
-          z: inst.z,
-          radius: visualRadius * platformRadiusScale,
-          topY,
-        });
-      }
-
-      ROCK_COLLIDERS.push({
-        x: inst.x,
-        z: inst.z,
-        radius: visualRadius * colliderRadiusScale,
-        bottomY,
-        topY,
-        walkable,
-      });
-    }
-
-    function buildRockInstances() {
-      LEDGE_PLATFORMS.length = 0;
-      ROCK_COLLIDERS.length = 0;
-      const instances = [];
-      const group = new THREE.Group();
-      const startPatch = ROCK_PATCHES[0];
-      const startBase = startPatch.baseHeight + startPatch.rise;
-
-      startPlatform.x = startPatch.x;
-      startPlatform.z = startPatch.z;
-      startPlatform.radius = CONFIG.playerStartPlatformRadius;
-      startPlatform.topY = startBase + CONFIG.playerStartPlatformHeight;
-
-      const startPlatformMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(1, 1.06, 1, 12, 1, false),
-        rockMaterial
-      );
-      startPlatformMesh.position.set(
-        startPlatform.x,
-        startBase + (CONFIG.playerStartPlatformHeight * 0.5),
-        startPlatform.z
-      );
-      startPlatformMesh.scale.set(
-        startPlatform.radius,
-        CONFIG.playerStartPlatformHeight,
-        startPlatform.radius * 0.94
-      );
-      startPlatformMesh.rotation.y = 0.18;
-      startPlatformMesh.castShadow = CONFIG.shadowEnabled;
-      startPlatformMesh.receiveShadow = CONFIG.shadowEnabled;
-      group.add(startPlatformMesh);
-
-      registerRockVolume({
-        x: startPlatform.x,
-        y: startPlatformMesh.position.y,
-        z: startPlatform.z,
-        sx: startPlatform.radius,
-        sy: CONFIG.playerStartPlatformHeight,
-        sz: startPlatform.radius * 0.94,
-      }, {
-        walkable: true,
-        platformRadiusScale: 0.84,
-        colliderRadiusScale: 0.9,
-      });
-
-      for (let p = 0; p < ROCK_PATCHES.length; p += 1) {
-        const patch = ROCK_PATCHES[p];
-        const isLarge = p < 2;
-        // Mesa top is the rock-floor level for this formation
-        const centerBase = patch.baseHeight + patch.rise;
-
-        // --- Central formation mass: wide, building-sized columns rooted at terrain ---
-        // Large radius relative to height gives solidity rather than tower look.
-        const massCount = isLarge ? 8 : 3;
-        const massZoneR = patch.radius * (isLarge ? 0.30 : 0.38);
-        for (let s = 0; s < massCount; s += 1) {
-          const angle = rng() * Math.PI * 2;
-          const dist = Math.sqrt(rng()) * massZoneR;
-          const sx = patch.x + Math.cos(angle) * dist;
-          const sz = patch.z + Math.sin(angle) * dist;
-          if (p === 0 && sx * sx + sz * sz < 16 * 16) continue;
-          const baseY = sampleMesaHeight(sx, sz);
-          const h = isLarge ? randomRange(30, 52, rng) : randomRange(16, 30, rng);
-          const r = isLarge ? randomRange(14, 24, rng) : randomRange(8, 14, rng);
-          if (p === 0 && overlapsStartSpawn(sx, sz, r * 1.18)) continue;
-          addRockInstance(instances, {
-            x: sx, y: baseY + h * 0.5, z: sz,
-            sx: r, sy: h, sz: r * randomRange(0.70, 1.30, rng),
-            tiltX: randomRange(-0.05, 0.05, rng),
-            tiltZ: randomRange(-0.05, 0.05, rng),
-            rotY: rng() * Math.PI * 2,
-          }, { walkable: false, colliderRadiusScale: 0.88 });
-        }
-
-        // --- Climbable ledge shelves: 2-3 paths up the cliff face ---
-        // Rocks grow FROM terrain surface to their target height — no floating.
-        const levels = isLarge ? 4 : 2;
-        const ledgeStep = 3.0;
-        const pathCount = isLarge ? 3 : 2;
-
-        for (let path = 0; path < pathCount; path += 1) {
-          const pathAngle = (path / pathCount) * Math.PI * 2 + randomRange(-0.2, 0.2, rng);
-
-          for (let level = 0; level < levels; level += 1) {
-            const targetTopY = centerBase + (level + 1) * ledgeStep;
-            // Step inward for each higher level
-            const radialFrac = 0.86 - level * 0.14;
-            const shelfCount = isLarge ? 3 : 2;
-
-            for (let i = 0; i < shelfCount; i += 1) {
-              const spread = isLarge ? 0.20 : 0.15;
-              const aOff = (i - (shelfCount - 1) / 2) * spread + randomRange(-0.06, 0.06, rng);
-              const radial = patch.radius * radialFrac + randomRange(-4, 4, rng);
-              const rx = patch.x + Math.cos(pathAngle + aOff) * radial;
-              const rz = patch.z + Math.sin(pathAngle + aOff) * radial;
-              if (p === 0 && rx * rx + rz * rz < 12 * 12) continue;
-              // Root rock at terrain, extend upward to targetTopY — no floating
-              const terrainY = sampleMesaHeight(rx, rz);
-              const rockH = Math.max(2.5, targetTopY - terrainY);
-              const rockR = isLarge ? randomRange(6, 10, rng) : randomRange(4, 7, rng);
-              if (p === 0 && overlapsStartSpawn(rx, rz, rockR * 1.15)) continue;
-              addRockInstance(instances, {
-                x: rx,
-                y: terrainY + rockH * 0.5,
-                z: rz,
-                sx: rockR, sy: rockH, sz: rockR * randomRange(0.80, 1.20, rng),
-                tiltX: randomRange(-0.06, 0.06, rng),
-                tiltZ: randomRange(-0.06, 0.06, rng),
-                rotY: rng() * Math.PI * 2,
-              }, { walkable: true, platformRadiusScale: 0.62, colliderRadiusScale: 0.78 });
-            }
-          }
-        }
-
-        // --- Summit rocks: flat safe zone at the top ---
-        if (isLarge) {
-          const topY = centerBase + levels * ledgeStep;
-          for (let i = 0; i < 5; i += 1) {
-            const angle = (i / 5) * Math.PI * 2 + randomRange(-0.2, 0.2, rng);
-            const dist = randomRange(5, patch.radius * 0.18, rng);
-            const tx = patch.x + Math.cos(angle) * dist;
-            const tz = patch.z + Math.sin(angle) * dist;
-            if (p === 0 && tx * tx + tz * tz < 10 * 10) continue;
-            const terrainY = sampleMesaHeight(tx, tz);
-            const rockH = Math.max(2.0, topY - terrainY);
-            const rockR = randomRange(5, 8, rng);
-            if (p === 0 && overlapsStartSpawn(tx, tz, rockR * 1.15)) continue;
-            addRockInstance(instances, {
-              x: tx, y: terrainY + rockH * 0.5, z: tz,
-              sx: rockR, sy: rockH, sz: rockR * randomRange(0.80, 1.20, rng),
-              tiltX: randomRange(-0.04, 0.04, rng),
-              tiltZ: randomRange(-0.04, 0.04, rng),
-              rotY: rng() * Math.PI * 2,
-            }, { walkable: true, platformRadiusScale: 0.68, colliderRadiusScale: 0.82 });
-          }
-        }
-      }
-
-      const mesh = new THREE.InstancedMesh(createRockGeometry(), rockMaterial, instances.length);
-      mesh.castShadow = CONFIG.shadowEnabled;
-      mesh.receiveShadow = CONFIG.shadowEnabled;
-
-      const obj = new THREE.Object3D();
-      for (let i = 0; i < instances.length; i += 1) {
-        const inst = instances[i];
-        obj.position.set(inst.x, inst.y, inst.z);
-        obj.rotation.set(inst.tiltX, inst.rotY, inst.tiltZ);
-        obj.scale.set(inst.sx, inst.sy, inst.sz);
-        obj.updateMatrix();
-        mesh.setMatrixAt(i, obj.matrix);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.geometry.computeBoundingSphere();
-      group.add(mesh);
-      scene.add(group);
-      return group;
-    }
-
     function resolveCylinderDummyCollision(dummy, velocity) {
       if (!dummy || dummy.dead) return;
       const feetY = player.position.y;
@@ -2727,42 +3250,175 @@
       resolveCylinderDummyCollision(shieldedDummy, velocity);
     }
 
-    function resolveRockCollisions(velocity) {
-      const feetY = player.position.y;
+    function hasNearbyRockObstacle(feetY, headY) {
+      const reachPadding = CONFIG.playerCollisionRadius + 0.65;
+
+      for (const collider of ROCK_COLLIDERS) {
+        if (headY <= collider.bottomY + 0.05 || feetY >= collider.topY - 0.05) continue;
+
+        const dx = player.position.x - collider.x;
+        const dz = player.position.z - collider.z;
+        const rotY = collider.rotY ?? 0;
+        const cos = Math.cos(rotY);
+        const sin = Math.sin(rotY);
+        const localX = (dx * cos) + (dz * sin);
+        const localZ = (-dx * sin) + (dz * cos);
+        const radiusX = collider.radiusX + reachPadding;
+        const radiusZ = collider.radiusZ + reachPadding;
+        const overlap = ((localX * localX) / (radiusX * radiusX)) + ((localZ * localZ) / (radiusZ * radiusZ));
+        if (overlap > 1) continue;
+
+        if (collider.walkable) {
+          const nearTop = feetY >= (collider.topY - (CONFIG.playerLandSnapHeight + 1.1));
+          const platformShape = {
+            x: collider.x,
+            z: collider.z,
+            radiusX: collider.platformRadiusX,
+            radiusZ: collider.platformRadiusZ,
+            rotY,
+          };
+          if (nearTop && isPointInsideOrientedEllipse(
+            player.position.x,
+            player.position.z,
+            platformShape,
+            CONFIG.playerCollisionRadius * 0.36
+          )) {
+            continue;
+          }
+        }
+
+        return true;
+      }
+
+      return false;
+    }
+
+    function setPlayerCapsule(out = tempPlayerCapsule) {
+      const radius = CONFIG.playerCollisionRadius;
       const bodyHeight = THREE.MathUtils.lerp(
         CONFIG.playerCollisionHeight,
         CONFIG.playerCrouchCollisionHeight,
         player.userData.crouchAmount
       );
-      const headY = feetY + bodyHeight;
+      const segmentHeight = Math.max(0, bodyHeight - (radius * 2));
+      out.radius = radius;
+      out.start.set(player.position.x, player.position.y + radius, player.position.z);
+      out.end.set(player.position.x, player.position.y + radius + segmentHeight, player.position.z);
+      return out;
+    }
 
-      for (const collider of ROCK_COLLIDERS) {
-        // Walkable ledge rocks: landing/standing handled entirely by LEDGE_PLATFORMS disc snap.
-        // No lateral cylinder wall — player must be able to approach and jump up freely.
-        if (collider.walkable) continue;
+    function intersectWorldCapsule(capsule, out = tempCapsuleHit) {
+      if (!worldCollisionMesh?.geometry?.boundsTree) return null;
 
-        if (headY <= collider.bottomY + 0.05 || feetY >= collider.topY - 0.05) continue;
+      out.depth = 0;
+      out.normal.set(0, 0, 0);
 
-        const dx = player.position.x - collider.x;
-        const dz = player.position.z - collider.z;
-        const minDist = collider.radius + CONFIG.playerCollisionRadius;
-        const distSq = (dx * dx) + (dz * dz);
-        if (distSq >= minDist * minDist) continue;
+      tempCollisionMatrix.copy(worldCollisionMesh.matrixWorld).invert();
+      tempCollisionSegment.start.copy(capsule.start).applyMatrix4(tempCollisionMatrix);
+      tempCollisionSegment.end.copy(capsule.end).applyMatrix4(tempCollisionMatrix);
 
-        const dist = Math.sqrt(distSq);
-        const nx = dist > 0.0001 ? dx / dist : 1;
-        const nz = dist > 0.0001 ? dz / dist : 0;
-        const pushOut = minDist - dist;
+      tempCollisionBox.makeEmpty();
+      tempCollisionBox.expandByPoint(tempCollisionSegment.start);
+      tempCollisionBox.expandByPoint(tempCollisionSegment.end);
+      tempCollisionBox.min.addScalar(-capsule.radius);
+      tempCollisionBox.max.addScalar(capsule.radius);
 
-        player.position.x += nx * pushOut;
-        player.position.z += nz * pushOut;
+      tempCollisionNormalMatrix.getNormalMatrix(worldCollisionMesh.matrixWorld);
+      let foundHit = false;
 
-        const intoRock = (velocity.x * nx) + (velocity.z * nz);
-        if (intoRock < 0) {
-          velocity.x -= nx * intoRock;
-          velocity.z -= nz * intoRock;
+      worldCollisionMesh.geometry.boundsTree.shapecast({
+        intersectsBounds: (box) => box.intersectsBox(tempCollisionBox),
+        intersectsTriangle: (triangle) => {
+          const distance = triangle.closestPointToSegment(
+            tempCollisionSegment,
+            tempCollisionTrianglePoint,
+            tempCollisionCapsulePoint
+          );
+          if (distance >= capsule.radius) return false;
+
+          tempCollisionLocalNormal.subVectors(tempCollisionCapsulePoint, tempCollisionTrianglePoint);
+          if (tempCollisionLocalNormal.lengthSq() <= 1e-10) {
+            triangle.getNormal(tempCollisionLocalNormal);
+          } else {
+            tempCollisionLocalNormal.normalize();
+          }
+
+          tempCollisionWorldNormal.copy(tempCollisionLocalNormal).applyMatrix3(tempCollisionNormalMatrix).normalize();
+
+          // Ignore downward-facing contacts (buried rock base geometry pushes player into terrain)
+          if (tempCollisionWorldNormal.y < -0.1) return false;
+
+          // Project wall contacts to horizontal so player is pushed sideways, not floated upward.
+          // Only project if the XZ magnitude is large enough — if it's near-zero the normal is
+          // almost purely vertical and the floor-contact filter below should handle it instead.
+          if (tempCollisionWorldNormal.y > 0 && tempCollisionWorldNormal.y < 0.6) {
+            const hLenSq = tempCollisionWorldNormal.x * tempCollisionWorldNormal.x
+              + tempCollisionWorldNormal.z * tempCollisionWorldNormal.z;
+            if (hLenSq > 1e-6) {
+              tempCollisionWorldNormal.y = 0;
+              tempCollisionWorldNormal.normalize();
+            }
+          }
+
+          const depth = capsule.radius - distance;
+          const horizontalPush = Math.hypot(tempCollisionWorldNormal.x, tempCollisionWorldNormal.z);
+          if (tempCollisionWorldNormal.y > 0.6 && horizontalPush < 0.35) {
+            const isShallowFloorContact = depth <= (CONFIG.playerGroundSnapEpsilon + 0.05);
+            const isStableState = player.userData.grounded || player.userData.velocity.y > -0.04;
+            if (isShallowFloorContact && isStableState) {
+              return false;
+            }
+          }
+
+          if (!foundHit || depth > out.depth) {
+            out.depth = depth;
+            out.normal.copy(tempCollisionWorldNormal);
+            foundHit = true;
+          }
+          return false;
+        },
+      });
+
+      return foundHit ? out : null;
+    }
+
+    function resolveRockCollisions(delta, velocity) {
+      player.userData.collisionNormal.set(0, 0, 0);
+      if (!worldCollisionMesh?.geometry?.boundsTree) return null;
+
+      const playerCapsule = setPlayerCapsule(tempPlayerCapsule);
+      const firstHit = intersectWorldCapsule(playerCapsule, tempCapsuleHit);
+      if (!firstHit) return null;
+
+      tempCollisionAccumulatedNormal.set(0, 0, 0);
+      let collided = false;
+
+      for (let iteration = 0; iteration < 5; iteration += 1) {
+        const hit = iteration === 0
+          ? firstHit
+          : intersectWorldCapsule(playerCapsule, tempCapsuleHit);
+        if (!hit) break;
+        if (hit.depth <= 1e-4) break;
+
+        const pushDepth = hit.depth + 1e-3;
+        player.position.addScaledVector(hit.normal, pushDepth);
+        playerCapsule.start.addScaledVector(hit.normal, pushDepth);
+        playerCapsule.end.addScaledVector(hit.normal, pushDepth);
+        tempCollisionAccumulatedNormal.add(hit.normal);
+        collided = true;
+
+        const intoSurface = velocity.dot(hit.normal);
+        if (intoSurface < 0) {
+          velocity.addScaledVector(hit.normal, -intoSurface);
+        }
+        if (hit.normal.y > 0.45 && velocity.y < 0) {
+          velocity.y = 0;
         }
       }
+
+      if (!collided || tempCollisionAccumulatedNormal.lengthSq() <= 1e-6) return null;
+      player.userData.collisionNormal.copy(tempCollisionAccumulatedNormal).normalize();
+      return player.userData.collisionNormal;
     }
 
 	    function createPlayer() {
@@ -2773,6 +3429,7 @@
       root.userData.jumpBuffer = 0;
       root.userData.coyoteTimer = 0;
       root.userData.crouchAmount = 0;
+      root.userData.collisionNormal = new THREE.Vector3();
 
 	      const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffd2b3, flatShading: true });
 	      const sleeveMaterial = new THREE.MeshLambertMaterial({ color: 0x66523f, flatShading: true });
@@ -3933,11 +4590,13 @@
 	    function createTrainingDummy(opts = {}) {
 	      const ox = opts.offsetX !== undefined ? opts.offsetX : CONFIG.trainingDummyOffsetX;
 	      const oz = opts.offsetZ !== undefined ? opts.offsetZ : CONFIG.trainingDummyOffsetZ;
+        const baseX = CONFIG.playerStart.x + ox;
+        const baseZ = CONFIG.playerStart.z + oz;
 	      const group = new THREE.Group();
 	      group.position.set(
-	        startPlatform.x + ox,
-	        startPlatform.topY,
-	        startPlatform.z + oz
+	        baseX,
+	        samplePlayerGroundHeight(baseX, baseZ),
+	        baseZ
 	      );
 
 	      const postMaterial = new THREE.MeshLambertMaterial({ color: 0x5c4633, flatShading: true });
@@ -3959,7 +4618,7 @@
 
 	      const base = new THREE.Mesh(
 	        new THREE.CylinderGeometry(0.85, 1.15, 0.46, 8),
-	        rockMaterial
+	        new THREE.MeshLambertMaterial({ color: 0x6f5a43, flatShading: true })
 	      );
 	      base.position.y = 0.23;
 	      base.castShadow = CONFIG.shadowEnabled;
@@ -4176,7 +4835,7 @@
               break;
             }
           }
-          if (blocked) continue;
+          if (blocked || getSurfaceType(x, z) !== "sand") continue;
 
           for (const node of nodes) {
             if (node === excludeNode) continue;
@@ -4385,21 +5044,6 @@
       };
     }
 
-    function findNearestRockPatch(worldX, worldZ) {
-      let nearestPatch = ROCK_PATCHES[0];
-      let nearestDistSq = Infinity;
-      for (const patch of ROCK_PATCHES) {
-        const dx = worldX - patch.x;
-        const dz = worldZ - patch.z;
-        const distSq = (dx * dx) + (dz * dz);
-        if (distSq < nearestDistSq) {
-          nearestDistSq = distSq;
-          nearestPatch = patch;
-        }
-      }
-      return nearestPatch;
-    }
-
     function pickWormTargetForActor(actor) {
       const velocity = actor.velocity ?? tempWormPull.set(0, 0, 0);
       const speed = Math.hypot(velocity.x, velocity.z);
@@ -4421,7 +5065,7 @@
       let x = THREE.MathUtils.clamp(actor.position.x + (dirX * leadDistance), -halfWorld, halfWorld);
       let z = THREE.MathUtils.clamp(actor.position.z + (dirZ * leadDistance), -halfWorld, halfWorld);
 
-      if (isOnRockPatch(x, z)) {
+      if (getSurfaceType(x, z) !== "sand") {
         x = actor.position.x;
         z = actor.position.z;
       }
@@ -4832,7 +5476,7 @@
 
     function beginDevour() {
       const safePatch = findNearestRockPatch(player.position.x, player.position.z);
-      const respawnRadius = Math.min(safePatch.radius * 0.22, 14);
+      const respawnRadius = Math.min(safePatch.plateauRadius * 0.38, 12);
       state.wormRespawnPoint.set(
         safePatch.x + (Math.cos(safePatch.approachAngle + Math.PI) * respawnRadius),
         0,
@@ -5131,14 +5775,20 @@
     function placePlayerOnGround() {
       const startSpawn = getStartSpawnPoint(tempWormTarget);
       if (state.elapsed === 0 && state.wormRecoveryTimer === 0) {
-        player.position.x = startSpawn.x;
-        player.position.z = startSpawn.z;
+        player.position.copy(startSpawn);
+        player.position.y += CONFIG.playerStandHeight;
+      } else {
+        player.position.y = samplePlayerGroundHeight(
+          player.position.x,
+          player.position.z,
+          player.position.y,
+          0
+        ) + CONFIG.playerStandHeight;
       }
-      player.position.y = sampleGroundHeight(player.position.x, player.position.z) + CONFIG.playerStandHeight;
       player.userData.velocity.set(0, 0, 0);
       player.userData.grounded = true;
       player.userData.jumpBuffer = 0;
-      state.surfaceType = getSurfaceType(player.position.x, player.position.z);
+      state.surfaceType = getPlayerSurfaceType(player.position.y, 0);
       updateCameraRig(1);
     }
 
@@ -5277,7 +5927,7 @@
       const canJump = player.userData.coyoteTimer > 0;
       if (player.userData.jumpBuffer > 0 && canJump && !crouchActive && !state.paused && controls.isLocked) {
         emitNoiseImpulse(
-          getSurfaceType(player.position.x, player.position.z) === "rock"
+          state.surfaceType === "rock"
             ? CONFIG.noiseJumpImpulseRock
             : CONFIG.noiseJumpImpulseSand
         );
@@ -5350,11 +6000,16 @@
       player.position.x = THREE.MathUtils.clamp(player.position.x, -halfWorld, halfWorld);
       player.position.z = THREE.MathUtils.clamp(player.position.z, -halfWorld, halfWorld);
 
-      resolveRockCollisions(velocity);
+      resolveRockCollisions(delta, velocity);
       resolveDummyCollision(velocity);
 
       const impactSpeed = Math.max(0, -velocity.y);
-      const groundHeight = sampleGroundHeight(player.position.x, player.position.z) + CONFIG.playerStandHeight;
+      const groundHeight = samplePlayerGroundHeight(
+        player.position.x,
+        player.position.z,
+        player.position.y,
+        velocity.y
+      ) + CONFIG.playerStandHeight;
       if (player.position.y <= groundHeight + CONFIG.playerGroundSnapEpsilon && velocity.y <= 0) {
         player.position.y = groundHeight;
         velocity.y = 0;
@@ -5363,8 +6018,20 @@
         player.userData.grounded = false;
       }
 
+      // Failsafe: never allow the player to stay buried under the start formation.
+      if (isInStartZone(player.position.x, player.position.z)) {
+        const startSupportY = samplePlayerGroundHeight(player.position.x, player.position.z, Infinity, 0) + CONFIG.playerStandHeight;
+        if (player.position.y < startSupportY - 1.1) {
+          player.position.y = startSupportY;
+          velocity.y = Math.max(0, velocity.y);
+          player.userData.grounded = true;
+        }
+      }
+
+      state.surfaceType = getPlayerSurfaceType(player.position.y, velocity.y);
+
       if (!wasGrounded && player.userData.grounded && impactSpeed > 1.0) {
-        const landingSurface = getSurfaceType(player.position.x, player.position.z);
+        const landingSurface = state.surfaceType;
         const landingImpulse = landingSurface === "rock"
           ? CONFIG.noiseLandImpulseRock
           : CONFIG.noiseLandImpulseSand;
@@ -5386,34 +6053,34 @@
       updateNoiseSystem(delta, { horizSpeed, crouchActive, runActive, slopeFactor: slopeFactorNoise });
     }
 
-    function resolveCameraObstruction(origin, target, out = target) {
-      if (!rockMesh) {
-        out.copy(target);
-        return out;
-      }
+	    function resolveCameraObstruction(origin, target, out = target) {
+	      if (!rockMesh) {
+	        out.copy(target);
+	        return out;
+	      }
 
-      tempCameraDir.subVectors(target, origin);
-      const distance = tempCameraDir.length();
-      if (distance <= 0.001) {
-        out.copy(origin);
-        return out;
-      }
+	      tempCameraDir.subVectors(target, origin);
+	      const distance = tempCameraDir.length();
+	      if (distance <= 0.001) {
+	        out.copy(origin);
+	        return out;
+	      }
 
-      tempCameraDir.divideScalar(distance);
-      cameraRaycaster.set(origin, tempCameraDir);
-      cameraRaycaster.far = distance;
+	      tempCameraDir.divideScalar(distance);
+	      cameraRaycaster.set(origin, tempCameraDir);
+	      cameraRaycaster.far = distance;
 
-      const hit = cameraRaycaster.intersectObject(rockMesh, true)
-        .find((intersection) => intersection.distance > 0.24);
+	      const hit = cameraRaycaster.intersectObject(rockMesh, true)
+	        .find((intersection) => intersection.distance > 0.24);
 
-      if (!hit) {
-        out.copy(target);
-        return out;
-      }
+	      if (!hit) {
+	        out.copy(target);
+	        return out;
+	      }
 
-      out.copy(origin).addScaledVector(tempCameraDir, Math.max(0.85, hit.distance - 0.3));
-      return out;
-    }
+	      out.copy(origin).addScaledVector(tempCameraDir, Math.max(0.85, hit.distance - 0.3));
+	      return out;
+	    }
 
     function updateDevourCamera(delta) {
       const isRecover = state.wormPhase === "recover";
@@ -5584,46 +6251,55 @@
 	      ui.hudSpeed.textContent = `Spd ${horizontalSpeed.toFixed(1)} ${moveMode}`;
 	      ui.hudPos.textContent = `Pos: (${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
 	      ui.hudSurface.textContent = `Surf ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
-	      if (state.harvestNode) {
-	        ui.hudCargo.textContent = `Harvesting: ${harvestProgress}%`;
-	      } else if (state.spiceCarry > 0) {
-	        ui.hudCargo.textContent = "Holding: 1 spice";
-	      } else {
-	        ui.hudCargo.textContent = "Holding: none";
-	      }
+	      ui.hudCargo.textContent = `Carry ${state.spiceCarry}`;
+	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
 	      if (state.equippedWeapon === "maula") {
-	        if (state.maulaReloadTimer > 0) {
-	          const reloadProgress = Math.round(
-	            (1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * 100
-	          );
-	          ui.hudWeapon.textContent = `Weapon: Maula loaded ${state.maulaLoaded ? 1 : 0} · spare ${state.maulaReserveAmmo} · reload ${reloadProgress}%`;
-	        } else {
-	          ui.hudWeapon.textContent = `Weapon: Maula loaded ${state.maulaLoaded ? 1 : 0} · spare ${state.maulaReserveAmmo}`;
-	        }
+	        ui.hudWeapon.textContent = `Maula ${state.maulaLoaded ? 1 : 0}/${state.maulaReserveAmmo}`;
 	      } else if (state.equippedWeapon === "lasgun") {
-	        const lasgunPct = Math.round(state.lasgunCharge * 100);
-	        ui.hudWeapon.textContent = state.lasgunFiring
-	          ? `Weapon: Lasgun [FIRING] · pwr ${lasgunPct}%`
-	          : `Weapon: Lasgun · pwr ${lasgunPct}%`;
+	        ui.hudWeapon.textContent = "Lasgun";
 	      } else {
-	        ui.hudWeapon.textContent = "Weapon: Crysknife";
+	        ui.hudWeapon.textContent = "Knife";
 	      }
-	      ui.hudWeapon.textContent += ` · Shd ${shieldChargePercent}%`;
 	      ui.hudCargo.classList.toggle("active", state.spiceCarry > 0);
       ui.hudCargo.classList.toggle("harvesting", Boolean(state.harvestNode));
-      ui.hudScore.textContent = `Spice secured: ${state.spiceScore}`;
       const noiseHue = Math.round(170 - state.noiseLevel * 170);
       const signHue = Math.round(42 - state.signLevel * 42);
       const wormHue = Math.round(58 - wormMeter * 58);
       const hpFraction = state.playerHealth / CONFIG.playerMaxHealth;
       const hpHue = Math.round(hpFraction * 120);
+      ui.hudHealthValue.textContent = `${Math.round(hpFraction * 100)}%`;
       ui.healthFill.style.width = `${(hpFraction * 100).toFixed(1)}%`;
       ui.healthFill.style.backgroundColor = `hsl(${hpHue}, 85%, 42%)`;
-      ui.hudLasgunCharge.style.display = state.equippedWeapon === "lasgun" ? "" : "none";
-      if (state.equippedWeapon === "lasgun") {
+      ui.hudShieldValue.textContent = `${shieldChargePercent}%`;
+      ui.shieldFill.style.width = `${shieldChargePercent}%`;
+      ui.shieldFill.style.backgroundColor = `hsl(${Math.round(182 + (shieldChargePercent * 0.28))}, 82%, 60%)`;
+      ui.hudWormValue.textContent = `${Math.round(wormMeter * 100)}%`;
+      ui.hudWormFillPlayer.style.width = `${(wormMeter * 100).toFixed(1)}%`;
+      ui.hudWormFillPlayer.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
+      ui.hudContextMeter.style.display = "none";
+      if (state.harvestNode) {
+        ui.hudContextMeter.style.display = "";
+        ui.hudContextLabel.textContent = "Spc";
+        ui.hudContextValue.textContent = `${harvestProgress}%`;
+        ui.hudContextFill.style.width = `${harvestProgress}%`;
+        ui.hudContextFill.style.backgroundColor = "#f0c860";
+      } else if (state.maulaReloadTimer > 0 && state.equippedWeapon === "maula") {
+        const reloadProgress = Math.round(
+          (1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * 100
+        );
+        ui.hudContextMeter.style.display = "";
+        ui.hudContextLabel.textContent = "Rld";
+        ui.hudContextValue.textContent = `${reloadProgress}%`;
+        ui.hudContextFill.style.width = `${reloadProgress}%`;
+        ui.hudContextFill.style.backgroundColor = "#d9b574";
+      } else if (state.equippedWeapon === "lasgun") {
+        const lasgunPct = Math.round(state.lasgunCharge * 100);
         const lasHue = Math.round(state.lasgunCharge * 190);
-        ui.lasgunFill.style.width = `${(state.lasgunCharge * 100).toFixed(1)}%`;
-        ui.lasgunFill.style.backgroundColor = `hsl(${lasHue}, 85%, 48%)`;
+        ui.hudContextMeter.style.display = "";
+        ui.hudContextLabel.textContent = "Las";
+        ui.hudContextValue.textContent = `${lasgunPct}%`;
+        ui.hudContextFill.style.width = `${(state.lasgunCharge * 100).toFixed(1)}%`;
+        ui.hudContextFill.style.backgroundColor = `hsl(${lasHue}, 85%, 48%)`;
       }
       ui.noiseFill.style.width = `${(state.noiseLevel * 100).toFixed(1)}%`;
       ui.noiseFill.style.backgroundColor = `hsl(${noiseHue}, 78%, 46%)`;
@@ -5631,8 +6307,19 @@
       ui.signFill.style.backgroundColor = `hsl(${signHue}, 88%, 48%)`;
       ui.wormFill.style.width = `${(wormMeter * 100).toFixed(1)}%`;
       ui.wormFill.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
-      ui.hudObjective.textContent = state.interactHint;
-      ui.hudNoiseText.textContent = getNoiseStatus();
+      if (state.wormPhase === "warning" || state.wormPhase === "breach" || state.wormPhase === "devour") {
+        ui.hudStatus.textContent = "Worm incoming";
+      } else if (state.harvestNode) {
+        ui.hudStatus.textContent = "Harvesting spice";
+      } else if (state.spiceCarry > 0) {
+        ui.hudStatus.textContent = state.surfaceType === "rock" ? "Spice secured" : "Get back to rock";
+      } else if (state.shieldActive && state.surfaceType === "sand") {
+        ui.hudStatus.textContent = "Shield draws worms";
+      } else if (state.interactHint.includes("Hold E")) {
+        ui.hudStatus.textContent = "Hold E to harvest";
+      } else {
+        ui.hudStatus.textContent = state.surfaceType === "rock" ? "Rock is safe" : "Open sand";
+      }
     }
 
     function refreshDeathFeedback() {
