@@ -180,6 +180,25 @@
       color: #dec7a0;
     }
 
+    .deposit-toast {
+      position: fixed;
+      bottom: 88px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 8, 4, 0.82);
+      color: #ffb84a;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      padding: 5px 18px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 160, 40, 0.35);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      z-index: 15;
+    }
+    .deposit-toast.show { opacity: 1; }
+
     .noise-row {
       display: flex;
       align-items: center;
@@ -392,6 +411,7 @@
     </div>
     <div id="hudStatus" class="hud-status">Find spice in open sand.</div>
   </div>
+  <div id="depositToast" class="deposit-toast"></div>
 
 	  <div id="devHud" class="hud-panel">
 	    <div class="title">Dev Hud</div>
@@ -475,7 +495,8 @@
 
       cycleDuration: 300,
 
-      playerStart: new THREE.Vector3(0, 3, 0),
+      playerStart: new THREE.Vector3(-380, 3, -380),
+      harkonnenBase: new THREE.Vector3(380, 3, 380),
       playerSpeed: 16.5,
       playerRunMultiplier: 1.65,
       playerCrouchMultiplier: 0.45,
@@ -621,7 +642,7 @@
       wormSpawnMaxDistance: 500,
       wormInboundSpeed: 48,
       wormHuntingSpeed: 58,
-      wormRetreatSpeed: 64,
+      wormRetreatSpeed: 38,
       wormSteering: 3.4,
       wormRetreatSteering: 2.2,
       wormAttackTriggerDistance: 36,
@@ -630,10 +651,10 @@
       wormRadioMessageDuration: 3.5,
       wormAttackMinSign: 0.32,
       wormWarningSignFloor: 0.72,
-      wormWarningDuration: 1.65,
-      wormBreachDuration: 1.3,
-      wormStrikeDelay: 0.18,
-      wormStrikeWindow: 0.44,
+      wormWarningDuration: 2.8,
+      wormBreachDuration: 4.0,
+      wormStrikeDelay: 0.35,
+      wormStrikeWindow: 0.65,
       wormCooldownDuration: 14,
       wormKillRadius: 28,
       wormWarningRadius: 42,
@@ -757,6 +778,7 @@
 	      hudContextLabel: document.getElementById("hudContextLabel"),
 	      hudContextValue: document.getElementById("hudContextValue"),
       hudContextFill: document.getElementById("hudContextFill"),
+      depositToast: document.getElementById("depositToast"),
       hudStatus: document.getElementById("hudStatus"),
       explosionFlash: document.getElementById("explosionFlash"),
       noiseFill: document.getElementById("noiseFill"),
@@ -895,6 +917,8 @@
       wormRespawnPoint: new THREE.Vector3(),
       wormDevourStart: new THREE.Vector3(),
       paused: true,
+      depositKeyConsumed: false,
+      depositToastTimer: 0,
     };
 
     const keyState = {
@@ -968,6 +992,10 @@
     };
       const tempRockColor = new THREE.Color();
 	    const maulaProjectiles = [];
+    const maulaTrailGeo = new THREE.CylinderGeometry(0.06, 0.008, 1, 5);
+    const maulaTrailMat = new THREE.MeshBasicMaterial({
+      color: 0x00ff44, transparent: true, opacity: 0.82, depthWrite: false,
+    });
     const rockMaterial = createRockMaterial();
     const worm = {
       position: new THREE.Vector3(),
@@ -986,6 +1014,7 @@
 	    const wormHazard = createWormHazard();
 	    const thumper = createThumper();
 	    const spiceObjective = createSpiceObjective();
+    const spiceDepot = createSpiceDepot();
 	    const trainingDummy = createTrainingDummy();
     const shieldedDummies = [
       createTrainingDummy({ offsetX: 8.8, offsetZ: -6.2, hasShield: true }),
@@ -1096,9 +1125,9 @@
 	      pushPatch(
 	        CONFIG.playerStart.x,
 	        CONFIG.playerStart.z,
-	        28,
-	        15.5,
-	        8.2,
+	        36,
+	        19,
+	        11.5,
 	        true,
 	        rng() * Math.PI * 2,
 	        0
@@ -1438,7 +1467,102 @@
 	          bottomYOverride: baseY - 0.2,
 	        });
 
-	        const wallCount = patch.major ? (isStartPatch ? 4 : 6) : 3;
+	        if (isStartPatch) {
+	          // === SIETCH FORMATION ===
+	          // 1. Cliff-face arc: packed slabs hugging the back and sides of the mesa,
+	          //    creating a solid cliff wall the player sees from afar.
+	          const cliffBackAngle = patch.approachAngle + Math.PI;
+	          const cliffArcSpread = Math.PI * 1.1; // ~200 degrees arc on back half
+	          for (let ci = 0; ci < 5; ci += 1) {
+	            const cAngle = cliffBackAngle - cliffArcSpread * 0.5
+	              + (ci / 4) * cliffArcSpread
+	              + randomRange(-0.14, 0.14, patchRng);
+	            const cRadial = randomRange(patch.plateauRadius * 0.88, patch.plateauRadius * 1.18, patchRng);
+	            const cx = patch.x + Math.cos(cAngle) * cRadial;
+	            const cz = patch.z + Math.sin(cAngle) * cRadial;
+	            const cBase = sampleDuneHeight(cx, cz);
+	            const cTopFrac = randomRange(0.72, 1.05, patchRng);
+	            const cH = Math.max(5, topY * cTopFrac - cBase);
+	            const cliffInst = {
+	              x: cx, y: cBase + cH * 0.5, z: cz,
+	              sx: randomRange(6, 11, patchRng),
+	              sy: cH,
+	              sz: randomRange(5, 9, patchRng),
+	              rotY: cAngle + randomRange(-0.22, 0.22, patchRng),
+	              tiltX: randomRange(-0.05, 0.05, patchRng),
+	              tiltZ: randomRange(-0.05, 0.05, patchRng),
+	            };
+	            addRockInstance(cliffInst, { shape: "slab", registerCollider: true, walkable: false, colliderRadiusScale: 0.86 });
+	          }
+
+	          // 2. Two sentinel gateway pillars flanking the approach — taller than the mesa
+	          for (let ti = 0; ti < 2; ti += 1) {
+	            const side = ti === 0 ? -1 : 1;
+	            const tAngle = patch.approachAngle + side * 1.25;
+	            const tRadial = randomRange(patch.plateauRadius * 1.0, patch.plateauRadius * 1.28, patchRng);
+	            const tx = patch.x + Math.cos(tAngle) * tRadial;
+	            const tz = patch.z + Math.sin(tAngle) * tRadial;
+	            const tBase = sampleDuneHeight(tx, tz);
+	            const tH = (topY - tBase) + randomRange(4, 9, patchRng);
+	            const towerInst = {
+	              x: tx, y: tBase + tH * 0.5, z: tz,
+	              sx: randomRange(3.0, 5.2, patchRng),
+	              sy: tH,
+	              sz: randomRange(2.6, 4.2, patchRng),
+	              rotY: tAngle + randomRange(-0.18, 0.18, patchRng),
+	              tiltX: randomRange(-0.04, 0.04, patchRng),
+	              tiltZ: randomRange(-0.04, 0.04, patchRng),
+	            };
+	            if (overlapsExistingRock(towerInst, 0.85)) continue;
+	            addRockInstance(towerInst, { shape: "rock", registerCollider: true, walkable: false, colliderRadiusScale: 0.80 });
+	          }
+
+	          // 3. Approach debris field — rocks tumbling down from the cliff toward the player
+	          for (let di = 0; di < 12; di += 1) {
+	            const dSpread = patch.approachAngle + randomRange(-1.0, 1.0, patchRng);
+	            const dRadial = randomRange(patch.radius * 0.85, patch.radius * 1.8, patchRng);
+	            const dx = patch.x + Math.cos(dSpread) * dRadial;
+	            const dz = patch.z + Math.sin(dSpread) * dRadial;
+	            const dBase = sampleDuneHeight(dx, dz);
+	            // Taper size with distance — big near base, small far out
+	            const distFrac = Math.max(0, 1.0 - (dRadial - patch.radius * 0.85) / (patch.radius * 0.95));
+	            const dH = randomRange(0.5, 1.8 + 2.2 * distFrac, patchRng);
+	            const dInst = {
+	              x: dx, y: dBase + dH * 0.5, z: dz,
+	              sx: randomRange(0.7, 1.4 + 2.0 * distFrac, patchRng),
+	              sy: dH,
+	              sz: randomRange(0.6, 1.2 + 1.6 * distFrac, patchRng),
+	              rotY: randomRange(0, Math.PI * 2, patchRng),
+	              tiltX: randomRange(-0.28, 0.28, patchRng),
+	              tiltZ: randomRange(-0.28, 0.28, patchRng),
+	            };
+	            if (overlapsExistingRock(dInst, 0.5)) continue;
+	            addRockInstance(dInst, { shape: "rock", registerCollider: true, walkable: false, colliderRadiusScale: 0.78 });
+	          }
+
+	          // 4. Interior plateau rocks — cover and visual interest on top
+	          for (let ii = 0; ii < 8; ii += 1) {
+	            const iAngle = randomRange(0, Math.PI * 2, patchRng);
+	            const iRadial = randomRange(2, patch.plateauRadius * 0.80, patchRng);
+	            const ix = patch.x + Math.cos(iAngle) * iRadial;
+	            const iz = patch.z + Math.sin(iAngle) * iRadial;
+	            const iH = randomRange(1.2, 4.2, patchRng);
+	            const iInst = {
+	              x: ix, y: topY + iH * 0.44, z: iz,
+	              sx: randomRange(1.0, 4.0, patchRng),
+	              sy: iH,
+	              sz: randomRange(0.9, 3.2, patchRng),
+	              rotY: randomRange(0, Math.PI * 2, patchRng),
+	              tiltX: randomRange(-0.10, 0.10, patchRng),
+	              tiltZ: randomRange(-0.10, 0.10, patchRng),
+	            };
+	            if (overlapsExistingRock(iInst, 0.7)) continue;
+	            addRockInstance(iInst, { shape: "rock", registerCollider: true, walkable: false, colliderRadiusScale: 0.82 });
+	          }
+	        }
+
+
+	        const wallCount = patch.major ? (isStartPatch ? 7 : 6) : 3;
 	        for (let i = 0; i < wallCount; i += 1) {
 	          const angle = patch.approachAngle + ((i / wallCount) * Math.PI * 2) + randomRange(-0.35, 0.35, patchRng);
 	          if (isStartPatch) {
@@ -1447,7 +1571,7 @@
 	            if (escapeDelta < 0.62 || oppositeDelta < 0.62) continue;
 	          }
 	          const radial = isStartPatch
-	            ? randomRange(patch.radius * 0.84, patch.radius * 1.04, patchRng)
+	            ? randomRange(patch.plateauRadius * 0.92, patch.plateauRadius * 1.22, patchRng)
 	            : randomRange(patch.plateauRadius * 1.08, patch.radius * 0.92, patchRng);
 	          const x = patch.x + (Math.cos(angle) * radial);
 	          const z = patch.z + (Math.sin(angle) * radial);
@@ -1456,15 +1580,15 @@
 	          const duneY = sampleDuneHeight(x, z);
 	          const topTarget = topY - randomRange(0.8, 2.8, patchRng);
 	          const height = isStartPatch
-	            ? Math.max(2.4, (topTarget - duneY) + randomRange(1.2, 2.8, patchRng))
+	            ? Math.max(3.5, (topTarget - duneY) + randomRange(2.0, 5.0, patchRng))
 	            : Math.max(3, (topTarget - duneY) + randomRange(2.2, 4.8, patchRng));
 	          const inst = {
 	            x,
 	            y: duneY + (height * 0.5),
 	            z,
-	            sx: randomRange(isStartPatch ? 2.2 : 3.1, isStartPatch ? 3.8 : patch.major ? 5.9 : 4.4, patchRng),
+	            sx: randomRange(isStartPatch ? 3.1 : 3.1, isStartPatch ? 5.5 : patch.major ? 5.9 : 4.4, patchRng),
 	            sy: height,
-	            sz: randomRange(isStartPatch ? 2 : 2.8, isStartPatch ? 3.5 : patch.major ? 5.2 : 4, patchRng),
+	            sz: randomRange(isStartPatch ? 2.8 : 2.8, isStartPatch ? 4.8 : patch.major ? 5.2 : 4, patchRng),
 	            rotY: angle + randomRange(-0.25, 0.25, patchRng),
 	            tiltX: randomRange(-0.11, 0.11, patchRng),
 	            tiltZ: randomRange(-0.11, 0.11, patchRng),
@@ -1578,6 +1702,63 @@
 	        slopeRockCount += 1;
 	        if (slopeRockCount >= 22) break;
 	      }
+
+	      // ── Arrakeen Ridge Pass ──────────────────────────────────────────────
+	      // Scattered tectonic fin-rocks in the open sand. Elongated, tilted,
+	      // partially buried. Not safe zones — just cover and visual texture.
+	      const ridgeRng = mulberry32((MAP_SEED ^ 0xd3a1b2c4) >>> 0);
+	      const ridgeHalfWorld = (CONFIG.worldSize * 0.5) - 40;
+	      const ridgeClusterCount = 30;
+
+	      for (let ci = 0; ci < ridgeClusterCount; ci += 1) {
+	        const hubX = randomRange(-ridgeHalfWorld, ridgeHalfWorld, ridgeRng);
+	        const hubZ = randomRange(-ridgeHalfWorld, ridgeHalfWorld, ridgeRng);
+
+	        // Skip if near start area or inside an existing rock patch
+	        if (isInStartZone(hubX, hubZ)) continue;
+	        let nearPatch = false;
+	        for (const p of ROCK_PATCHES) {
+	          const pdx = hubX - p.x, pdz = hubZ - p.z;
+	          if ((pdx * pdx) + (pdz * pdz) < (p.radius + 18) * (p.radius + 18)) { nearPatch = true; break; }
+	        }
+	        if (nearPatch) continue;
+
+	        // Shared ridge strike direction for this cluster
+	        const strikeAngle = randomRange(0, Math.PI, ridgeRng);
+	        const rockCount = 3 + Math.floor(ridgeRng() * 3); // 3-5 per cluster
+
+	        for (let ri = 0; ri < rockCount; ri += 1) {
+	          // Spread along the strike axis so the cluster looks like a continuous ridge
+	          const along = randomRange(-14, 14, ridgeRng);
+	          const across = randomRange(-4, 4, ridgeRng);
+	          const rx = hubX + Math.cos(strikeAngle) * along - Math.sin(strikeAngle) * across;
+	          const rz = hubZ + Math.sin(strikeAngle) * along + Math.cos(strikeAngle) * across;
+
+	          if (isInStartZone(rx, rz)) continue;
+
+	          const duneY = sampleDuneHeight(rx, rz);
+	          const sY = randomRange(1.6, 3.8, ridgeRng);
+	          const inst = {
+	            x: rx,
+	            y: duneY - sY * 0.18,   // center slightly below surface — 30% pokes up
+	            z: rz,
+	            sx: randomRange(2.8, 6.0, ridgeRng),
+	            sy: sY,
+	            sz: randomRange(7, 16, ridgeRng),  // long axis aligned to strike
+	            rotY: strikeAngle + randomRange(-0.22, 0.22, ridgeRng),
+	            tiltX: randomRange(-0.32, 0.32, ridgeRng),
+	            tiltZ: randomRange(-0.28, 0.28, ridgeRng),
+	          };
+	          if (overlapsExistingRock(inst, 0.55)) continue;
+	          addRockInstance(inst, {
+	            shape: "rock",
+	            registerCollider: true,
+	            walkable: false,
+	            colliderRadiusScale: 0.80,
+	          });
+	        }
+	      }
+	      // ── End Arrakeen Ridge Pass ──────────────────────────────────────────
 
 	      const instancedMeshes = [];
 	      function buildInstancedMesh(bucket, defaultGeometry) {
@@ -2234,19 +2415,6 @@
 	        group.add(fin);
 	      }
 
-	      // Poison trail — wide near dart, tapering to point behind it
-	      const trail = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.03, 0.0, 2.2, 5),
-	        new THREE.MeshBasicMaterial({
-	          color: 0x33dd55,
-	          transparent: true,
-	          opacity: 0.55,
-	          depthWrite: false,
-	        })
-	      );
-	      trail.position.y = -1.55; // wide end near dart base, tip trails behind
-	      group.add(trail);
-
 	      return group;
 	    }
 
@@ -2268,8 +2436,11 @@
 	      tempMaulaVelocity.y += CONFIG.maulaProjectileLift;
 	      mesh.quaternion.setFromUnitVectors(tempUp, tempMaulaVelocity.clone().normalize());
 
-	      maulaProjectiles.push({
+	      const trailMesh = new THREE.Mesh(maulaTrailGeo, maulaTrailMat);
+      scene.add(trailMesh);
+      maulaProjectiles.push({
 	        mesh,
+	        trailMesh,
 	        velocity: tempMaulaVelocity.clone(),
 	        age: 0,
 	      });
@@ -2443,10 +2614,14 @@
 	        projectile.age += delta;
 
 	        if (projectile.velocity.lengthSq() > 0.0001) {
-	          projectile.mesh.quaternion.setFromUnitVectors(
-	            tempUp,
-	            tempProjectileDelta.copy(projectile.velocity).normalize()
-	          );
+	          const velDir = tempProjectileDelta.copy(projectile.velocity).normalize();
+	          projectile.mesh.quaternion.setFromUnitVectors(tempUp, velDir);
+	          // World-space trail: cylinder from 3.5 units behind to current position
+	          const trailLen = 3.5;
+	          projectile.trailMesh.position.copy(projectile.mesh.position)
+	            .addScaledVector(velDir, -trailLen * 0.5);
+	          projectile.trailMesh.quaternion.setFromUnitVectors(tempUp, velDir);
+	          projectile.trailMesh.scale.y = trailLen;
 	        }
 
 	        let hit = false;
@@ -2490,6 +2665,7 @@
 	        const outOfBounds = !isInsideWorldBounds(projectile.mesh.position.x, projectile.mesh.position.z, 4);
 	        if (hit || projectile.age >= CONFIG.maulaProjectileLifetime || outOfBounds) {
 	          scene.remove(projectile.mesh);
+	          scene.remove(projectile.trailMesh);
 	          maulaProjectiles.splice(i, 1);
 	        }
 	      }
@@ -3365,7 +3541,7 @@
       state.harvestTimer = 0;
     }
 
-	    function getSpicePrompt(canHarvest) {
+	    function getSpicePrompt(canHarvest, nearDepot = false) {
 	      if (state.wormPhase === "devour" || state.wormPhase === "recover") {
 	        return "The worm has you. Spice is lost.";
 	      }
@@ -3377,7 +3553,8 @@
 	        return `Harvesting spice patch: ${Math.round(progress * 100)}%`;
       }
       if (state.spiceCarry > 0) {
-        return "Carry spice back to any rock outcropping.";
+        if (nearDepot) return "Press E to deposit spice.";
+        return "Carry spice back to the sietch depot.";
       }
       if (canHarvest) return "Stand in the spice patch and hold E to harvest.";
       return "Leave rock and find a spice patch in the open sand.";
@@ -3386,9 +3563,42 @@
     function updateSpiceObjective(delta) {
       const pulseTime = state.elapsed * 1.8;
       const horizontalSpeed = Math.hypot(player.userData.velocity.x, player.userData.velocity.z);
-      if (state.spiceCarry > 0 && state.surfaceType === "rock" && state.wormPhase !== "devour") {
+      // Deposit spice at the sietch depot — E key while in range
+      const _dpDx = player.position.x - spiceDepot.worldPos.x;
+      const _dpDz = player.position.z - spiceDepot.worldPos.z;
+      const nearDepot = (_dpDx * _dpDx) + (_dpDz * _dpDz) <= spiceDepot.depositRadius * spiceDepot.depositRadius;
+      const ePressed = keyState.KeyE && !state.paused && controls.isLocked;
+      if (nearDepot && state.spiceCarry > 0 && state.wormPhase !== "devour" && ePressed && !state.depositKeyConsumed) {
         state.spiceCarry = 0;
         state.spiceScore += 1;
+        state.depositKeyConsumed = true;
+        state.depositToastTimer = 2.8;
+        spiceDepot.triggerDeposit();
+      }
+      if (!keyState.KeyE) state.depositKeyConsumed = false;
+
+      // Spice cargo glow
+      const carrying = state.spiceCarry > 0;
+      const cargoMesh = player.userData.spiceCargoMesh;
+      if (cargoMesh) {
+        cargoMesh.visible = carrying;
+        player.userData.spiceGlowMesh.visible = carrying;
+        if (carrying) {
+          const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * 3.8);
+          player.userData.spiceCargoMat.emissiveIntensity = 0.7 + pulse * 0.8;
+          player.userData.spiceGlowMat.opacity = 0.07 + pulse * 0.13;
+        }
+      }
+
+      spiceDepot.update(delta, state.elapsed, state.spiceCarry > 0);
+      if (state.depositToastTimer > 0) {
+        state.depositToastTimer -= delta;
+        if (state.depositToastTimer <= 0) {
+          ui.depositToast.classList.remove("show");
+        } else if (!ui.depositToast.classList.contains("show")) {
+          ui.depositToast.textContent = `Spice deposited  ✦  Bank: ${state.spiceScore}`;
+          ui.depositToast.classList.add("show");
+        }
       }
 
       let nearbyHarvestNode = null;
@@ -3482,7 +3692,7 @@
 	        emitNoiseImpulse(0.12);
 	      }
 
-      state.interactHint = getSpicePrompt(canHarvest);
+      state.interactHint = getSpicePrompt(canHarvest, nearDepot);
     }
 
     function resolveCylinderDummyCollision(dummy, velocity) {
@@ -3777,6 +3987,33 @@
 	      packCap.position.set(0, 2.6, -0.74);
 	      packCap.rotation.x = Math.PI / 2;
 	      root.add(packCap);
+
+	      // Spice cargo indicator — only visible when carrying melange
+	      const spiceCargoMat = new THREE.MeshStandardMaterial({
+	        color: 0xc4780a,
+	        emissive: 0xff8800,
+	        emissiveIntensity: 0,
+	        roughness: 0.28,
+	        metalness: 0.18,
+	        flatShading: true,
+	      });
+	      const spiceCargo = makeMesh(new THREE.CylinderGeometry(0.19, 0.23, 0.34, 8), spiceCargoMat);
+	      spiceCargo.position.set(0, 2.9, -0.56);
+	      spiceCargo.visible = false;
+	      root.add(spiceCargo);
+
+	      const spiceGlowMat = new THREE.MeshBasicMaterial({
+	        color: 0xff9900, transparent: true, opacity: 0, depthWrite: false, side: THREE.BackSide,
+	      });
+	      const spiceGlow = new THREE.Mesh(new THREE.SphereGeometry(0.52, 8, 6), spiceGlowMat);
+	      spiceGlow.position.set(0, 2.9, -0.56);
+	      spiceGlow.visible = false;
+	      root.add(spiceGlow);
+
+	      root.userData.spiceCargoMesh = spiceCargo;
+	      root.userData.spiceCargoMat = spiceCargoMat;
+	      root.userData.spiceGlowMesh = spiceGlow;
+	      root.userData.spiceGlowMat = spiceGlowMat;
 
 	      const neckSeal = makeMesh(
 	        new THREE.CylinderGeometry(0.44, 0.5, 0.28, 10),
@@ -5779,7 +6016,77 @@
       };
     }
 
-    function pickWormTargetForActor(actor) {
+    function createSpiceDepot() {
+      const startPatch = ROCK_PATCHES[0];
+      const depotX = startPatch.x;
+      const depotZ = startPatch.z - 10;
+      const depotY = sampleGroundHeight(depotX, depotZ);
+
+      const group = new THREE.Group();
+      group.position.set(depotX, depotY, depotZ);
+      scene.add(group);
+
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6e5c3e, roughness: 0.94, metalness: 0.0, flatShading: true });
+
+      // Hexagonal pedestal base
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.7, 1.1, 6), stoneMat);
+      base.position.y = 0.55;
+      group.add(base);
+
+      // Narrow neck connecting base to funnel
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 1.3, 0.55, 6), stoneMat);
+      neck.position.y = 1.375;
+      group.add(neck);
+
+      // Funnel/hopper body — wide mouth at top, narrow at bottom = clearly a receptacle
+      const funnelMat = new THREE.MeshStandardMaterial({ color: 0x5a4a2e, roughness: 0.88, metalness: 0.05, flatShading: true });
+      const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 0.62, 2.1, 8), funnelMat);
+      funnel.position.y = 2.7;
+      group.add(funnel);
+
+      // Outer rim lip at top of funnel
+      const rimMat = new THREE.MeshStandardMaterial({ color: 0x7a6040, roughness: 0.8, metalness: 0.12, flatShading: true });
+      const funnelRim = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.22, 6, 16), rimMat);
+      funnelRim.rotation.x = Math.PI / 2;
+      funnelRim.position.y = 3.75;
+      group.add(funnelRim);
+
+      // Inner glow — emissive amber disk at the mouth, like pooled spice inside
+      const crystalMat = new THREE.MeshStandardMaterial({
+        color: 0xd4720e, emissive: 0xff7700, emissiveIntensity: 0.6,
+        roughness: 0.3, metalness: 0.2, flatShading: true, side: THREE.DoubleSide,
+      });
+      const mouthGlow = new THREE.Mesh(new THREE.CircleGeometry(2.3, 8), crystalMat);
+      mouthGlow.rotation.x = -Math.PI / 2;
+      mouthGlow.position.y = 3.72;
+      group.add(mouthGlow);
+
+      // Halo beacon — pulses when player carries spice to guide them back
+      const haloMat = new THREE.MeshBasicMaterial({
+        color: 0xff8800, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.BackSide,
+      });
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(5.0, 8, 6), haloMat);
+      halo.position.y = 2.5;
+      group.add(halo);
+
+      let depositFlash = 0;
+
+      return {
+        worldPos: new THREE.Vector3(depotX, depotY, depotZ),
+        depositRadius: 6,
+        triggerDeposit() { depositFlash = 1.0; },
+        update(delta, elapsed, carrying) {
+          const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
+          crystalMat.emissiveIntensity = depositFlash > 0
+            ? 2.0 + depositFlash * 3.5
+            : (carrying ? 0.65 + pulse * 1.0 : 0.4 + pulse * 0.25);
+          depositFlash = Math.max(0, depositFlash - delta * 3.0);
+          haloMat.opacity = carrying ? 0.07 + pulse * 0.16 : 0;
+        },
+      };
+    }
+
+        function pickWormTargetForActor(actor) {
       const velocity = actor.velocity ?? tempWormPull.set(0, 0, 0);
       const speed = Math.hypot(velocity.x, velocity.z);
       let dirX = 0;
@@ -6241,7 +6548,15 @@
 
     function finishDevour() {
       anchorWormAtStrikeTarget();
-      player.position.copy(state.wormRespawnPoint);
+      // Place X,Z first, then sample ground height with feetY=Infinity (no step-up/down guards)
+      // so the player lands on top of the mesa, not at dune height.
+      player.position.x = state.wormRespawnPoint.x;
+      player.position.z = state.wormRespawnPoint.z;
+      player.position.y = samplePlayerGroundHeight(
+        state.wormRespawnPoint.x,
+        state.wormRespawnPoint.z
+        // feetY defaults to Infinity → bypasses step guards, finds mesa top
+      ) + CONFIG.playerStandHeight;
       player.userData.velocity.set(0, 0, 0);
       state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
       state.wormPhase = "idle";
@@ -6752,11 +7067,17 @@
         player.userData.grounded = false;
       }
 
-      // Failsafe: never allow the player to stay buried under the start formation.
-      if (isInStartZone(player.position.x, player.position.z)) {
-        const startSupportY = samplePlayerGroundHeight(player.position.x, player.position.z, Infinity, 0) + CONFIG.playerStandHeight;
-        if (player.position.y < startSupportY - 1.1) {
-          player.position.y = startSupportY;
+      // Clip pop-out: if the player is buried in terrain (common when running
+      // straight into a steep dune face), pop them to the true surface.
+      // Uses feetY=Infinity to bypass the per-frame step-up limit that causes
+      // the normal ground-snap to miss steep ramps at sprint speed.
+      // Cap of 4.5 units prevents snapping to a platform far above the player.
+      {
+        const trueGroundY = samplePlayerGroundHeight(player.position.x, player.position.z, Infinity, 0) + CONFIG.playerStandHeight;
+        const buried = player.position.y < trueGroundY - CONFIG.playerGroundSnapEpsilon;
+        const reachable = trueGroundY - player.position.y < 4.5;
+        if (buried && reachable) {
+          player.position.y = trueGroundY;
           velocity.y = Math.max(0, velocity.y);
           player.userData.grounded = true;
         }
