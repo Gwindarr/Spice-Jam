@@ -374,15 +374,20 @@
         <span class="compact-track"><span id="shieldFill" class="noise-fill" style="background:#85cfff;width:100%;"></span></span>
         <span id="hudShieldValue" class="compact-value">100%</span>
       </div>
-      <div class="compact-meter">
-        <span class="compact-label">Wrm</span>
-        <span class="compact-track"><span id="hudWormFillPlayer" class="noise-fill" style="background:#ffb84a;width:0%;"></span></span>
-        <span id="hudWormValue" class="compact-value">0%</span>
-      </div>
-      <div id="hudContextMeter" class="compact-meter" style="display:none">
-        <span id="hudContextLabel" class="compact-label">Use</span>
-        <span class="compact-track"><span id="hudContextFill" class="noise-fill" style="background:#f0c860;width:0%;"></span></span>
-        <span id="hudContextValue" class="compact-value">0%</span>
+	      <div class="compact-meter">
+	        <span class="compact-label">Wrm</span>
+	        <span class="compact-track"><span id="hudWormFillPlayer" class="noise-fill" style="background:#ffb84a;width:0%;"></span></span>
+	        <span id="hudWormValue" class="compact-value">0%</span>
+	      </div>
+	      <div id="hudMaulaReloadMeter" class="compact-meter" style="display:none">
+	        <span class="compact-label">Rld</span>
+	        <span class="compact-track"><span id="hudMaulaReloadFill" class="noise-fill" style="background:#d9b574;width:0%;"></span></span>
+	        <span id="hudMaulaReloadValue" class="compact-value">0%</span>
+	      </div>
+	      <div id="hudContextMeter" class="compact-meter" style="display:none">
+	        <span id="hudContextLabel" class="compact-label">Use</span>
+	        <span class="compact-track"><span id="hudContextFill" class="noise-fill" style="background:#f0c860;width:0%;"></span></span>
+	        <span id="hudContextValue" class="compact-value">0%</span>
       </div>
     </div>
     <div id="hudStatus" class="hud-status">Find spice in open sand.</div>
@@ -584,8 +589,8 @@
 	      maulaImpactNoiseImpulse: 0.22,
 	      holtzmanWarningTime: 0.22,
 	      holtzmanExplosionDuration: 6.0,
-	      holtzmanExplosionLethalRadius: 20,
-	      holtzmanExplosionDamageRadius: 44,
+	      holtzmanExplosionLethalRadius: 35,
+	      holtzmanExplosionDamageRadius: 70,
 	      holtzmanExplosionDamage: 80,
 	      lasgunDPS: 50,
 	      lasgunDrainRate: 0.24,
@@ -594,7 +599,7 @@
 	      lasgunCooldown: 1.15,
 	      lasgunFireDuration: 0.18,
 	      lasgunBeamDuration: 0.12,
-	      lasgunRange: 120,
+	      lasgunRange: 500,
 	      lasgunFireNoiseImpulse: 0.34,
 	      shieldTransitionSpeed: 8.5,
 	      shieldFlashDecay: 3.4,
@@ -743,11 +748,14 @@
       healthFill: document.getElementById("healthFill"),
       hudShieldValue: document.getElementById("hudShieldValue"),
       shieldFill: document.getElementById("shieldFill"),
-      hudWormValue: document.getElementById("hudWormValue"),
-      hudWormFillPlayer: document.getElementById("hudWormFillPlayer"),
-      hudContextMeter: document.getElementById("hudContextMeter"),
-      hudContextLabel: document.getElementById("hudContextLabel"),
-      hudContextValue: document.getElementById("hudContextValue"),
+	      hudWormValue: document.getElementById("hudWormValue"),
+	      hudWormFillPlayer: document.getElementById("hudWormFillPlayer"),
+	      hudMaulaReloadMeter: document.getElementById("hudMaulaReloadMeter"),
+	      hudMaulaReloadValue: document.getElementById("hudMaulaReloadValue"),
+	      hudMaulaReloadFill: document.getElementById("hudMaulaReloadFill"),
+	      hudContextMeter: document.getElementById("hudContextMeter"),
+	      hudContextLabel: document.getElementById("hudContextLabel"),
+	      hudContextValue: document.getElementById("hudContextValue"),
       hudContextFill: document.getElementById("hudContextFill"),
       hudStatus: document.getElementById("hudStatus"),
       explosionFlash: document.getElementById("explosionFlash"),
@@ -869,11 +877,14 @@
 	      lasgunBeamTimer: 0,
 	      lasgunFiring: false,
 	      lasgunNoiseTimer: 0,
+	      lasgunRockHitTimer: 0,
 	      lasgunCharge: 1,
 	      holtzmanFuse: 0,
 	      holtzmanExplosionTimer: -1,
 	      holtzmanExplosionDamageDealt: false,
 	      holtzmanExplosionPos: new THREE.Vector3(),
+	      holtzmanDeathTimer: -1,
+	      holtzmanRespawnPoint: new THREE.Vector3(),
 	      lasgunBeamStart: new THREE.Vector3(),
 	      lasgunBeamEnd: new THREE.Vector3(),
 	      shieldActive: false,
@@ -933,6 +944,8 @@
 	    const tempProjectileClosest = new THREE.Vector3();
 	    const tempLasgunImpact = new THREE.Vector3();
 	    const tempLasgunEnd = new THREE.Vector3();
+	    const tempLasgunAimPoint = new THREE.Vector3();
+	    let cameraShoulderAmount = 0;
 	    const cameraRaycaster = new THREE.Raycaster();
 	    const textureLoader = new THREE.TextureLoader();
 	    const tempCollisionBox = new THREE.Box3();
@@ -974,9 +987,19 @@
 	    const thumper = createThumper();
 	    const spiceObjective = createSpiceObjective();
 	    const trainingDummy = createTrainingDummy();
-    const shieldedDummy = createTrainingDummy({ offsetX: 8.8, offsetZ: -6.2, hasShield: true });
+    const shieldedDummies = [
+      createTrainingDummy({ offsetX: 8.8, offsetZ: -6.2, hasShield: true }),
+      createTrainingDummy({ offsetX: 25, offsetZ: 0, hasShield: true }),
+      createTrainingDummy({ offsetX: 50, offsetZ: 0, hasShield: true }),
+      createTrainingDummy({ offsetX: 80, offsetZ: 0, hasShield: true }),
+      createTrainingDummy({ offsetX: 110, offsetZ: 0, hasShield: true }),
+      createTrainingDummy({ offsetX: 150, offsetZ: 0, hasShield: true }),
+      createTrainingDummy({ offsetX: 200, offsetZ: 0, hasShield: true }),
+      createTrainingDummy({ offsetX: 250, offsetZ: 0, hasShield: true }),
+    ];
 	    const lasgunBeam = createLasgunBeam();
     const holtzmanExplosion = createHoltzmanExplosion();
+    const lasgunRockFX = createLasgunRockFX();
 	    placePlayerOnGround();
 	    bindEvents();
     updateDayNight(0);
@@ -2071,9 +2094,9 @@
 	    function equipWeapon(weapon) {
 	      if (weapon !== "knife" && weapon !== "maula" && weapon !== "lasgun") return false;
 	      if (weapon === state.equippedWeapon) return false;
-	      if (state.maulaReloadTimer > 0) {
-	        broadcastWormRadio("Finish reloading before changing weapons.");
-	        return false;
+	      const switchingOffMaula = state.equippedWeapon === "maula" && weapon !== "maula";
+	      if (switchingOffMaula && state.maulaReloadTimer > 0) {
+	        state.maulaReloadTimer = 0;
 	      }
 
 	      state.equippedWeapon = weapon;
@@ -2081,6 +2104,14 @@
 	      state.knifeHasHit = false;
 	      state.maulaFireTimer = 0;
 	      state.lasgunFireTimer = 0;
+	      if (
+	        weapon === "maula" &&
+	        !state.maulaLoaded &&
+	        state.maulaReserveAmmo > 0 &&
+	        state.maulaReloadTimer <= 0
+	      ) {
+	        state.maulaReloadTimer = CONFIG.maulaReloadDuration;
+	      }
 	      const knifeRoot = player.userData.knifeRoot;
 	      const maulaRoot = player.userData.maulaRoot;
 	      const lasgunRoot = player.userData.lasgunRoot;
@@ -2135,7 +2166,8 @@
         state.paused ||
         !controls.isLocked ||
         state.wormPhase === "devour" ||
-        state.wormPhase === "recover"
+        state.wormPhase === "recover" ||
+        state.holtzmanDeathTimer > 0
       ) {
         return false;
       }
@@ -2202,6 +2234,19 @@
 	        group.add(fin);
 	      }
 
+	      // Poison trail — wide near dart, tapering to point behind it
+	      const trail = new THREE.Mesh(
+	        new THREE.CylinderGeometry(0.03, 0.0, 2.2, 5),
+	        new THREE.MeshBasicMaterial({
+	          color: 0x33dd55,
+	          transparent: true,
+	          opacity: 0.55,
+	          depthWrite: false,
+	        })
+	      );
+	      trail.position.y = -1.55; // wide end near dart base, tip trails behind
+	      group.add(trail);
+
 	      return group;
 	    }
 
@@ -2235,7 +2280,8 @@
 	        state.paused ||
 	        !controls.isLocked ||
 	        state.wormPhase === "devour" ||
-	        state.wormPhase === "recover"
+	        state.wormPhase === "recover" ||
+	        state.holtzmanDeathTimer > 0
 	      ) {
 	        return false;
 	      }
@@ -2250,7 +2296,21 @@
 	      if (state.maulaCooldown > 0) return false;
 
 	      cancelHarvest();
-	      const strikeDir = getKnifeStrikeDirection(tempKnifeDir);
+	      const aimPoint = getLasgunAimPoint(tempLasgunAimPoint);
+	      const muzzle = player.userData.maulaMuzzle;
+	      if (muzzle) {
+	        muzzle.getWorldPosition(tempMaulaOrigin);
+	      } else {
+	        tempMaulaOrigin.copy(player.position);
+	        tempMaulaOrigin.y += 3.3;
+	      }
+	      tempKnifeDir.subVectors(aimPoint, tempMaulaOrigin);
+	      if (tempKnifeDir.lengthSq() < 0.0001) {
+	        getKnifeStrikeDirection(tempKnifeDir);
+	      } else {
+	        tempKnifeDir.normalize();
+	      }
+	      const strikeDir = tempKnifeDir;
 	      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
 	      spawnMaulaProjectile(strikeDir);
 	      state.maulaLoaded = false;
@@ -2435,6 +2495,33 @@
 	      }
 	    }
 
+	    function getLasgunAimPoint(out) {
+	      camera.getWorldDirection(tempKnifeDir);
+	      const dir = tempKnifeDir;
+	      const camPos = camera.position;
+
+	      // Rock/geometry hit
+	      const rockHit = raycastWorldCollision(camPos, dir, CONFIG.lasgunRange, 0.3);
+	      let aimDist = rockHit ? rockHit.distance : CONFIG.lasgunRange;
+
+	      // March along ray to find terrain intersection (cap at 300 — beyond fog)
+	      const marchMax = Math.min(aimDist, 300);
+	      const stepSize = 5;
+	      const steps = Math.ceil(marchMax / stepSize);
+	      for (let i = 1; i <= steps; i += 1) {
+	        const d = Math.min(i * stepSize, marchMax);
+	        const rx = camPos.x + dir.x * d;
+	        const rz = camPos.z + dir.z * d;
+	        if (camPos.y + dir.y * d <= sampleGroundHeight(rx, rz)) {
+	          aimDist = d;
+	          break;
+	        }
+	      }
+
+	      out.copy(camPos).addScaledVector(dir, aimDist);
+	      return out;
+	    }
+
 	    function getLasgunOrigin(out = tempMaulaOrigin) {
 	      const muzzle = player.userData.lasgunMuzzle;
 	      if (muzzle) {
@@ -2541,7 +2628,8 @@
 	        state.paused ||
 	        !controls.isLocked ||
 	        state.wormPhase === "devour" ||
-	        state.wormPhase === "recover"
+	        state.wormPhase === "recover" ||
+	        state.holtzmanDeathTimer > 0
 	      ) {
 	        return false;
 	      }
@@ -2600,6 +2688,119 @@
 	      );
 	    }
 
+	    function createLasgunRockFX() {
+	      const Z_AXIS = new THREE.Vector3(0, 0, 1);
+	      const tempQ = new THREE.Quaternion();
+
+	      const scorchGeo = new THREE.CircleGeometry(0.4, 8);
+	      const scorches = Array.from({ length: 12 }, () => {
+	        const mat = new THREE.MeshBasicMaterial({
+	          color: 0x0d0700, transparent: true, opacity: 0,
+	          depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+	        });
+	        const mesh = new THREE.Mesh(scorchGeo, mat);
+	        mesh.visible = false;
+	        scene.add(mesh);
+	        return { mesh, mat, timer: 0, duration: 5 };
+	      });
+
+	      const sparkGeo = new THREE.SphereGeometry(0.06, 3, 2);
+	      const sparks = Array.from({ length: 30 }, () => {
+	        const mat = new THREE.MeshBasicMaterial({ color: 0xff8800 });
+	        const mesh = new THREE.Mesh(sparkGeo, mat.clone());
+	        mesh.visible = false;
+	        scene.add(mesh);
+	        return { mesh, mat: mesh.material, velocity: new THREE.Vector3(), timer: 0, duration: 0 };
+	      });
+
+	      const flashGeo = new THREE.CircleGeometry(1, 12);
+	      const flashes = Array.from({ length: 4 }, () => {
+	        const mat = new THREE.MeshBasicMaterial({
+	          color: 0xffcc44, transparent: true, opacity: 0,
+	          depthWrite: false, side: THREE.DoubleSide,
+	        });
+	        const mesh = new THREE.Mesh(flashGeo, mat);
+	        mesh.visible = false;
+	        scene.add(mesh);
+	        return { mesh, mat, timer: 0 };
+	      });
+
+	      return { scorches, sparks, flashes, Z_AXIS, tempQ, _si: 0, _pi: 0, _fi: 0 };
+	    }
+
+	    function triggerLasgunRockHit(pos, normal) {
+	      const fx = lasgunRockFX;
+	      fx.tempQ.setFromUnitVectors(fx.Z_AXIS, normal);
+
+	      // Scorch mark
+	      const sc = fx.scorches[fx._si % fx.scorches.length];
+	      fx._si++;
+	      sc.mesh.position.copy(pos).addScaledVector(normal, 0.03);
+	      sc.mesh.quaternion.copy(fx.tempQ);
+	      sc.mesh.scale.setScalar(randomRange(0.5, 1.1));
+	      sc.mat.opacity = 0.72;
+	      sc.timer = 5.0;
+	      sc.duration = 5.0;
+	      sc.mesh.visible = true;
+
+	      // Spark burst
+	      for (let i = 0; i < 6; i += 1) {
+	        const sp = fx.sparks[fx._pi % fx.sparks.length];
+	        fx._pi++;
+	        sp.mesh.position.copy(pos);
+	        const speed = randomRange(1.8, 5.0);
+	        sp.velocity.set(
+	          normal.x + (Math.random() - 0.5) * 0.9,
+	          normal.y + (Math.random() - 0.5) * 0.9,
+	          normal.z + (Math.random() - 0.5) * 0.9
+	        ).normalize().multiplyScalar(speed);
+	        sp.duration = randomRange(0.22, 0.52);
+	        sp.timer = sp.duration;
+	        sp.mat.color.setHex(Math.random() > 0.4 ? 0xffaa00 : 0xff5500);
+	        sp.mesh.scale.setScalar(1);
+	        sp.mesh.visible = true;
+	      }
+
+	      // Impact flash
+	      const fl = fx.flashes[fx._fi % fx.flashes.length];
+	      fx._fi++;
+	      fl.mesh.position.copy(pos).addScaledVector(normal, 0.04);
+	      fl.mesh.quaternion.copy(fx.tempQ);
+	      fl.mesh.scale.setScalar(0.04);
+	      fl.mat.opacity = 0.95;
+	      fl.timer = 0.14;
+	      fl.mesh.visible = true;
+	    }
+
+	    function updateLasgunRockFX(delta) {
+	      const fx = lasgunRockFX;
+
+	      for (const sc of fx.scorches) {
+	        if (!sc.mesh.visible) continue;
+	        sc.timer -= delta;
+	        if (sc.timer <= 0) { sc.mesh.visible = false; continue; }
+	        sc.mat.opacity = 0.72 * (sc.timer / sc.duration);
+	      }
+
+	      for (const sp of fx.sparks) {
+	        if (!sp.mesh.visible) continue;
+	        sp.timer -= delta;
+	        if (sp.timer <= 0) { sp.mesh.visible = false; continue; }
+	        sp.velocity.y -= 16 * delta;
+	        sp.mesh.position.addScaledVector(sp.velocity, delta);
+	        sp.mesh.scale.setScalar(sp.timer / sp.duration);
+	      }
+
+	      for (const fl of fx.flashes) {
+	        if (!fl.mesh.visible) continue;
+	        fl.timer -= delta;
+	        if (fl.timer <= 0) { fl.mesh.visible = false; continue; }
+	        const t = 1 - (fl.timer / 0.14);
+	        fl.mesh.scale.setScalar(0.04 + t * 0.72);
+	        fl.mat.opacity = 0.95 * (fl.timer / 0.14);
+	      }
+	    }
+
 	    function updateLasgunBeam(delta) {
 	      // Lasgun charge recharge when not firing
 	      if (!state.lasgunFiring) {
@@ -2613,7 +2814,8 @@
 
 	      // Stop conditions
 	      if (state.paused || !controls.isLocked || state.equippedWeapon !== "lasgun" ||
-	          state.wormPhase === "devour" || state.wormPhase === "recover") {
+	          state.wormPhase === "devour" || state.wormPhase === "recover" ||
+	          state.holtzmanDeathTimer > 0) {
 	        state.lasgunFiring = false;
 	        state.holtzmanFuse = 0;
 	        return;
@@ -2629,13 +2831,14 @@
 	        }
 	      }
 
-	      camera.getWorldDirection(tempKnifeDir);
-	      const strikeDir = tempKnifeDir;
+	      // Screen-space aim: cast from camera to world point, fire from muzzle toward it
+	      const aimPoint = getLasgunAimPoint(tempLasgunAimPoint);
+	      const origin = getLasgunOrigin(tempMaulaOrigin);
+	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
 	      // Rotate player body to face horizontal aim direction
 	      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
-	      const origin = getLasgunOrigin(tempMaulaOrigin);
 
-	      let maxDistance = CONFIG.lasgunRange;
+	      let maxDistance = origin.distanceTo(aimPoint);
         const rockHit = raycastWorldCollision(origin, strikeDir, maxDistance, 0.35);
         if (rockHit && rockHit.distance < maxDistance) {
           maxDistance = rockHit.distance;
@@ -2664,16 +2867,18 @@
 	        }
 	      }
 
-	      if (shieldedDummy && !shieldedDummy.dead) {
-	        shieldedDummy.headDot.getWorldPosition(tempProjectileCenter);
+	      let bestShieldedDummy = null;
+	      for (const sd of shieldedDummies) {
+	        if (!sd || sd.dead) continue;
+	        sd.headDot.getWorldPosition(tempProjectileCenter);
 	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
 	          const d = origin.distanceTo(tempProjectileCenter);
-	          if (d < bestDistance) { bestDistance = d; bestType = "shielded"; bestHeadshot = true; }
+	          if (d < bestDistance) { bestDistance = d; bestType = "shielded"; bestHeadshot = true; bestShieldedDummy = sd; }
 	        }
-	        shieldedDummy.targetPivot.getWorldPosition(tempProjectileCenter);
+	        sd.targetPivot.getWorldPosition(tempProjectileCenter);
 	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
 	          const d = origin.distanceTo(tempProjectileCenter);
-	          if (d < bestDistance && bestType !== "shielded") { bestDistance = d; bestType = "shielded"; bestHeadshot = false; }
+	          if (d < bestDistance && bestType !== "shielded") { bestDistance = d; bestType = "shielded"; bestHeadshot = false; bestShieldedDummy = sd; }
 	        }
 	      }
 
@@ -2687,21 +2892,33 @@
 	        broadcastWormRadio("Lasgun beam sheared through the thumper.");
 	      } else if (bestType === "dummy") {
 	        hitTrainingDummy(0.35, CONFIG.lasgunDPS * delta);
-	      } else if (bestType === "shielded") {
+	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
-	        shieldedDummy.shieldHitFlash = Math.sin(state.elapsed * 45) > 0 ? 1.0 : 0.05;
-	        shieldedDummy.shieldMessageTimer = (shieldedDummy.shieldMessageTimer || 0) - delta;
-	        if (shieldedDummy.shieldMessageTimer <= 0) {
+	        bestShieldedDummy.shieldHitFlash = Math.sin(state.elapsed * 45) > 0 ? 1.0 : 0.05;
+	        bestShieldedDummy.shieldMessageTimer = (bestShieldedDummy.shieldMessageTimer || 0) - delta;
+	        if (bestShieldedDummy.shieldMessageTimer <= 0) {
 	          const fusePercent = Math.round((state.holtzmanFuse / CONFIG.holtzmanWarningTime) * 100);
 	          broadcastWormRadio(`WARNING — HOLTZMAN RESONANCE ${fusePercent}% — RELEASE BEAM!`);
-	          shieldedDummy.shieldMessageTimer = 0.12;
+	          bestShieldedDummy.shieldMessageTimer = 0.12;
 	        }
 	        if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
-	          triggerHoltzmanDetonation(shieldedDummy.group.position.clone());
+	          triggerHoltzmanDetonation(bestShieldedDummy.group.position.clone());
 	        }
 	      }
 	      if (bestType !== "shielded") state.holtzmanFuse = 0;
+
+	      // Rock impact FX
+	      if (bestType === null && rockHit) {
+	        state.lasgunRockHitTimer = Math.max(0, state.lasgunRockHitTimer - delta);
+	        if (state.lasgunRockHitTimer <= 0) {
+	          const hitNormal = getWorldCollisionHitNormal(rockHit, tempSupportNormal);
+	          triggerLasgunRockHit(tempLasgunEnd, hitNormal);
+	          state.lasgunRockHitTimer = 0.15;
+	        }
+	      } else {
+	        state.lasgunRockHitTimer = 0;
+	      }
 
 	      state.lasgunBeamStart.copy(origin);
 	      state.lasgunBeamEnd.copy(impactPoint);
@@ -2790,7 +3007,7 @@
 	      const baseScale = 1 + (state.shieldAlpha * 0.015) + (pulse * 0.012);
 	      const flashScale = 1 + (state.shieldFlash * 0.18);
 	      const invPlayerScaleY = 1 / Math.max(0.001, player.scale.y);
-	      shield.group.position.y = THREE.MathUtils.lerp(2.22, 1.94, player.userData.crouchAmount);
+	      shield.group.position.y = THREE.MathUtils.lerp(2.78, 2.5, player.userData.crouchAmount);
 	      shield.group.scale.set(baseScale, baseScale * invPlayerScaleY, baseScale);
 
 	      shield.core.material.opacity = 0.015 + (state.shieldAlpha * 0.12) + (pulse * 0.03);
@@ -3050,7 +3267,7 @@
 	        return "Harvesting spice. Stay still and keep the dunes quiet.";
 	      }
 	      if (state.maulaReloadTimer > 0) {
-	        return "Reloading maula dart. You can move, but not switch or harvest.";
+	        return "Reloading maula dart. Switching weapons cancels reload.";
 	      }
 	      if (state.wormRadioTimer > 0) {
 	        return state.wormRadioMessage;
@@ -3187,16 +3404,28 @@
           continue;
         }
 
-        const pulse = 0.5 + (0.5 * Math.sin(pulseTime + node.phase));
-        node.haze.material.opacity = 0.18 + (pulse * 0.12);
-        node.inner.material.opacity = 0.12 + (pulse * 0.1);
-        node.sparkles.material.opacity = 0.24 + (pulse * 0.28);
-        node.sparkles.rotation.y += delta * 0.06;
-        for (let i = 0; i < node.pockets.length; i += 1) {
-          node.pockets[i].material.opacity = 0.1 + (pulse * (0.12 + (i * 0.015)));
-        }
+	        const pulse = 0.5 + (0.5 * Math.sin(pulseTime + node.phase));
+	        node.haze.material.opacity = 0.18 + (pulse * 0.12);
+	        node.inner.material.opacity = 0.12 + (pulse * 0.1);
+	        node.sparkles.material.opacity = 0.24 + (pulse * 0.28);
+	        node.sparkles.rotation.y += delta * 0.06;
+	        for (let i = 0; i < node.pockets.length; i += 1) {
+	          node.pockets[i].material.opacity = 0.1 + (pulse * (0.12 + (i * 0.015)));
+	        }
+	        node.crystalPivot.rotation.y += delta * (0.38 + (pulse * 0.26));
+	        node.crystalPivot.position.y = node.crystalBaseY + (Math.sin((pulseTime * 1.45) + node.phase) * 0.06);
+	        node.crystalCore.material.emissiveIntensity = 0.2 + (pulse * 0.42);
+	        node.crystalGlow.material.opacity = 0.08 + (pulse * 0.2);
+	        const glowScale = 1 + (pulse * 0.22);
+	        node.crystalGlow.scale.set(glowScale, 1 + (pulse * 0.36), glowScale);
+	        for (let i = 0; i < node.crystalShards.length; i += 1) {
+	          const shard = node.crystalShards[i];
+	          const bob = Math.sin((pulseTime * 2.1) + node.phase + (i * 0.9)) * 0.03;
+	          shard.position.y = shard.userData.baseY + bob;
+	          shard.rotation.y += delta * (0.55 + (i * 0.08));
+	        }
 
-        if (state.spiceCarry > 0) continue;
+	        if (state.spiceCarry > 0) continue;
 
         const dx = player.position.x - node.x;
         const dz = player.position.z - node.z;
@@ -3288,7 +3517,7 @@
 
     function resolveDummyCollision(velocity) {
       resolveCylinderDummyCollision(trainingDummy, velocity);
-      resolveCylinderDummyCollision(shieldedDummy, velocity);
+      for (const sd of shieldedDummies) resolveCylinderDummyCollision(sd, velocity);
     }
 
     function hasNearbyRockObstacle(feetY, headY) {
@@ -3467,113 +3696,212 @@
 	      root.position.copy(CONFIG.playerStart);
 	      root.userData.velocity = new THREE.Vector3();
 	      root.userData.grounded = false;
-      root.userData.jumpBuffer = 0;
-      root.userData.coyoteTimer = 0;
-      root.userData.crouchAmount = 0;
-      root.userData.collisionNormal = new THREE.Vector3();
+	      root.userData.jumpBuffer = 0;
+	      root.userData.coyoteTimer = 0;
+	      root.userData.crouchAmount = 0;
+	      root.userData.collisionNormal = new THREE.Vector3();
 
-	      const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xffd2b3, flatShading: true });
-	      const sleeveMaterial = new THREE.MeshLambertMaterial({ color: 0x66523f, flatShading: true });
-	      const hoodMaterial = new THREE.MeshLambertMaterial({ color: 0x7a6852, flatShading: true });
-	      const facePlateMaterial = new THREE.MeshLambertMaterial({ color: 0x2b221a, flatShading: true });
-	      const lensMaterial = new THREE.MeshStandardMaterial({
-	        color: 0x9fc9d2,
-	        emissive: 0x1c2c32,
-	        emissiveIntensity: 0.1,
-	        roughness: 0.42,
-	        metalness: 0.08,
+	      const applyShadow = (mesh) => {
+	        mesh.castShadow = CONFIG.shadowEnabled;
+	        mesh.receiveShadow = CONFIG.shadowEnabled;
+	        return mesh;
+	      };
+	      const makeMesh = (geometry, material) => applyShadow(new THREE.Mesh(geometry, material));
+
+	      const underSuitMaterial = new THREE.MeshLambertMaterial({ color: 0x3a2f25, flatShading: true });
+	      const clothMaterial = new THREE.MeshLambertMaterial({ color: 0x7e6a53, flatShading: true });
+	      const armorMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x998468,
+	        roughness: 0.72,
+	        metalness: 0.1,
+	        flatShading: true,
+	      });
+	      const trimMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x5e4a36,
+	        roughness: 0.58,
+	        metalness: 0.2,
+	        flatShading: true,
+	      });
+	      const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xe4b08f, flatShading: true });
+	      const visorMaterial = new THREE.MeshStandardMaterial({
+	        color: 0x9dd7e8,
+	        emissive: 0x2a4f5d,
+	        emissiveIntensity: 0.2,
+	        roughness: 0.18,
+	        metalness: 0.18,
 	        flatShading: true,
 	      });
 
-      const body = createCapsuleBody(skinMaterial);
-      body.position.y = 1.9;
-      root.add(body);
+	      const torso = createCapsuleBody(underSuitMaterial);
+	      torso.position.y = 1.88;
+	      torso.scale.set(1.02, 0.96, 0.9);
+	      root.add(torso);
 
-	      const head = new THREE.Mesh(
-	        new THREE.SphereGeometry(0.58, 16, 16),
+	      const chestPlate = makeMesh(
+	        new THREE.CylinderGeometry(0.76, 0.7, 1.28, 9),
+	        armorMaterial
+	      );
+	      chestPlate.position.set(0, 2.2, 0.1);
+	      chestPlate.scale.set(1, 1, 0.82);
+	      root.add(chestPlate);
+
+	      const chestHarness = makeMesh(
+	        new THREE.TorusGeometry(0.72, 0.08, 6, 18),
+	        trimMaterial
+	      );
+	      chestHarness.position.set(0, 2.56, 0.02);
+	      chestHarness.scale.set(1, 0.56, 0.84);
+	      chestHarness.rotation.x = Math.PI / 2;
+	      root.add(chestHarness);
+
+	      const utilityBelt = makeMesh(
+	        new THREE.TorusGeometry(0.66, 0.11, 6, 16),
+	        trimMaterial
+	      );
+	      utilityBelt.position.y = 1.38;
+	      utilityBelt.rotation.x = Math.PI / 2;
+	      utilityBelt.scale.set(1.05, 0.82, 0.92);
+	      root.add(utilityBelt);
+
+	      const pack = makeMesh(
+	        new THREE.BoxGeometry(0.66, 1.02, 0.34),
+	        armorMaterial
+	      );
+	      pack.position.set(0, 2.24, -0.56);
+	      root.add(pack);
+
+	      const packCap = makeMesh(
+	        new THREE.CylinderGeometry(0.23, 0.27, 0.56, 8),
+	        trimMaterial
+	      );
+	      packCap.position.set(0, 2.6, -0.74);
+	      packCap.rotation.x = Math.PI / 2;
+	      root.add(packCap);
+
+	      const neckSeal = makeMesh(
+	        new THREE.CylinderGeometry(0.44, 0.5, 0.28, 10),
+	        clothMaterial
+	      );
+	      neckSeal.position.y = 3.5;
+	      root.add(neckSeal);
+
+	      const head = makeMesh(
+	        new THREE.SphereGeometry(0.53, 16, 14),
 	        skinMaterial
 	      );
-	      head.position.y = 4.1;
-	      head.castShadow = CONFIG.shadowEnabled;
-	      head.receiveShadow = CONFIG.shadowEnabled;
+	      head.position.y = 4.05;
 	      root.add(head);
 
-	      const hood = new THREE.Mesh(
-	        new THREE.SphereGeometry(0.68, 14, 14),
-	        hoodMaterial
+	      const hood = makeMesh(
+	        new THREE.SphereGeometry(0.7, 16, 14),
+	        clothMaterial
 	      );
-	      hood.position.y = 4.18;
-	      hood.scale.set(1.05, 1.08, 1.08);
-	      hood.castShadow = CONFIG.shadowEnabled;
-	      hood.receiveShadow = CONFIG.shadowEnabled;
+	      hood.position.y = 4.16;
+	      hood.scale.set(1.03, 1.08, 1.1);
 	      root.add(hood);
 
-	      const facePlate = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.72, 0.48, 0.18),
-	        facePlateMaterial
+	      const visor = makeMesh(
+	        new THREE.CylinderGeometry(0.28, 0.31, 0.16, 10),
+	        visorMaterial
 	      );
-	      facePlate.position.set(0, 4.03, 0.48);
-	      facePlate.castShadow = CONFIG.shadowEnabled;
-	      facePlate.receiveShadow = CONFIG.shadowEnabled;
-	      root.add(facePlate);
+	      visor.position.set(0, 4.06, 0.53);
+	      visor.rotation.x = Math.PI / 2;
+	      root.add(visor);
 
-	      const facePoint = new THREE.Mesh(
-	        new THREE.ConeGeometry(0.12, 0.34, 4),
-	        hoodMaterial
+	      const respirator = makeMesh(
+	        new THREE.BoxGeometry(0.46, 0.24, 0.2),
+	        trimMaterial
 	      );
-	      facePoint.rotation.x = Math.PI / 2;
-	      facePoint.rotation.z = Math.PI / 4;
-	      facePoint.position.set(0, 4.02, 0.72);
-	      facePoint.castShadow = CONFIG.shadowEnabled;
-	      facePoint.receiveShadow = CONFIG.shadowEnabled;
-	      root.add(facePoint);
+	      respirator.position.set(0, 3.8, 0.54);
+	      root.add(respirator);
 
-	      const leftLens = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.17, 0.12, 0.08),
-	        lensMaterial
+	      const leftLens = makeMesh(
+	        new THREE.SphereGeometry(0.08, 8, 8),
+	        visorMaterial
 	      );
-	      leftLens.position.set(-0.16, 4.07, 0.59);
-	      leftLens.castShadow = CONFIG.shadowEnabled;
-	      leftLens.receiveShadow = CONFIG.shadowEnabled;
+	      leftLens.position.set(-0.17, 4.05, 0.58);
 	      root.add(leftLens);
 
-	      const rightLens = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.17, 0.12, 0.08),
-	        lensMaterial
+	      const rightLens = makeMesh(
+	        new THREE.SphereGeometry(0.08, 8, 8),
+	        visorMaterial
 	      );
-	      rightLens.position.set(0.16, 4.07, 0.59);
-	      rightLens.castShadow = CONFIG.shadowEnabled;
-	      rightLens.receiveShadow = CONFIG.shadowEnabled;
+	      rightLens.position.set(0.17, 4.05, 0.58);
 	      root.add(rightLens);
 
-      const headAnchor = new THREE.Object3D();
-      headAnchor.position.y = 4.1;
-      root.add(headAnchor);
-      root.userData.headAnchor = headAnchor;
+	      const headAnchor = new THREE.Object3D();
+	      headAnchor.position.y = 4.16;
+	      root.add(headAnchor);
+	      root.userData.headAnchor = headAnchor;
+
+	      const addLeg = (side) => {
+	        const legGroup = new THREE.Group();
+	        legGroup.position.set(side * 0.34, 1.18, 0.02);
+	        root.add(legGroup);
+
+	        const thigh = makeMesh(
+	          new THREE.CapsuleGeometry(0.21, 0.76, 4, 8),
+	          clothMaterial
+	        );
+	        thigh.position.y = -0.12;
+	        legGroup.add(thigh);
+
+	        const shin = makeMesh(
+	          new THREE.CapsuleGeometry(0.17, 0.74, 4, 8),
+	          underSuitMaterial
+	        );
+	        shin.position.y = -1.04;
+	        legGroup.add(shin);
+
+	        const boot = makeMesh(
+	          new THREE.BoxGeometry(0.34, 0.24, 0.54),
+	          trimMaterial
+	        );
+	        boot.position.set(0, -1.62, 0.08);
+	        legGroup.add(boot);
+	      };
+	      addLeg(-1);
+	      addLeg(1);
+
+	      const leftArmPivot = new THREE.Group();
+	      leftArmPivot.position.set(0.88, 3.32, 0.26);
+	      leftArmPivot.rotation.set(0.04, -0.1, -0.28);
+	      root.add(leftArmPivot);
+
+	      const leftUpperArm = makeMesh(
+	        new THREE.CapsuleGeometry(0.17, 0.76, 4, 8),
+	        clothMaterial
+	      );
+	      leftUpperArm.position.set(0.06, -0.42, 0.02);
+	      leftArmPivot.add(leftUpperArm);
+
+	      const leftForearm = makeMesh(
+	        new THREE.CapsuleGeometry(0.14, 0.72, 4, 8),
+	        underSuitMaterial
+	      );
+	      leftForearm.position.set(0.1, -1.14, 0.12);
+	      leftForearm.rotation.z = -0.26;
+	      leftArmPivot.add(leftForearm);
 
 	      const rightArmPivot = new THREE.Group();
-	      rightArmPivot.position.set(-0.9, 3.32, 0.34);
+	      rightArmPivot.position.set(-0.9, 3.36, 0.32);
 	      rightArmPivot.rotation.set(0.24, 0.12, 0.58);
 	      root.add(rightArmPivot);
 
-	      const upperArm = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.16, 0.2, 1.05, 6),
-	        sleeveMaterial
+	      const upperArm = makeMesh(
+	        new THREE.CapsuleGeometry(0.18, 0.74, 4, 8),
+	        clothMaterial
 	      );
-	      upperArm.position.set(-0.24, -0.36, 0.06);
-	      upperArm.rotation.z = 0.52;
-	      upperArm.castShadow = CONFIG.shadowEnabled;
-	      upperArm.receiveShadow = CONFIG.shadowEnabled;
+	      upperArm.position.set(-0.26, -0.34, 0.06);
+	      upperArm.rotation.z = 0.48;
 	      rightArmPivot.add(upperArm);
 
-	      const forearm = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.13, 0.16, 1.15, 6),
-	        skinMaterial
+	      const forearm = makeMesh(
+	        new THREE.CapsuleGeometry(0.15, 0.82, 4, 8),
+	        underSuitMaterial
 	      );
-	      forearm.position.set(-0.64, -0.8, 0.24);
+	      forearm.position.set(-0.66, -0.84, 0.24);
 	      forearm.rotation.set(-0.18, 0.08, 0.96);
-	      forearm.castShadow = CONFIG.shadowEnabled;
-	      forearm.receiveShadow = CONFIG.shadowEnabled;
 	      rightArmPivot.add(forearm);
 
 	      const knifeRoot = createCrysknife();
@@ -3582,13 +3910,13 @@
 	      rightArmPivot.add(knifeRoot);
 
 	      const maulaRoot = createMaulaPistol();
-	      maulaRoot.position.set(-0.7, -1.02, 0.36);
+	      maulaRoot.position.set(-0.72, -1.0, 0.34);
 	      maulaRoot.rotation.set(0.26, -0.02, 0.22);
 	      maulaRoot.visible = false;
 	      rightArmPivot.add(maulaRoot);
 
 	      const lasgunRoot = createLasgun();
-	      lasgunRoot.position.set(-0.56, -0.58, 0.18);
+	      lasgunRoot.position.set(-0.58, -0.6, 0.18);
 	      lasgunRoot.rotation.set(1.38, -0.04, 0.14);
 	      lasgunRoot.visible = false;
 	      rightArmPivot.add(lasgunRoot);
@@ -3604,68 +3932,128 @@
 	      root.userData.lasgunMuzzle = lasgunRoot.userData.muzzle;
 	      root.userData.shieldVisual = shieldVisual;
 
+	      // Align visual baseline so boots define y=0 for grounded stance.
+	      const visualGroundLift = 0.56;
+	      for (const child of root.children) {
+	        child.position.y += visualGroundLift;
+	      }
+
 	      scene.add(root);
 	      return root;
 	    }
 
     function createCrysknife() {
       const group = new THREE.Group();
+      const setShadow = (mesh) => {
+        mesh.castShadow = CONFIG.shadowEnabled;
+        mesh.receiveShadow = CONFIG.shadowEnabled;
+        return mesh;
+      };
+
+      const bladeMaterial = new THREE.MeshStandardMaterial({
+        color: 0xf3ead4,
+        emissive: 0x6b572f,
+        emissiveIntensity: 0.15,
+        roughness: 0.3,
+        metalness: 0.06,
+        flatShading: true,
+      });
+      const ridgeMaterial = new THREE.MeshStandardMaterial({
+        color: 0xe4d7ba,
+        emissive: 0x5a4521,
+        emissiveIntensity: 0.14,
+        roughness: 0.24,
+        metalness: 0.1,
+        flatShading: true,
+      });
+      const gripMaterial = new THREE.MeshLambertMaterial({ color: 0x3d281b, flatShading: true });
+      const trimMaterial = new THREE.MeshLambertMaterial({ color: 0x8e7655, flatShading: true });
 
       const bladeShape = new THREE.Shape();
-      bladeShape.moveTo(0, 0);
-      bladeShape.quadraticCurveTo(0.34, 1.1, 0.66, 3.5);
-      bladeShape.quadraticCurveTo(0.96, 2.74, 0.5, 0.42);
-      bladeShape.lineTo(0, 0);
+      bladeShape.moveTo(0.02, 0);
+      bladeShape.bezierCurveTo(0.3, 0.82, 0.76, 2.5, 0.7, 3.52);
+      bladeShape.bezierCurveTo(0.98, 2.96, 1.04, 1.3, 0.34, 0.08);
+      bladeShape.lineTo(0.02, 0);
 
       const bladeGeometry = new THREE.ExtrudeGeometry(bladeShape, {
-        depth: 0.09,
-        bevelEnabled: false,
-        steps: 1,
+        depth: 0.11,
+        bevelEnabled: true,
+        bevelThickness: 0.02,
+        bevelSize: 0.03,
+        bevelSegments: 1,
       });
       bladeGeometry.center();
       bladeGeometry.rotateX(Math.PI / 2);
-      bladeGeometry.rotateZ(0.12);
+      bladeGeometry.rotateZ(0.14);
 
-      const blade = new THREE.Mesh(
-        bladeGeometry,
-        new THREE.MeshStandardMaterial({
-          color: 0xf4ecd4,
-          emissive: 0x705b32,
-          emissiveIntensity: 0.18,
-          roughness: 0.34,
-          metalness: 0.04,
-          flatShading: true,
-        })
-      );
-      blade.position.set(0.02, 1.02, 0);
-      blade.castShadow = CONFIG.shadowEnabled;
-      blade.receiveShadow = CONFIG.shadowEnabled;
+      const blade = setShadow(new THREE.Mesh(bladeGeometry, bladeMaterial));
+      blade.position.set(0.03, 1.02, 0);
       group.add(blade);
 
-      const handle = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.11, 0.14, 0.9, 6),
-        new THREE.MeshLambertMaterial({ color: 0x3c2818, flatShading: true })
+      const ridgeShape = new THREE.Shape();
+      ridgeShape.moveTo(0.02, 0);
+      ridgeShape.bezierCurveTo(0.22, 0.72, 0.48, 1.98, 0.42, 2.96);
+      ridgeShape.bezierCurveTo(0.58, 2.32, 0.55, 1.08, 0.2, 0.1);
+      ridgeShape.lineTo(0.02, 0);
+      const ridgeGeometry = new THREE.ExtrudeGeometry(ridgeShape, {
+        depth: 0.03,
+        bevelEnabled: false,
+      });
+      ridgeGeometry.center();
+      ridgeGeometry.rotateX(Math.PI / 2);
+      ridgeGeometry.rotateZ(0.14);
+      const ridge = setShadow(new THREE.Mesh(ridgeGeometry, ridgeMaterial));
+      ridge.position.set(0.06, 1.13, 0);
+      group.add(ridge);
+
+      const handle = setShadow(
+        new THREE.Mesh(
+          new THREE.CapsuleGeometry(0.12, 0.62, 4, 7),
+          gripMaterial
+        )
       );
       handle.rotation.z = Math.PI / 2;
-      handle.position.set(-0.16, -0.08, 0);
-      handle.castShadow = CONFIG.shadowEnabled;
-      handle.receiveShadow = CONFIG.shadowEnabled;
+      handle.position.set(-0.22, -0.05, 0);
       group.add(handle);
 
-      const guard = new THREE.Mesh(
-        new THREE.BoxGeometry(0.14, 0.34, 0.18),
-        new THREE.MeshLambertMaterial({ color: 0x7a654c, flatShading: true })
+      const guard = setShadow(
+        new THREE.Mesh(
+          new THREE.BoxGeometry(0.18, 0.36, 0.2),
+          trimMaterial
+        )
       );
-      guard.position.set(0.12, 0.16, 0);
-      guard.castShadow = CONFIG.shadowEnabled;
+      guard.position.set(0.1, 0.14, 0);
       group.add(guard);
 
-      const pommel = new THREE.Mesh(
-        new THREE.SphereGeometry(0.11, 6, 6),
-        new THREE.MeshLambertMaterial({ color: 0x9a8458, flatShading: true })
+      const wingGeometry = new THREE.BoxGeometry(0.08, 0.22, 0.12);
+      for (let i = 0; i < 2; i += 1) {
+        const wing = setShadow(new THREE.Mesh(wingGeometry, trimMaterial));
+        const side = i === 0 ? -1 : 1;
+        wing.position.set(0.13, 0.2, side * 0.12);
+        wing.rotation.y = side * 0.35;
+        group.add(wing);
+      }
+
+      for (let i = 0; i < 3; i += 1) {
+        const wrap = setShadow(
+          new THREE.Mesh(
+            new THREE.TorusGeometry(0.13, 0.018, 6, 12),
+            trimMaterial
+          )
+        );
+        wrap.position.set(-0.24 - (i * 0.16), -0.06, 0);
+        wrap.rotation.y = Math.PI / 2;
+        group.add(wrap);
+      }
+
+      const pommel = setShadow(
+        new THREE.Mesh(
+          new THREE.ConeGeometry(0.1, 0.22, 6),
+          trimMaterial
+        )
       );
-      pommel.position.set(-0.56, -0.08, 0);
-      pommel.castShadow = CONFIG.shadowEnabled;
+      pommel.position.set(-0.72, -0.06, 0);
+      pommel.rotation.z = -Math.PI / 2;
       group.add(pommel);
 
 	      group.scale.setScalar(0.64);
@@ -3674,69 +4062,133 @@
 
 	    function createMaulaPistol() {
 	      const group = new THREE.Group();
-	      const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x4c3b2d, flatShading: true });
+	      const setShadow = (mesh) => {
+	        mesh.castShadow = CONFIG.shadowEnabled;
+	        mesh.receiveShadow = CONFIG.shadowEnabled;
+	        return mesh;
+	      };
+
+	      const gripMaterial = new THREE.MeshLambertMaterial({ color: 0x4a3728, flatShading: true });
 	      const metalMaterial = new THREE.MeshStandardMaterial({
-	        color: 0x8b7f70,
-	        roughness: 0.74,
-	        metalness: 0.16,
+	        color: 0x8f836f,
+	        roughness: 0.68,
+	        metalness: 0.2,
+	        flatShading: true,
+	      });
+	      const brassMaterial = new THREE.MeshStandardMaterial({
+	        color: 0xa99466,
+	        roughness: 0.58,
+	        metalness: 0.24,
 	        flatShading: true,
 	      });
 	      const dartMaterial = new THREE.MeshStandardMaterial({
-	        color: 0xc8d1cb,
-	        emissive: 0x26322c,
-	        emissiveIntensity: 0.08,
-	        roughness: 0.42,
-	        metalness: 0.08,
+	        color: 0xc8d4cc,
+	        emissive: 0x25342c,
+	        emissiveIntensity: 0.12,
+	        roughness: 0.34,
+	        metalness: 0.14,
 	        flatShading: true,
 	      });
 
-	      const grip = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.28, 0.92, 0.26),
-	        bodyMaterial
+	      const grip = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CapsuleGeometry(0.14, 0.66, 4, 8),
+	          gripMaterial
+	        )
 	      );
-	      grip.position.set(-0.1, 0.28, 0);
-	      grip.rotation.z = -0.28;
-	      grip.castShadow = CONFIG.shadowEnabled;
-	      grip.receiveShadow = CONFIG.shadowEnabled;
+	      grip.position.set(-0.12, 0.3, 0);
+	      grip.rotation.z = -0.24;
 	      group.add(grip);
 
-	      const frame = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.34, 1.42, 0.28),
-	        metalMaterial
+	      const gripPlate = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.16, 0.78, 0.22),
+	          brassMaterial
+	        )
 	      );
-	      frame.position.set(0.02, 0.8, 0);
-	      frame.castShadow = CONFIG.shadowEnabled;
-	      frame.receiveShadow = CONFIG.shadowEnabled;
+	      gripPlate.position.set(-0.17, 0.3, 0);
+	      gripPlate.rotation.z = -0.24;
+	      group.add(gripPlate);
+
+	      const frame = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.38, 1.16, 0.34),
+	          metalMaterial
+	        )
+	      );
+	      frame.position.set(0.02, 0.96, 0);
 	      group.add(frame);
 
-	      const barrel = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.08, 0.09, 1.42, 8),
-	        metalMaterial
+	      const slide = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.3, 0.76, 0.24),
+	          brassMaterial
+	        )
 	      );
-	      barrel.position.set(0.04, 1.46, 0);
-	      barrel.castShadow = CONFIG.shadowEnabled;
-	      barrel.receiveShadow = CONFIG.shadowEnabled;
+	      slide.position.set(0.03, 1.5, 0);
+	      group.add(slide);
+
+	      const barrel = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.075, 0.082, 1.52, 10),
+	          metalMaterial
+	        )
+	      );
+	      barrel.position.set(0.04, 1.7, 0);
 	      group.add(barrel);
 
-	      const spring = new THREE.Mesh(
-	        new THREE.TorusGeometry(0.13, 0.03, 6, 10),
-	        bodyMaterial
+	      const shroud = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.11, 0.12, 0.84, 10),
+	          brassMaterial
+	        )
 	      );
-	      spring.position.set(0.02, 0.96, 0);
-	      spring.rotation.x = Math.PI / 2;
-	      group.add(spring);
+	      shroud.position.set(0.04, 2.02, 0);
+	      group.add(shroud);
 
-	      const dart = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.035, 0.05, 0.72, 6),
-	        dartMaterial
+	      const chamber = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.12, 0.12, 0.42, 8),
+	          metalMaterial
+	        )
 	      );
-	      dart.position.set(0.04, 1.48, 0);
-	      dart.castShadow = CONFIG.shadowEnabled;
-	      dart.receiveShadow = CONFIG.shadowEnabled;
+	      chamber.position.set(0.19, 1.2, 0);
+	      chamber.rotation.z = Math.PI / 2;
+	      group.add(chamber);
+
+	      const triggerGuard = setShadow(
+	        new THREE.Mesh(
+	          new THREE.TorusGeometry(0.13, 0.024, 6, 14),
+	          brassMaterial
+	        )
+	      );
+	      triggerGuard.position.set(0.04, 0.7, 0);
+	      triggerGuard.rotation.x = Math.PI / 2;
+	      group.add(triggerGuard);
+
+	      for (let i = 0; i < 3; i += 1) {
+	        const coil = setShadow(
+	          new THREE.Mesh(
+	            new THREE.TorusGeometry(0.104, 0.013, 5, 12),
+	            gripMaterial
+	          )
+	        );
+	        coil.position.set(0.04, 1.92 + (i * 0.12), 0);
+	        coil.rotation.x = Math.PI / 2;
+	        group.add(coil);
+	      }
+
+	      const dart = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.034, 0.045, 0.78, 7),
+	          dartMaterial
+	        )
+	      );
+	      dart.position.set(0.04, 1.72, 0);
 	      group.add(dart);
 
 	      const muzzle = new THREE.Object3D();
-	      muzzle.position.set(0.04, 2.18, 0);
+	      muzzle.position.set(0.04, 2.24, 0);
 	      group.add(muzzle);
 	      group.userData.muzzle = muzzle;
 
@@ -3746,66 +4198,139 @@
 
 	    function createLasgun() {
 	      const group = new THREE.Group();
-	      const stockMaterial = new THREE.MeshLambertMaterial({ color: 0x544536, flatShading: true });
+	      const setShadow = (mesh) => {
+	        mesh.castShadow = CONFIG.shadowEnabled;
+	        mesh.receiveShadow = CONFIG.shadowEnabled;
+	        return mesh;
+	      };
+
+	      const stockMaterial = new THREE.MeshLambertMaterial({ color: 0x4f3f30, flatShading: true });
 	      const metalMaterial = new THREE.MeshStandardMaterial({
-	        color: 0x8f7f68,
-	        roughness: 0.52,
-	        metalness: 0.18,
+	        color: 0x8f8067,
+	        roughness: 0.48,
+	        metalness: 0.22,
+	        flatShading: true,
+	      });
+	      const accentMaterial = new THREE.MeshStandardMaterial({
+	        color: 0xb7a174,
+	        roughness: 0.42,
+	        metalness: 0.28,
 	        flatShading: true,
 	      });
 	      const lensMaterial = new THREE.MeshStandardMaterial({
-	        color: 0xb6e1ff,
-	        emissive: 0x2c5872,
-	        emissiveIntensity: 0.24,
+	        color: 0xbde8ff,
+	        emissive: 0x3876a0,
+	        emissiveIntensity: 0.28,
 	        roughness: 0.2,
-	        metalness: 0.1,
+	        metalness: 0.14,
 	        flatShading: true,
 	      });
 
-	      const stock = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.28, 1.02, 0.32),
-	        stockMaterial
+	      const stock = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.3, 1.08, 0.38),
+	          stockMaterial
+	        )
 	      );
-	      stock.position.set(-0.06, 0.44, 0);
-	      stock.rotation.z = -0.22;
-	      stock.castShadow = CONFIG.shadowEnabled;
-	      stock.receiveShadow = CONFIG.shadowEnabled;
+	      stock.position.set(-0.08, 0.44, 0);
+	      stock.rotation.z = -0.24;
 	      group.add(stock);
 
-	      const body = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.36, 1.7, 0.3),
-	        metalMaterial
+	      const buttPad = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.34, 0.28, 0.28),
+	          accentMaterial
+	        )
 	      );
-	      body.position.set(0.02, 1.04, 0);
-	      body.castShadow = CONFIG.shadowEnabled;
-	      body.receiveShadow = CONFIG.shadowEnabled;
+	      buttPad.position.set(-0.16, -0.02, 0);
+	      group.add(buttPad);
+
+	      const body = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.38, 1.8, 0.34),
+	          metalMaterial
+	        )
+	      );
+	      body.position.set(0.03, 1.08, 0);
 	      group.add(body);
 
-	      const barrel = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.07, 0.08, 1.9, 8),
-	        metalMaterial
+	      const ventSpine = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.16, 1.22, 0.14),
+	          accentMaterial
+	        )
 	      );
-	      barrel.position.set(0.04, 1.95, 0);
-	      barrel.castShadow = CONFIG.shadowEnabled;
-	      barrel.receiveShadow = CONFIG.shadowEnabled;
+	      ventSpine.position.set(0.16, 1.42, 0);
+	      group.add(ventSpine);
+
+	      const barrel = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.08, 0.086, 2.22, 10),
+	          metalMaterial
+	        )
+	      );
+	      barrel.position.set(0.04, 2.08, 0);
 	      group.add(barrel);
 
-	      const sideCell = new THREE.Mesh(
-	        new THREE.BoxGeometry(0.18, 0.7, 0.18),
-	        lensMaterial
+	      const shroud = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.13, 0.14, 1.44, 10),
+	          accentMaterial
+	        )
 	      );
-	      sideCell.position.set(0.22, 0.9, 0);
+	      shroud.position.set(0.04, 2.42, 0);
+	      group.add(shroud);
+
+	      for (let i = 0; i < 4; i += 1) {
+	        const ring = setShadow(
+	          new THREE.Mesh(
+	            new THREE.TorusGeometry(0.12, 0.012, 5, 14),
+	            stockMaterial
+	          )
+	        );
+	        ring.position.set(0.04, 1.92 + (i * 0.2), 0);
+	        ring.rotation.x = Math.PI / 2;
+	        group.add(ring);
+	      }
+
+	      const scopeTube = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.06, 0.06, 0.88, 8),
+	          metalMaterial
+	        )
+	      );
+	      scopeTube.position.set(-0.08, 1.92, 0);
+	      group.add(scopeTube);
+
+	      const scopeLens = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.076, 0.076, 0.08, 8),
+	          lensMaterial
+	        )
+	      );
+	      scopeLens.position.set(-0.08, 2.36, 0);
+	      group.add(scopeLens);
+
+	      const sideCell = setShadow(
+	        new THREE.Mesh(
+	          new THREE.BoxGeometry(0.19, 0.74, 0.2),
+	          lensMaterial
+	        )
+	      );
+	      sideCell.position.set(0.24, 1.02, 0);
 	      group.add(sideCell);
 
-	      const muzzleCowl = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.11, 0.12, 0.22, 8),
-	        metalMaterial
+	      const muzzleCowl = setShadow(
+	        new THREE.Mesh(
+	          new THREE.CylinderGeometry(0.14, 0.15, 0.3, 10),
+	          metalMaterial
+	        )
 	      );
-	      muzzleCowl.position.set(0.04, 2.9, 0);
+	      muzzleCowl.position.set(0.04, 3.1, 0);
 	      group.add(muzzleCowl);
 
 	      const muzzle = new THREE.Object3D();
-	      muzzle.position.set(0.04, 3.04, 0);
+	      muzzle.position.set(0.04, 3.28, 0);
 	      group.add(muzzle);
 	      group.userData.muzzle = muzzle;
 
@@ -3867,13 +4392,7 @@
 	      state.holtzmanExplosionPos.copy(pos);
 	      state.wormShake = CONFIG.wormShakeBreach * 1.4;
 	      emitNoiseImpulse(1.0);
-	      // Kill shielded dummy with longer respawn
-	      shieldedDummy.dead = true;
-	      shieldedDummy.deadFallTimer = 0;
-	      shieldedDummy.respawnTimer = 10.0;
-	      shieldedDummy.healthBarGroup.visible = false;
-	      if (shieldedDummy.shieldSphere) shieldedDummy.shieldSphere.visible = false;
-	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
+	    	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
 	    }
 
 	    function updateHoltzmanExplosion(delta) {
@@ -3965,6 +4484,15 @@
 	        const playerDist = ePos.distanceTo(player.position);
 	        if (playerDist < CONFIG.holtzmanExplosionLethalRadius) {
 	          state.playerHealth = 0;
+	          state.holtzmanDeathTimer = 2.0;
+	          const safePatch = findNearestRockPatch(player.position.x, player.position.z);
+	          const respawnRadius = Math.min(safePatch.plateauRadius * 0.38, 12);
+	          state.holtzmanRespawnPoint.set(
+	            safePatch.x + (Math.cos(safePatch.approachAngle + Math.PI) * respawnRadius),
+	            0,
+	            safePatch.z + (Math.sin(safePatch.approachAngle + Math.PI) * respawnRadius)
+	          );
+	          player.userData.velocity.set(0, 0, 0);
 	        } else if (playerDist < CONFIG.holtzmanExplosionDamageRadius) {
 	          const f = 1 - (playerDist - CONFIG.holtzmanExplosionLethalRadius) /
 	            (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
@@ -3981,12 +4509,47 @@
 	            hitTrainingDummy(1.5, CONFIG.holtzmanExplosionDamage * f);
 	          }
 	        }
+	        // Shielded dummies
+	        for (const sd of shieldedDummies) {
+	          if (!sd || sd.dead) continue;
+	          const sDist = ePos.distanceTo(sd.group.position);
+	          if (sDist < CONFIG.holtzmanExplosionLethalRadius) {
+	            sd.dead = true;
+	            sd.deadFallTimer = 0;
+	            sd.respawnTimer = 10.0;
+	            sd.healthBarGroup.visible = false;
+	            if (sd.shieldSphere) sd.shieldSphere.visible = false;
+	          } else if (sDist < CONFIG.holtzmanExplosionDamageRadius) {
+	            const f = 1 - (sDist - CONFIG.holtzmanExplosionLethalRadius) /
+	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
+	            sd.health = Math.max(0, sd.health - CONFIG.holtzmanExplosionDamage * f);
+	            if (sd.health <= 0) {
+	              sd.dead = true;
+	              sd.deadFallTimer = 0;
+	              sd.respawnTimer = 10.0;
+	              sd.healthBarGroup.visible = false;
+	              if (sd.shieldSphere) sd.shieldSphere.visible = false;
+	            }
+	          }
+	        }
 	      }
 
 	      if (t >= dur) {
 	        state.holtzmanExplosionTimer = -1;
 	        holtzmanExplosion.group.visible = false;
 	        ui.explosionFlash.style.opacity = "0";
+	      }
+	    }
+
+	    function updateHoltzmanDeath(delta) {
+	      if (state.holtzmanDeathTimer < 0) return;
+	      state.holtzmanDeathTimer -= delta;
+	      if (state.holtzmanDeathTimer <= 0) {
+	        state.holtzmanDeathTimer = -1;
+	        player.position.copy(state.holtzmanRespawnPoint);
+	        player.userData.velocity.set(0, 0, 0);
+	        state.playerHealth = CONFIG.playerMaxHealth;
+	        placePlayerOnGround();
 	      }
 	    }
 
@@ -4487,6 +5050,11 @@
 	    function createThumper() {
 	      const group = new THREE.Group();
 	      group.visible = false;
+	      const setShadow = (mesh) => {
+	        mesh.castShadow = CONFIG.shadowEnabled;
+	        mesh.receiveShadow = CONFIG.shadowEnabled;
+	        return mesh;
+	      };
 
       const pulseOuter = new THREE.Mesh(
         new THREE.RingGeometry(0.86, 1, 48),
@@ -4517,15 +5085,21 @@
       group.add(pulseInner);
 
       const bodyMaterial = new THREE.MeshStandardMaterial({
-        color: 0x5b4330,
-        roughness: 0.92,
-        metalness: 0.08,
+        color: 0x5a422f,
+        roughness: 0.88,
+        metalness: 0.12,
         flatShading: true,
       });
       const braceMaterial = new THREE.MeshStandardMaterial({
-        color: 0x8b7357,
-        roughness: 0.74,
-        metalness: 0.14,
+        color: 0x917a58,
+        roughness: 0.64,
+        metalness: 0.2,
+        flatShading: true,
+      });
+      const trimMaterial = new THREE.MeshStandardMaterial({
+        color: 0xb09766,
+        roughness: 0.52,
+        metalness: 0.24,
         flatShading: true,
       });
       const glowMaterial = new THREE.MeshBasicMaterial({
@@ -4535,50 +5109,70 @@
         depthWrite: false,
       });
 
-      const base = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.9, 1.02, 0.56, 8),
+      const base = setShadow(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.9, 1.06, 0.56, 10),
         bodyMaterial
-      );
+      ));
       base.position.y = 0.34;
-      base.castShadow = CONFIG.shadowEnabled;
-      base.receiveShadow = CONFIG.shadowEnabled;
       group.add(base);
 
-      const body = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.62, 0.8, 2.1, 8),
-        braceMaterial
-      );
-      body.position.y = 1.5;
-      body.castShadow = CONFIG.shadowEnabled;
-      body.receiveShadow = CONFIG.shadowEnabled;
+      const baseRing = setShadow(new THREE.Mesh(
+        new THREE.TorusGeometry(0.82, 0.06, 8, 20),
+        trimMaterial
+      ));
+      baseRing.position.y = 0.63;
+      baseRing.rotation.x = Math.PI / 2;
+      group.add(baseRing);
+
+      const body = new THREE.Group();
+      body.position.y = 0;
       group.add(body);
 
-      const collar = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.74, 0.86, 0.3, 8),
-        bodyMaterial
-      );
-      collar.position.y = 2.58;
-      collar.castShadow = CONFIG.shadowEnabled;
-      collar.receiveShadow = CONFIG.shadowEnabled;
-      group.add(collar);
-
-      const antenna = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.08, 2.2, 6),
+      const column = setShadow(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.56, 0.68, 2.22, 10),
         braceMaterial
-      );
-      antenna.position.y = 3.78;
-      antenna.castShadow = CONFIG.shadowEnabled;
-      group.add(antenna);
+      ));
+      column.position.y = 1.56;
+      body.add(column);
+
+      const midBandGeometry = new THREE.TorusGeometry(0.56, 0.032, 6, 16);
+      for (let i = 0; i < 3; i += 1) {
+        const band = setShadow(new THREE.Mesh(midBandGeometry, trimMaterial));
+        band.position.y = 0.9 + (i * 0.62);
+        band.rotation.x = Math.PI / 2;
+        body.add(band);
+      }
+
+      const collar = setShadow(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.7, 0.8, 0.32, 10),
+        bodyMaterial
+      ));
+      collar.position.y = 2.72;
+      body.add(collar);
+
+      const mastLower = setShadow(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.07, 0.09, 1.48, 8),
+        braceMaterial
+      ));
+      mastLower.position.y = 3.68;
+      body.add(mastLower);
+
+      const mastUpper = setShadow(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.06, 0.96, 8),
+        trimMaterial
+      ));
+      mastUpper.position.y = 4.8;
+      body.add(mastUpper);
 
       const emitter = new THREE.Mesh(
-        new THREE.SphereGeometry(0.24, 8, 8),
+        new THREE.SphereGeometry(0.24, 10, 10),
         glowMaterial
       );
-      emitter.position.y = 4.95;
-      group.add(emitter);
+      emitter.position.y = 5.06;
+      body.add(emitter);
 
       const emitterHalo = new THREE.Mesh(
-        new THREE.SphereGeometry(0.42, 10, 10),
+        new THREE.SphereGeometry(0.48, 12, 12),
         new THREE.MeshBasicMaterial({
           color: 0xffd172,
           transparent: true,
@@ -4587,29 +5181,51 @@
         })
       );
       emitterHalo.position.copy(emitter.position);
-      group.add(emitterHalo);
+      body.add(emitterHalo);
 
       const legGeometry = new THREE.BoxGeometry(0.2, 1.6, 0.34);
       for (let i = 0; i < 3; i += 1) {
         const angle = (i / 3) * Math.PI * 2;
-        const leg = new THREE.Mesh(legGeometry, bodyMaterial);
+        const leg = setShadow(new THREE.Mesh(legGeometry, bodyMaterial));
         leg.position.set(Math.cos(angle) * 0.68, 0.82, Math.sin(angle) * 0.68);
         leg.rotation.z = 0.26;
         leg.rotation.y = angle;
-        leg.castShadow = CONFIG.shadowEnabled;
-        leg.receiveShadow = CONFIG.shadowEnabled;
         group.add(leg);
+
+        const foot = setShadow(new THREE.Mesh(
+          new THREE.BoxGeometry(0.3, 0.16, 0.44),
+          braceMaterial
+        ));
+        foot.position.set(Math.cos(angle) * 1.04, 0.06, Math.sin(angle) * 1.04);
+        foot.rotation.y = angle;
+        group.add(foot);
       }
 
       const finGeometry = new THREE.BoxGeometry(0.14, 0.88, 0.62);
       for (let i = 0; i < 3; i += 1) {
         const angle = (i / 3) * Math.PI * 2;
-        const fin = new THREE.Mesh(finGeometry, braceMaterial);
+        const fin = setShadow(new THREE.Mesh(finGeometry, braceMaterial));
         fin.position.set(Math.cos(angle) * 0.72, 2.1, Math.sin(angle) * 0.72);
         fin.rotation.y = angle;
-        fin.castShadow = CONFIG.shadowEnabled;
-        fin.receiveShadow = CONFIG.shadowEnabled;
-        group.add(fin);
+        body.add(fin);
+      }
+
+      const cageRing = setShadow(new THREE.Mesh(
+        new THREE.TorusGeometry(0.24, 0.016, 6, 14),
+        trimMaterial
+      ));
+      cageRing.position.y = 4.84;
+      cageRing.rotation.x = Math.PI / 2;
+      body.add(cageRing);
+
+      for (let i = 0; i < 3; i += 1) {
+        const angle = (i / 3) * Math.PI * 2;
+        const strut = setShadow(new THREE.Mesh(
+          new THREE.BoxGeometry(0.032, 0.42, 0.032),
+          trimMaterial
+        ));
+        strut.position.set(Math.cos(angle) * 0.2, 4.94, Math.sin(angle) * 0.2);
+        body.add(strut);
       }
 
       scene.add(group);
@@ -4800,57 +5416,57 @@
 	      trainingDummy.healthBarGroup.visible = true;
 	    }
 
-	    function updateShieldedDummy(delta) {
-	      shieldedDummy.hitFlash = Math.max(0, shieldedDummy.hitFlash - (delta * 2.8));
-	      shieldedDummy.wobble = Math.max(0, shieldedDummy.wobble - (delta * 1.9));
-	      shieldedDummy.shieldHitFlash = Math.max(0, shieldedDummy.shieldHitFlash - (delta * 3.0));
+	    function updateShieldedDummy(delta, sd) {
+	      sd.hitFlash = Math.max(0, sd.hitFlash - (delta * 2.8));
+	      sd.wobble = Math.max(0, sd.wobble - (delta * 1.9));
+	      sd.shieldHitFlash = Math.max(0, sd.shieldHitFlash - (delta * 3.0));
 
-	      if (shieldedDummy.dead) {
-	        shieldedDummy.deadFallTimer = Math.min(1, shieldedDummy.deadFallTimer + delta / 0.55);
-	        const fall = shieldedDummy.deadFallTimer * shieldedDummy.deadFallTimer;
-	        shieldedDummy.group.rotation.x = fall * (Math.PI * 0.48);
-	        shieldedDummy.group.position.y = shieldedDummy.spawnPos.y - fall * 1.8;
-	        shieldedDummy.respawnTimer = Math.max(0, shieldedDummy.respawnTimer - delta);
-	        if (shieldedDummy.respawnTimer <= 0) {
-	          shieldedDummy.health = CONFIG.dummyMaxHealth;
-	          shieldedDummy.dead = false;
-	          shieldedDummy.deadFallTimer = 0;
-	          shieldedDummy.respawnTimer = 0;
-	          shieldedDummy.hitFlash = 0;
-	          shieldedDummy.wobble = 0;
-	          shieldedDummy.group.position.copy(shieldedDummy.spawnPos);
-	          shieldedDummy.group.rotation.set(0, 0, 0);
-	          shieldedDummy.healthBarGroup.visible = true;
-	          if (shieldedDummy.shieldSphere) shieldedDummy.shieldSphere.visible = true;
+	      if (sd.dead) {
+	        sd.deadFallTimer = Math.min(1, sd.deadFallTimer + delta / 0.55);
+	        const fall = sd.deadFallTimer * sd.deadFallTimer;
+	        sd.group.rotation.x = fall * (Math.PI * 0.48);
+	        sd.group.position.y = sd.spawnPos.y - fall * 1.8;
+	        sd.respawnTimer = Math.max(0, sd.respawnTimer - delta);
+	        if (sd.respawnTimer <= 0) {
+	          sd.health = CONFIG.dummyMaxHealth;
+	          sd.dead = false;
+	          sd.deadFallTimer = 0;
+	          sd.respawnTimer = 0;
+	          sd.hitFlash = 0;
+	          sd.wobble = 0;
+	          sd.group.position.copy(sd.spawnPos);
+	          sd.group.rotation.set(0, 0, 0);
+	          sd.healthBarGroup.visible = true;
+	          if (sd.shieldSphere) sd.shieldSphere.visible = true;
 	        }
 	        return;
 	      }
 
 	      const idleSway = Math.sin((state.elapsed * 1.6) + 2.4) * 0.018;
-	      const wobbleWave = Math.sin((1 - shieldedDummy.wobble) * 15.5) * shieldedDummy.wobble * 0.26;
-	      shieldedDummy.targetPivot.rotation.z = idleSway + wobbleWave;
-	      shieldedDummy.targetPivot.rotation.x = Math.sin((1 - shieldedDummy.wobble) * 8.2) * shieldedDummy.wobble * 0.08;
+	      const wobbleWave = Math.sin((1 - sd.wobble) * 15.5) * sd.wobble * 0.26;
+	      sd.targetPivot.rotation.z = idleSway + wobbleWave;
+	      sd.targetPivot.rotation.x = Math.sin((1 - sd.wobble) * 8.2) * sd.wobble * 0.08;
 
-	      shieldedDummy.targetMaterial.emissiveIntensity = 0.04 + (Math.min(shieldedDummy.hitFlash, 1.6) * 0.5);
-	      shieldedDummy.frontPlate.material.opacity = Math.min(0.88, 0.36 + (shieldedDummy.hitFlash * 0.32));
-	      shieldedDummy.frontPlate.scale.setScalar(1 + (shieldedDummy.hitFlash * 0.18));
+	      sd.targetMaterial.emissiveIntensity = 0.04 + (Math.min(sd.hitFlash, 1.6) * 0.5);
+	      sd.frontPlate.material.opacity = Math.min(0.88, 0.36 + (sd.hitFlash * 0.32));
+	      sd.frontPlate.scale.setScalar(1 + (sd.hitFlash * 0.18));
 
 	      // Shield sphere pulse
-	      shieldedDummy.shieldMessageTimer = (shieldedDummy.shieldMessageTimer || 0) - delta;
-	      if (shieldedDummy.shieldSphere) {
+	      sd.shieldMessageTimer = (sd.shieldMessageTimer || 0) - delta;
+	      if (sd.shieldSphere) {
 	        const pulse = 0.5 + Math.sin(state.elapsed * 2.4) * 0.5;
-	        const hitGlow = shieldedDummy.shieldHitFlash;
-	        shieldedDummy.shieldSphere.material.opacity = 0.14 + pulse * 0.06 + hitGlow * 0.60;
-	        shieldedDummy.shieldSphere.material.emissiveIntensity = 0.22 + pulse * 0.10 + hitGlow * 1.4;
+	        const hitGlow = sd.shieldHitFlash;
+	        sd.shieldSphere.material.opacity = 0.14 + pulse * 0.06 + hitGlow * 0.60;
+	        sd.shieldSphere.material.emissiveIntensity = 0.22 + pulse * 0.10 + hitGlow * 1.4;
 	        const s = 1 + pulse * 0.015 + hitGlow * 0.18;
-	        shieldedDummy.shieldSphere.scale.setScalar(s);
+	        sd.shieldSphere.scale.setScalar(s);
 	      }
 
-	      shieldedDummy.healthBarGroup.quaternion.copy(camera.quaternion);
-	      const hp = shieldedDummy.health / shieldedDummy.maxHealth;
-	      shieldedDummy.hpFill.scale.x = Math.max(0.001, hp);
-	      shieldedDummy.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
-	      shieldedDummy.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
+	      sd.healthBarGroup.quaternion.copy(camera.quaternion);
+	      const hp = sd.health / sd.maxHealth;
+	      sd.hpFill.scale.x = Math.max(0.001, hp);
+	      sd.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
+	      sd.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
 	    }
 
     function createSpiceObjective() {
@@ -4938,6 +5554,7 @@
         const baseY = sampleGroundHeight(node.x, node.z);
         const patchRadius = CONFIG.spicePatchRadius;
         const pocketRng = mulberry32((Math.floor(node.seed * 1000000) ^ 0x5f35791d) >>> 0);
+        const crystalRng = mulberry32((Math.floor(node.seed * 1000000) ^ 0x93a74c11) >>> 0);
         node.group.position.set(node.x, baseY, node.z);
 
         replaceMeshGeometry(
@@ -4989,7 +5606,32 @@
           baseY,
           node.seed + 3.6
         );
+
+        node.crystalBaseY = 0.48 + ((crystalRng() - 0.5) * 0.14);
+        node.crystalPivot.position.y = node.crystalBaseY;
+        node.crystalPivot.rotation.y = crystalRng() * Math.PI * 2;
+
+        for (let i = 0; i < node.crystalShards.length; i += 1) {
+          const shard = node.crystalShards[i];
+          const angle = (i / node.crystalShards.length) * Math.PI * 2 + (crystalRng() * 0.5);
+          const radius = randomRange(0.56, 1.02, crystalRng);
+          shard.position.set(
+            Math.cos(angle) * radius,
+            randomRange(0.06, 0.36, crystalRng),
+            Math.sin(angle) * radius
+          );
+          shard.userData.baseY = shard.position.y;
+          shard.scale.setScalar(randomRange(0.78, 1.24, crystalRng));
+          shard.rotation.set(
+            randomRange(-0.5, 0.5, crystalRng),
+            randomRange(0, Math.PI * 2, crystalRng),
+            randomRange(-0.5, 0.5, crystalRng)
+          );
+        }
       }
+
+      const crystalCoreGeometry = new THREE.OctahedronGeometry(0.5, 0);
+      const crystalShardGeometry = new THREE.OctahedronGeometry(0.24, 0);
 
       while (nodes.length < CONFIG.spiceNodeCount) {
         const spawn = findSpiceNodeSpawn();
@@ -5056,6 +5698,53 @@
         sparkles.renderOrder = 6;
         group.add(sparkles);
 
+        const crystalPivot = new THREE.Group();
+        crystalPivot.position.y = 0.46;
+        group.add(crystalPivot);
+
+        const crystalCoreMaterial = new THREE.MeshStandardMaterial({
+          color: 0xf6c766,
+          emissive: 0xc27a20,
+          emissiveIntensity: 0.2,
+          roughness: 0.24,
+          metalness: 0.08,
+          flatShading: true,
+        });
+        const crystalCore = new THREE.Mesh(crystalCoreGeometry, crystalCoreMaterial);
+        crystalCore.castShadow = CONFIG.shadowEnabled;
+        crystalCore.receiveShadow = CONFIG.shadowEnabled;
+        crystalCore.scale.set(1, 1.44, 1);
+        crystalPivot.add(crystalCore);
+
+        const crystalShardMaterial = new THREE.MeshStandardMaterial({
+          color: 0xffd786,
+          emissive: 0xa96d1a,
+          emissiveIntensity: 0.14,
+          roughness: 0.3,
+          metalness: 0.06,
+          flatShading: true,
+        });
+        const crystalShards = [];
+        for (let i = 0; i < 4; i += 1) {
+          const shard = new THREE.Mesh(crystalShardGeometry, crystalShardMaterial);
+          shard.castShadow = CONFIG.shadowEnabled;
+          shard.receiveShadow = CONFIG.shadowEnabled;
+          crystalPivot.add(shard);
+          crystalShards.push(shard);
+        }
+
+        const crystalGlow = new THREE.Mesh(
+          new THREE.SphereGeometry(0.8, 10, 10),
+          new THREE.MeshBasicMaterial({
+            color: 0xffcc73,
+            transparent: true,
+            opacity: 0.12,
+            depthWrite: false,
+          })
+        );
+        crystalGlow.position.y = 0.14;
+        crystalPivot.add(crystalGlow);
+
         scene.add(group);
         const node = {
           x,
@@ -5065,6 +5754,11 @@
           inner,
           pockets,
           sparkles,
+          crystalPivot,
+          crystalCore,
+          crystalShards,
+          crystalGlow,
+          crystalBaseY: 0.46,
           phase: randomRange(0, Math.PI * 2, rng),
           seed: randomRange(0, Math.PI * 2, rng),
           active: true,
@@ -5202,6 +5896,10 @@
 	    function sampleStrongestNoiseHotspot() {
       if (state.wormPhase === "devour" || state.wormPhase === "recover") return null;
 
+      // Thumper always takes priority — it is a decoy device
+      const thumperHotspot = getThumperHotspot();
+      if (thumperHotspot) return thumperHotspot;
+
       let strongest = null;
       for (const actor of getWormTrackedActors()) {
         if (actor.surfaceType !== "sand") continue;
@@ -5232,11 +5930,6 @@
           signLevel: actor.signLevel,
           strength,
         };
-      }
-
-      const thumperHotspot = getThumperHotspot();
-      if (thumperHotspot && (!strongest || thumperHotspot.strength > strongest.strength)) {
-        strongest = thumperHotspot;
       }
 
       return strongest;
@@ -5978,7 +6671,7 @@
         player.userData.jumpBuffer = 0;
       }
 
-      if (state.wormPhase === "devour" || state.wormPhase === "recover") {
+      if (state.wormPhase === "devour" || state.wormPhase === "recover" || state.holtzmanDeathTimer > 0) {
         velocity.set(0, 0, 0);
         player.userData.grounded = false;
         updateNoiseSystem(delta, { horizSpeed: 0, crouchActive: false, runActive: false });
@@ -6196,6 +6889,16 @@
       tempCameraLook.y += cameraHeight;
       tempCameraPos.copy(tempCameraLook);
       tempCameraPos.addScaledVector(tempForward, -cameraDistance);
+	      // Over-the-shoulder offset for ranged weapons
+	      const shoulderTarget = (
+	        state.equippedWeapon === "lasgun" ||
+	        state.equippedWeapon === "maula"
+	      ) ? 1.8 : 0;
+      cameraShoulderAmount = THREE.MathUtils.lerp(cameraShoulderAmount, shoulderTarget, 1 - Math.exp(-7 * delta));
+      if (Math.abs(cameraShoulderAmount) > 0.001) {
+        tempRight.crossVectors(tempForward, tempUp).normalize();
+        tempCameraPos.addScaledVector(tempRight, cameraShoulderAmount);
+      }
       resolveCameraObstruction(tempCameraLook, tempCameraPos, tempCameraPos);
 
       const followAlpha = 1 - Math.exp(-CONFIG.cameraFollowSharpness * delta);
@@ -6283,9 +6986,12 @@
       const wormMeter = state.wormPhase !== "idle"
         ? 1
         : Math.max(worm.noisePressure, thumperStrength, shieldMeter);
-      const harvestProgress = state.harvestNode
-        ? Math.round(THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1) * 100)
-        : 0;
+	      const harvestProgress = state.harvestNode
+	        ? Math.round(THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1) * 100)
+	        : 0;
+	      const maulaReloadProgress = Math.round(
+	        (1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * 100
+	      );
 
 	      ui.hudDay.textContent = `Time ${formatCycleTime(state.dayTime)}`;
 	      ui.hudPhase.textContent = `Phase: ${state.cyclePhaseName}`;
@@ -6295,7 +7001,8 @@
 	      ui.hudCargo.textContent = `Carry ${state.spiceCarry}`;
 	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
 	      if (state.equippedWeapon === "maula") {
-	        ui.hudWeapon.textContent = `Maula ${state.maulaLoaded ? 1 : 0}/${state.maulaReserveAmmo}`;
+	        const maulaTotal = state.maulaReserveAmmo + (state.maulaLoaded ? 1 : 0);
+	        ui.hudWeapon.textContent = `Maula ${maulaTotal}/${CONFIG.maulaMaxDarts}`;
 	      } else if (state.equippedWeapon === "lasgun") {
 	        ui.hudWeapon.textContent = "Lasgun";
 	      } else {
@@ -6314,28 +7021,27 @@
       ui.hudShieldValue.textContent = `${shieldChargePercent}%`;
       ui.shieldFill.style.width = `${shieldChargePercent}%`;
       ui.shieldFill.style.backgroundColor = `hsl(${Math.round(182 + (shieldChargePercent * 0.28))}, 82%, 60%)`;
-      ui.hudWormValue.textContent = `${Math.round(wormMeter * 100)}%`;
-      ui.hudWormFillPlayer.style.width = `${(wormMeter * 100).toFixed(1)}%`;
-      ui.hudWormFillPlayer.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
-      ui.hudContextMeter.style.display = "none";
-      if (state.harvestNode) {
-        ui.hudContextMeter.style.display = "";
-        ui.hudContextLabel.textContent = "Spc";
-        ui.hudContextValue.textContent = `${harvestProgress}%`;
-        ui.hudContextFill.style.width = `${harvestProgress}%`;
-        ui.hudContextFill.style.backgroundColor = "#f0c860";
-      } else if (state.maulaReloadTimer > 0 && state.equippedWeapon === "maula") {
-        const reloadProgress = Math.round(
-          (1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * 100
-        );
-        ui.hudContextMeter.style.display = "";
-        ui.hudContextLabel.textContent = "Rld";
-        ui.hudContextValue.textContent = `${reloadProgress}%`;
-        ui.hudContextFill.style.width = `${reloadProgress}%`;
-        ui.hudContextFill.style.backgroundColor = "#d9b574";
-      } else if (state.equippedWeapon === "lasgun") {
-        const lasgunPct = Math.round(state.lasgunCharge * 100);
-        const lasHue = Math.round(state.lasgunCharge * 190);
+	      ui.hudWormValue.textContent = `${Math.round(wormMeter * 100)}%`;
+	      ui.hudWormFillPlayer.style.width = `${(wormMeter * 100).toFixed(1)}%`;
+	      ui.hudWormFillPlayer.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
+	      if (state.maulaReloadTimer > 0) {
+	        ui.hudMaulaReloadMeter.style.display = "";
+	        ui.hudMaulaReloadValue.textContent = `${maulaReloadProgress}%`;
+	        ui.hudMaulaReloadFill.style.width = `${maulaReloadProgress}%`;
+	        ui.hudMaulaReloadFill.style.backgroundColor = "#d9b574";
+	      } else {
+	        ui.hudMaulaReloadMeter.style.display = "none";
+	      }
+	      ui.hudContextMeter.style.display = "none";
+	      if (state.harvestNode) {
+	        ui.hudContextMeter.style.display = "";
+	        ui.hudContextLabel.textContent = "Spc";
+	        ui.hudContextValue.textContent = `${harvestProgress}%`;
+	        ui.hudContextFill.style.width = `${harvestProgress}%`;
+	        ui.hudContextFill.style.backgroundColor = "#f0c860";
+	      } else if (state.equippedWeapon === "lasgun") {
+	        const lasgunPct = Math.round(state.lasgunCharge * 100);
+	        const lasHue = Math.round(state.lasgunCharge * 190);
         ui.hudContextMeter.style.display = "";
         ui.hudContextLabel.textContent = "Las";
         ui.hudContextValue.textContent = `${lasgunPct}%`;
@@ -6364,6 +7070,13 @@
     }
 
     function refreshDeathFeedback() {
+      if (state.holtzmanDeathTimer > 0) {
+        const flash = 0.5 + (0.5 * Math.sin(state.elapsed * 28));
+        ui.deathFlash.style.opacity = `${(0.55 + flash * 0.12).toFixed(3)}`;
+        ui.deathText.textContent = "Atomized";
+        ui.deathHint.textContent = "Holtzman interaction — you were within the blast radius";
+        return;
+      }
       if (state.wormPhase === "devour" || state.wormPhase === "recover") {
         const phaseDuration = state.wormPhase === "recover"
           ? CONFIG.wormRespawnDelayDuration
@@ -6403,9 +7116,11 @@
 	      updateShieldVisual(delta);
 	      updateThumper(delta);
 	      updateTrainingDummy(delta);
-	      updateShieldedDummy(delta);
+	      for (const sd of shieldedDummies) updateShieldedDummy(delta, sd);
 	      updateLasgunBeam(delta);
+	      updateLasgunRockFX(delta);
 	      updateHoltzmanExplosion(delta);
+	      updateHoltzmanDeath(delta);
 	      updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
