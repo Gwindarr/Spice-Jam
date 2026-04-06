@@ -1186,6 +1186,9 @@
 	        roughnessMap,
 	        roughness: 1,
 	        metalness: 0.02,
+	        polygonOffset: true,
+	        polygonOffsetFactor: -2,
+	        polygonOffsetUnits: -2,
 	      });
 	    }
 
@@ -1256,8 +1259,16 @@
         const dx = worldX - patch.x;
         const dz = worldZ - patch.z;
         const dist = Math.sqrt((dx * dx) + (dz * dz));
-        if (dist > patch.plateauRadius) continue;
-        height = Math.max(height, getRockPatchTopY(patch));
+        if (dist > patch.radius) continue;
+        const topY = getRockPatchTopY(patch);
+        if (dist <= patch.plateauRadius) {
+          height = Math.max(height, topY);
+        } else {
+          // Terrain ramp from patch.radius (baseY) up to plateauRadius (topY).
+          // Lets players walk up to the plateau without a sheer cliff snap.
+          const t = 1 - (dist - patch.plateauRadius) / (patch.radius - patch.plateauRadius);
+          height = Math.max(height, getRockPatchBaseHeight(patch) + (topY - getRockPatchBaseHeight(patch)) * t);
+        }
       }
 
       return height;
@@ -1382,10 +1393,10 @@
 	        const mesaHeight = Math.max(2.8, (topY - baseY) + (patch.major ? 3.2 : 1.9));
 	        const mesaInst = {
 	          x: patch.x,
-	          y: baseY + (mesaHeight * 0.5) - 4,
+	          y: baseY + (mesaHeight * 0.5),
 	          z: patch.z,
 	          sx: patch.plateauRadius * (patch.major ? 1.04 : 0.98),
-	          sy: mesaHeight + 8,
+	          sy: mesaHeight,
 	          sz: patch.plateauRadius * randomRange(0.86, 1.04, patchRng),
 	          rotY: patch.approachAngle + randomRange(-0.12, 0.12, patchRng),
 	          tiltX: randomRange(-0.03, 0.03, patchRng),
@@ -1404,7 +1415,7 @@
 	          bottomYOverride: baseY - 0.2,
 	        });
 
-	        const wallCount = patch.major ? (isStartPatch ? 0 : 6) : 3;
+	        const wallCount = patch.major ? (isStartPatch ? 4 : 6) : 3;
 	        for (let i = 0; i < wallCount; i += 1) {
 	          const angle = patch.approachAngle + ((i / wallCount) * Math.PI * 2) + randomRange(-0.35, 0.35, patchRng);
 	          if (isStartPatch) {
@@ -1426,10 +1437,10 @@
 	            : Math.max(3, (topTarget - duneY) + randomRange(2.2, 4.8, patchRng));
 	          const inst = {
 	            x,
-	            y: duneY + (height * 0.5) - 2,
+	            y: duneY + (height * 0.5),
 	            z,
 	            sx: randomRange(isStartPatch ? 2.2 : 3.1, isStartPatch ? 3.8 : patch.major ? 5.9 : 4.4, patchRng),
-	            sy: height + 4,
+	            sy: height,
 	            sz: randomRange(isStartPatch ? 2 : 2.8, isStartPatch ? 3.5 : patch.major ? 5.2 : 4, patchRng),
 	            rotY: angle + randomRange(-0.25, 0.25, patchRng),
 	            tiltX: randomRange(-0.11, 0.11, patchRng),
@@ -1441,6 +1452,36 @@
 	            registerCollider: true,
 	            walkable: false,
 	            colliderRadiusScale: 0.86,
+	          });
+	        }
+
+
+	        // Scattered small rocks at the base for visual grounding
+	        const baseRockCount = isStartPatch ? 14 : (patch.major ? 6 : 4);
+	        for (let bi = 0; bi < baseRockCount; bi += 1) {
+	          const bAngle = randomRange(0, Math.PI * 2, patchRng);
+	          const bDist = randomRange(patch.plateauRadius * 1.1, patch.radius * 1.25, patchRng);
+	          const bx = patch.x + (Math.cos(bAngle) * bDist);
+	          const bz = patch.z + (Math.sin(bAngle) * bDist);
+	          const bDuneY = sampleDuneHeight(bx, bz);
+	          const bH = randomRange(0.5, isStartPatch ? 2.2 : 1.6, patchRng);
+	          const bInst = {
+	            x: bx,
+	            y: bDuneY + (bH * 0.5),
+	            z: bz,
+	            sx: randomRange(0.8, isStartPatch ? 2.8 : 2.0, patchRng),
+	            sy: bH,
+	            sz: randomRange(0.7, isStartPatch ? 2.4 : 1.8, patchRng),
+	            rotY: randomRange(0, Math.PI * 2, patchRng),
+	            tiltX: randomRange(-0.22, 0.22, patchRng),
+	            tiltZ: randomRange(-0.22, 0.22, patchRng),
+	          };
+	          if (overlapsExistingRock(bInst, 0.6)) continue;
+	          addRockInstance(bInst, {
+	            shape: "rock",
+	            registerCollider: true,
+	            walkable: false,
+	            colliderRadiusScale: 0.78,
 	          });
 	        }
 
@@ -1749,7 +1790,7 @@
 
       const mesh = new THREE.Mesh(
         geometry,
-        new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })
+        new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 })
       );
       mesh.receiveShadow = CONFIG.shadowEnabled;
       scene.add(mesh);
