@@ -199,6 +199,26 @@
     }
     .deposit-toast.show { opacity: 1; }
 
+    #damageFlash {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: rgba(200, 0, 0, 0);
+      z-index: 50;
+      transition: background 0.08s ease;
+    }
+
+    #vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(ellipse at center,
+        transparent 55%,
+        rgba(8, 4, 2, 0.38) 80%,
+        rgba(4, 2, 0, 0.72) 100%);
+      z-index: 4;
+    }
+
     .noise-row {
       display: flex;
       align-items: center;
@@ -412,6 +432,8 @@
     <div id="hudStatus" class="hud-status">Find spice in open sand.</div>
   </div>
   <div id="depositToast" class="deposit-toast"></div>
+  <div id="damageFlash"></div>
+  <div id="vignette"></div>
 
 	  <div id="devHud" class="hud-panel">
 	    <div class="title">Dev Hud</div>
@@ -454,6 +476,9 @@
   </div>
 
   <div id="explosionFlash" style="position:fixed;inset:0;z-index:24;background:radial-gradient(circle,#ffffff,#ffe066 30%,#ff8800 65%,#cc2200 100%);pointer-events:none;opacity:0;transition:none;"></div>
+  <!-- Socket.io client — loaded before the module script so `io` is global -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
   <script type="importmap">
   {
     "imports": {
@@ -779,6 +804,7 @@
 	      hudContextValue: document.getElementById("hudContextValue"),
       hudContextFill: document.getElementById("hudContextFill"),
       depositToast: document.getElementById("depositToast"),
+      damageFlash: document.getElementById("damageFlash"),
       hudStatus: document.getElementById("hudStatus"),
       explosionFlash: document.getElementById("explosionFlash"),
       noiseFill: document.getElementById("noiseFill"),
@@ -788,7 +814,7 @@
     };
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x5ab4e8);
+    scene.background = null;
     scene.fog = new THREE.Fog(0xd8c09a, 70, 220);
 
     const StaticCollisionGroup = new THREE.Group();
@@ -802,6 +828,8 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = CONFIG.shadowEnabled;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
@@ -825,6 +853,7 @@
     scene.add(sun);
     scene.add(sun.target);
 
+    const skyDome = createSkyDome();
     const stars = createStarField();
     const player = createPlayer();
     const audioState = {
@@ -844,7 +873,8 @@
       };
     }
 
-    const MAP_SEED = Math.floor(Math.random() * 0xFFFFFF);
+    const _urlSeed = new URLSearchParams(window.location.search).get("seed");
+    const MAP_SEED = _urlSeed ? (parseInt(_urlSeed, 16) >>> 0) : Math.floor(Math.random() * 0xFFFFFF);
     const rng = mulberry32(MAP_SEED);
 
     // Each dune layer: random ridge direction and phase offset, fixed amplitude and frequency magnitude.
@@ -919,6 +949,7 @@
       paused: true,
       depositKeyConsumed: false,
       depositToastTimer: 0,
+      damageFlashTimer: 0,
     };
 
     const keyState = {
@@ -1033,6 +1064,16 @@
 	    bindEvents();
     updateDayNight(0);
     refreshHud();
+    // Multiplayer state — must be initialized before animate() runs
+    const mp = {
+      connected: false,
+      socket: null,
+      emit(...args) { if (this.socket) this.socket.emit(...args); },
+    };
+    const remotePlayers = new Map(); // id → { mesh, data }
+    let mpSendTimer = 0;
+
+    initMultiplayer();
     animate();
 
     function createSpicePatchGeometry(worldX, worldZ, radius, segments, seed, baseY, heightOffset, edgeWarp) {
@@ -2335,6 +2376,19 @@
 	        hit = true;
 	      }
 
+	      if (!hit) {
+	        for (const [, rp] of remotePlayers) {
+	          if (rp.data.shieldActive) continue;
+	          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+	          if (testKnifeHitTarget(tempProjectileCenter, 0.62)) {
+	            mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.knifeDamage });
+	            rp.hitFlash = 1.0;
+	            hit = true;
+	            break;
+	          }
+	        }
+	      }
+
 	      if (hit) {
 	        sfx.hitSoft.play({ volumeMultiplier: 0.96, playbackRate: randomRange(0.94, 1.04) });
 	      }
@@ -2662,6 +2716,21 @@
 	          }
 	        }
 
+	        if (!hit) {
+	          for (const [, rp] of remotePlayers) {
+	            if (rp.data.shieldActive) continue;
+	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.5 + CONFIG.maulaProjectileRadius)) {
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
+	              rp.hitFlash = 1.0;
+	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
+	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	              hit = true;
+	              break;
+	            }
+	          }
+	        }
+
 	        const outOfBounds = !isInsideWorldBounds(projectile.mesh.position.x, projectile.mesh.position.z, 4);
 	        if (hit || projectile.age >= CONFIG.maulaProjectileLifetime || outOfBounds) {
 	          scene.remove(projectile.mesh);
@@ -2778,11 +2847,28 @@
 	        }
 	      }
 
+	      for (const [, rp] of remotePlayers) {
+	        if (rp.data.shieldActive) continue;
+	        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.5 + 0.08)) {
+	          const rpDist = origin.distanceTo(tempProjectileCenter);
+	          if (rpDist < bestDistance) {
+	            bestDistance = rpDist;
+	            bestType = "remote:" + rp.data.id;
+	          }
+	        }
+	      }
+
 	      if (bestType) {
 	        tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance);
 	        if (bestType === "thumper") {
 	          setThumperActive(false);
 	          broadcastWormRadio("Lasgun beam sheared through the thumper.");
+	        } else if (bestType.startsWith("remote:")) {
+	          const targetId = bestType.slice(7);
+	          mp.emit("hitPlayer", { targetId, damage: CONFIG.lasgunImpactDamage });
+	          const rp = remotePlayers.get(targetId);
+	          if (rp) rp.hitFlash = 1.0;
 	        } else {
 	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
 	          hitTrainingDummy(bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
@@ -3574,6 +3660,7 @@
         state.depositKeyConsumed = true;
         state.depositToastTimer = 2.8;
         spiceDepot.triggerDeposit();
+        mp.emit("spiceDeposited");
       }
       if (!keyState.KeyE) state.depositKeyConsumed = false;
 
@@ -3599,6 +3686,11 @@
           ui.depositToast.textContent = `Spice deposited  ✦  Bank: ${state.spiceScore}`;
           ui.depositToast.classList.add("show");
         }
+      }
+
+      if (state.damageFlashTimer > 0) {
+        state.damageFlashTimer = Math.max(0, state.damageFlashTimer - delta);
+        ui.damageFlash.style.background = `rgba(200,0,0,${(state.damageFlashTimer * 0.7).toFixed(2)})`;
       }
 
       let nearbyHarvestNode = null;
@@ -3677,6 +3769,7 @@
               setSpiceNodeActive(activeNode, false);
               cancelHarvest();
               emitNoiseImpulse(0.2);
+              mp.emit("harvestNode", activeNode.id);
             }
           }
         }
@@ -4927,6 +5020,90 @@
       return mesh;
     }
 
+    function createSkyDome() {
+      const vertShader = `
+        varying vec3 vDir;
+        void main() {
+          vDir = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `;
+      const fragShader = `
+        uniform vec3 uTopColor;
+        uniform vec3 uHorizonColor;
+        uniform vec3 uSunDir;
+        uniform float uSunIntensity;
+        varying vec3 vDir;
+        void main() {
+          vec3 dir = normalize(vDir);
+          float h = dir.y;
+
+          // Gradient: zenith → horizon
+          vec3 sky = mix(uHorizonColor, uTopColor, pow(clamp(h, 0.0, 1.0), 0.55));
+
+          // Below horizon: darken toward ground
+          if (h < 0.0) {
+            sky = mix(sky, uHorizonColor * 0.18, clamp(-h * 4.0, 0.0, 1.0));
+          }
+
+          // Atmospheric scatter: warm glow at horizon
+          float horizonBand = exp(-h * h * 5.0);
+          sky += uHorizonColor * horizonBand * 0.28 * uSunIntensity;
+
+          // Sun halo + disc
+          float sunDot = dot(dir, normalize(uSunDir));
+          float halo = pow(max(sunDot, 0.0), 7.0) * 0.45 * uSunIntensity;
+          float disc = smoothstep(0.9993, 0.99975, sunDot) * uSunIntensity * 1.8;
+          sky += vec3(1.0, 0.90, 0.52) * (halo + disc);
+
+          gl_FragColor = vec4(sky, 1.0);
+        }
+      `;
+
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: vertShader,
+        fragmentShader: fragShader,
+        uniforms: {
+          uTopColor:      { value: new THREE.Color(0x5ab4e8) },
+          uHorizonColor:  { value: new THREE.Color(0xd8c09a) },
+          uSunDir:        { value: new THREE.Vector3(0.6, 0.8, 0.2) },
+          uSunIntensity:  { value: 1.4 },
+        },
+        side: THREE.BackSide,
+        depthWrite: false,
+      });
+
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(720, 32, 16), mat);
+      mesh.renderOrder = -2;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+
+      // Two Arrakis moons
+      const moonGeo = new THREE.SphereGeometry(1, 14, 10);
+      function makeMoon(color, orbitAngle, orbitTilt, orbitRadius) {
+        const moonMat = new THREE.MeshBasicMaterial({ color });
+        const moon = new THREE.Mesh(moonGeo, moonMat);
+        moon.scale.setScalar(10);
+        moon.frustumCulled = false;
+        moon.renderOrder = -1;
+        scene.add(moon);
+        return { moon, orbitAngle, orbitTilt, orbitRadius };
+      }
+
+      const moonA = makeMoon(0xfff0cc, 0.7, 0.4, 620);
+      // Add "fist of God" dark marking to large moon
+      const fistGeo = new THREE.SphereGeometry(1, 8, 8);
+      const fistMat = new THREE.MeshBasicMaterial({ color: 0x2a2218, transparent: true, opacity: 0.72, depthWrite: false });
+      const fistMesh = new THREE.Mesh(fistGeo, fistMat);
+      fistMesh.scale.set(4.2, 5.5, 1.8);
+      fistMesh.position.set(2.5, 1.5, 9.2); // offset slightly toward viewer face
+      moonA.moon.add(fistMesh);
+
+      const moonB = makeMoon(0xdde8ff, 3.5, -0.3, 580);
+
+      return { mesh, mat, moonA, moonB };
+    }
+
     function createStarField() {
       const positions = new Float32Array(CONFIG.starCount * 3);
 
@@ -4951,9 +5128,11 @@
         transparent: true,
         opacity: 0,
         depthWrite: false,
+        depthTest: false,
       });
 
       const points = new THREE.Points(geometry, material);
+      points.renderOrder = -1;
       points.frustumCulled = false;
       scene.add(points);
       return points;
@@ -7248,8 +7427,9 @@
       const amount = (state.dayTime - current.a.t) / (current.b.t - current.a.t || 1);
       state.cyclePhaseName = amount < 0.5 ? current.a.name : current.b.name;
 
-      copyLerpedColor(scene.background, current.a.sky, current.b.sky, amount);
+      copyLerpedColor(skyDome.mat.uniforms.uTopColor.value, current.a.sky, current.b.sky, amount);
       copyLerpedColor(scene.fog.color, current.a.fog, current.b.fog, amount);
+      skyDome.mat.uniforms.uHorizonColor.value.copy(scene.fog.color);
       copyLerpedColor(hemiLight.color, current.a.hemiSky, current.b.hemiSky, amount);
       copyLerpedColor(hemiLight.groundColor, current.a.hemiGround, current.b.hemiGround, amount);
       copyLerpedColor(sun.color, current.a.sunColor, current.b.sunColor, amount);
@@ -7267,6 +7447,34 @@
       );
       sun.target.position.copy(tempSunTarget);
       sun.target.updateMatrixWorld();
+
+      // Sky dome: follow player + update uniforms
+      skyDome.mesh.position.copy(player.position);
+      skyDome.mat.uniforms.uSunIntensity.value = sun.intensity;
+      skyDome.mat.uniforms.uSunDir.value
+        .subVectors(sun.position, tempSunTarget).normalize();
+
+      // Moons: orbit on tilted planes, slower than sun
+      const moonSpeed = state.elapsed * 0.08;
+      const px = player.position.x, pz = player.position.z;
+      const { moonA, moonB } = skyDome;
+      const maA = moonSpeed + moonA.orbitAngle;
+      moonA.moon.position.set(
+        px + Math.cos(maA) * moonA.orbitRadius,
+        player.position.y + Math.sin(maA) * 480 + Math.sin(moonA.orbitTilt) * 120,
+        pz + Math.sin(maA) * moonA.orbitRadius * 0.6
+      );
+      const maB = moonSpeed + moonB.orbitAngle;
+      moonB.moon.position.set(
+        px + Math.cos(maB) * moonB.orbitRadius * 0.7,
+        player.position.y + Math.sin(maB) * 420 + Math.sin(moonB.orbitTilt) * 80,
+        pz + Math.sin(maB) * moonB.orbitRadius
+      );
+      // Only show moons when dark enough
+      const moonVis = THREE.MathUtils.clamp(1.0 - sun.intensity * 0.8, 0, 1);
+      moonA.moon.material.opacity !== undefined || (moonA.moon.material.transparent = true);
+      moonA.moon.visible = moonVis > 0.05;
+      moonB.moon.visible = moonVis > 0.05;
     }
 
     function getCycleKeyPair(dayTime) {
@@ -7445,6 +7653,7 @@
 	      updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
+      tickMultiplayer(delta);
       updateCameraRig(delta);
       refreshHud();
       refreshDeathFeedback();
@@ -7458,6 +7667,206 @@
     function randomInt(min, max, rand = Math.random) {
       return Math.floor(min + (rand() * ((max - min) + 1)));
     }
+
+    // ── Multiplayer ────────────────────────────────────────────────────────────
+    function createRemotePlayerMesh(team) {
+      // Reuse the full player model — already has weapon + cargo userData refs
+      const root = createPlayer();
+      root.position.set(0, 0, 0);
+
+      // Team indicator ring floating above head
+      const indicatorColor = team === "fremen" ? 0xffb844 : 0xff2222;
+      const indicatorMat = new THREE.MeshBasicMaterial({ color: indicatorColor });
+      const indicator = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 6, 16), indicatorMat);
+      indicator.rotation.x = Math.PI / 2;
+      indicator.position.y = 3.8;
+      root.add(indicator);
+      root.userData.teamIndicator = indicator;
+
+      return root;
+    }
+
+    function updateRemotePlayerState(rp) {
+      const { mesh, data } = rp;
+      const ud = mesh.userData;
+      // Weapon visibility
+      if (ud.knifeRoot)  ud.knifeRoot.visible  = data.equipped === "knife";
+      if (ud.maulaRoot)  ud.maulaRoot.visible   = data.equipped === "maula";
+      if (ud.lasgunRoot) ud.lasgunRoot.visible  = data.equipped === "lasgun";
+      // Spice cargo
+      if (ud.spiceCargoMesh) {
+        ud.spiceCargoMesh.visible = data.spiceCarry > 0;
+        ud.spiceGlowMesh.visible  = data.spiceCarry > 0;
+      }
+    }
+
+    function addRemotePlayer(data) {
+      if (remotePlayers.has(data.id)) return;
+      const mesh = createRemotePlayerMesh(data.team);
+      mesh.position.set(data.x, data.y, data.z);
+      mesh.rotation.y = data.rotY ?? 0;
+      scene.add(mesh);
+      remotePlayers.set(data.id, { mesh, data: { ...data }, hitFlash: 0 });
+    }
+
+    function removeRemotePlayer(id) {
+      const rp = remotePlayers.get(id);
+      if (!rp) return;
+      scene.remove(rp.mesh);
+      remotePlayers.delete(id);
+    }
+
+    function updateRemotePlayers(delta) {
+      for (const [, rp] of remotePlayers) {
+        // Smooth interpolation toward last known position
+        rp.mesh.position.lerp(
+          tempWormTarget.set(rp.data.x, rp.data.y, rp.data.z), 1 - Math.exp(-18 * delta)
+        );
+        const targetRotY = rp.data.rotY ?? 0;
+        const diff = ((targetRotY - rp.mesh.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        rp.mesh.rotation.y += diff * (1 - Math.exp(-14 * delta));
+        updateRemotePlayerState(rp);
+        // Hit flash
+        if (rp.hitFlash > 0) {
+          rp.hitFlash = Math.max(0, rp.hitFlash - delta * 3.5);
+          rp.mesh.traverse((obj) => {
+            if (obj.isMesh && obj.material && obj.material.emissive) {
+              obj.material.emissiveIntensity = rp.hitFlash * 1.2;
+            }
+          });
+        }
+      }
+    }
+
+    // Send position to server at ~20hz
+    function tickMultiplayer(delta) {
+      updateRemotePlayers(delta);
+      if (!mp.connected) return;
+      mpSendTimer += delta;
+      if (mpSendTimer >= 0.05) {
+        mpSendTimer = 0;
+        mp.emit("move", {
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+          rotY: player.rotation.y,
+          spiceCarry: state.spiceCarry,
+          equipped: state.equippedWeapon,
+          shieldActive: state.shieldActive,
+        });
+      }
+    }
+
+    function initMultiplayer() {
+      // SERVER_URL can be overridden by a global set before this script
+      const isLocal = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+      const serverUrl = (typeof SERVER_URL !== "undefined" ? SERVER_URL : null)
+        ?? (isLocal ? "http://localhost:3001" : null);
+
+      if (!serverUrl) {
+        console.log("[MP] No server URL — running offline");
+        return;
+      }
+
+      const socket = io(serverUrl, { transports: ["websocket", "polling"] });
+      mp.socket = socket;
+
+      socket.on("connect", () => {
+        mp.connected = true;
+        console.log("[MP] Connected:", socket.id);
+      });
+
+      socket.on("disconnect", () => {
+        mp.connected = false;
+        console.log("[MP] Disconnected");
+      });
+
+      socket.on("serverFull", () => {
+        console.warn("[MP] Server full");
+      });
+
+      socket.on("welcome", ({ id, team, snapshot }) => {
+        console.log(`[MP] Joined as ${team}`);
+        // If server has a canonical seed and ours differs, reload with correct seed
+        if (snapshot.seed && snapshot.seed !== MAP_SEED) {
+          const params = new URLSearchParams(window.location.search);
+          params.set("seed", snapshot.seed.toString(16).padStart(6, "0"));
+          window.location.search = params.toString();
+          return;
+        }
+        // Spawn existing players
+        for (const p of snapshot.players) {
+          if (p.id !== id) addRemotePlayer(p);
+        }
+        // Sync spice node states
+        for (const node of snapshot.spiceNodes) {
+          const local = spiceObjective.nodes[node.id];
+          if (local && !node.active) setSpiceNodeActive(local, false);
+        }
+        // Sync scores
+        state.spiceScore = snapshot.scores[team] ?? 0;
+      });
+
+      socket.on("playerJoined", (data) => addRemotePlayer(data));
+
+      socket.on("playerLeft", (id) => removeRemotePlayer(id));
+
+      socket.on("playerMoved", (data) => {
+        const rp = remotePlayers.get(data.id);
+        if (rp) Object.assign(rp.data, data);
+      });
+
+      socket.on("nodeHarvested", (nodeId) => {
+        const node = spiceObjective.nodes[nodeId];
+        if (node?.active) setSpiceNodeActive(node, false);
+      });
+
+      socket.on("spiceSync", (nodes) => {
+        for (const node of nodes) {
+          const local = spiceObjective.nodes[node.id];
+          if (!local) continue;
+          if (node.active && !local.active) {
+            spiceObjective.relocateNode(local);
+            setSpiceNodeActive(local, true);
+          }
+        }
+      });
+
+      socket.on("scoreUpdate", (scores) => {
+        // Show updated scores — for now just log; HUD can be wired later
+        console.log("[MP] Scores:", scores);
+      });
+
+      socket.on("playerDamaged", ({ id, health, attackerId }) => {
+        if (id === socket.id) {
+          state.playerHealth = health;
+          state.damageFlashTimer = 0.5;
+        } else {
+          const rp = remotePlayers.get(id);
+          if (rp) rp.hitFlash = 1.0;
+        }
+      });
+
+      socket.on("playerKilled", ({ id, killerId }) => {
+        if (id === socket.id) {
+          broadcastWormRadio("You were killed!");
+          state.damageFlashTimer = 1.2;
+        } else {
+          const rp = remotePlayers.get(id);
+          if (rp) rp.hitFlash = 2.0;
+        }
+      });
+
+      socket.on("playerRespawned", ({ id }) => {
+        const rp = remotePlayers.get(id);
+        if (rp) { rp.data.health = 100; rp.hitFlash = 0; }
+        if (id === socket.id) {
+          state.playerHealth = 100;
+          state.damageFlashTimer = 0;
+        }
+      });
+    }
+    // ── End Multiplayer ────────────────────────────────────────────────────────
   </script>
 </body>
 </html>
