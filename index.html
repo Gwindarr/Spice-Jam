@@ -714,9 +714,11 @@
 	      lasgunDrainRate: 0.24,
 	      lasgunRechargeRate: 0.10,
 	      lasgunImpactDamage: 34,
-	      lasgunCooldown: 1.15,
 	      lasgunFireDuration: 0.18,
 	      lasgunBeamDuration: 0.12,
+	      lasgunSpinUpDuration: 0.10,
+	      lasgunFovPunchAmount: 1.6,
+	      lasgunFovPunchDuration: 0.20,
 	      lasgunRange: 500,
 	      lasgunFireNoiseImpulse: 0.34,
 	      shieldTransitionSpeed: 8.5,
@@ -897,6 +899,7 @@
     scene.add(StaticCollisionGroup);
 
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 900);
+    const CAMERA_BASE_FOV = camera.fov;
     camera.rotation.x = CONFIG.cameraPitchDown;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1001,9 +1004,10 @@
 	      maulaReloadTimer: 0,
 	      maulaLoaded: true,
 	      maulaReserveAmmo: CONFIG.maulaMaxDarts - 1,
-	      lasgunCooldown: 0,
 	      lasgunFireTimer: 0,
 	      lasgunBeamTimer: 0,
+	      lasgunSpinUpTimer: 0,
+	      lasgunFovPunchTimer: 0,
 	      lasgunFiring: false,
 	      lasgunNoiseTimer: 0,
 	      lasgunRockHitTimer: 0,
@@ -2909,133 +2913,6 @@
 	      return out;
 	    }
 
-	    function showLasgunBeam(start, end) {
-	      state.lasgunBeamStart.copy(start);
-	      state.lasgunBeamEnd.copy(end);
-	      state.lasgunBeamTimer = CONFIG.lasgunBeamDuration;
-	      lasgunBeam.group.visible = true;
-	    }
-
-	    function fireLasgun(strikeDirIn) {
-	      camera.getWorldDirection(tempKnifeDir);
-	      const strikeDir = tempKnifeDir;
-	      const origin = getLasgunOrigin(tempMaulaOrigin);
-	      let maxDistance = CONFIG.lasgunRange;
-        const rockHit = raycastWorldCollision(origin, strikeDir, maxDistance, 0.35);
-        if (rockHit && rockHit.distance < maxDistance) {
-          maxDistance = rockHit.distance;
-        }
-
-	      tempLasgunEnd.copy(origin).addScaledVector(strikeDir, maxDistance);
-	      let bestDistance = maxDistance + 1;
-	      let bestType = null;
-	      let bestHeadshot = false;
-
-	      if (
-	        thumper.active &&
-	        segmentHitsSphere(origin, tempLasgunEnd, thumper.group.position, CONFIG.knifeThumperHitRadius + 0.18)
-	      ) {
-	        const thumperDistance = origin.distanceTo(thumper.group.position);
-	        if (thumperDistance < bestDistance) {
-	          bestDistance = thumperDistance;
-	          bestType = "thumper";
-	        }
-	      }
-
-	      if (trainingDummy) {
-	        trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
-	        if (
-	          segmentHitsSphere(
-	            origin,
-	            tempLasgunEnd,
-	            tempProjectileCenter,
-	            CONFIG.trainingDummyHeadRadius + 0.08
-	          )
-	        ) {
-	          const headDistance = origin.distanceTo(tempProjectileCenter);
-	          if (headDistance < bestDistance) {
-	            bestDistance = headDistance;
-	            bestType = "dummy";
-	            bestHeadshot = true;
-	          }
-	        }
-
-	        trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
-	        if (
-	          segmentHitsSphere(
-	            origin,
-	            tempLasgunEnd,
-	            tempProjectileCenter,
-	            CONFIG.trainingDummyHitRadius + 0.1
-	          )
-	        ) {
-	          const bodyDistance = origin.distanceTo(tempProjectileCenter);
-	          if (bodyDistance < bestDistance) {
-	            bestDistance = bodyDistance;
-	            bestType = "dummy";
-	            bestHeadshot = false;
-	          }
-	        }
-	      }
-
-	      for (const [, rp] of remotePlayers) {
-	        if (rp.data.shieldActive) continue;
-	        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.5 + 0.08)) {
-	          const rpDist = origin.distanceTo(tempProjectileCenter);
-	          if (rpDist < bestDistance) {
-	            bestDistance = rpDist;
-	            bestType = "remote:" + rp.data.id;
-	          }
-	        }
-	      }
-
-      for (let ni = 0; ni < npcs.length; ni++) {
-        const npc = npcs[ni];
-        if (npc.dead) continue;
-        npc.headDot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.headHitRadius + 0.08)) {
-          const d = origin.distanceTo(tempProjectileCenter);
-          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
-        }
-        npc.targetPivot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.bodyHitRadius + 0.1)) {
-          const d = origin.distanceTo(tempProjectileCenter);
-          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
-        }
-      }
-
-	      if (bestType) {
-	        tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance);
-	        if (bestType === "thumper") {
-	          setThumperActive(false);
-	          broadcastWormRadio("Lasgun beam sheared through the thumper.");
-	        } else if (bestType.startsWith("remote:")) {
-	          const targetId = bestType.slice(7);
-	          mp.emit("hitPlayer", { targetId, damage: CONFIG.lasgunImpactDamage });
-	          const rp = remotePlayers.get(targetId);
-	          if (rp) rp.hitFlash = 1.0;
-	        } else if (bestType.startsWith("npc:")) {
-	          const ni = parseInt(bestType.slice(4));
-	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
-	          hitTarget(npcs[ni], bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage, { headshot: bestHeadshot });
-	          broadcastWormRadio(bestHeadshot ? `Lasgun headshot for ${result.damage}.` : `Lasgun hit for ${result.damage}.`);
-	        } else {
-	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
-	          hitTarget(trainingDummy, bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
-	          const hitLabel = bestHeadshot
-	            ? `Lasgun headshot for ${result.damage}.`
-	            : result.isCritical
-	              ? `Lasgun critical hit for ${result.damage}.`
-	              : `Lasgun hit for ${result.damage}.`;
-	          broadcastWormRadio(hitLabel);
-	        }
-	        showLasgunBeam(origin, tempLasgunImpact);
-	      } else {
-	        showLasgunBeam(origin, tempLasgunEnd);
-	      }
-	    }
-
 	    function tryLasgunAttack() {
 	      if (
 	        state.paused ||
@@ -3053,7 +2930,10 @@
 	      if (state.lasgunFiring) return false;
 	      cancelHarvest();
 	      state.lasgunFiring = true;
+	      state.lasgunSpinUpTimer = CONFIG.lasgunSpinUpDuration;
+	      state.lasgunFovPunchTimer = CONFIG.lasgunFovPunchDuration;
 	      sfx.lasgunFire.play({ volumeMultiplier: 0.92 });
+	      sfx.lasgunHum.start();
 	      return true;
 	    }
 
@@ -3104,8 +2984,12 @@
 	    function createLasgunRockFX() {
 	      const Z_AXIS = new THREE.Vector3(0, 0, 1);
 	      const tempQ = new THREE.Quaternion();
+	      const tempVelDir = new THREE.Vector3();
 
-	      const scorchGeo = new THREE.CircleGeometry(0.4, 8);
+	      // Outer scorch (dark soot, slow fade) + inner hot ring (orange, fast
+	      // fade, additive). Two meshes per slot so the burn reads as a *burn*
+	      // and not a flat decal.
+	      const scorchGeo = new THREE.CircleGeometry(0.4, 16);
 	      const scorches = Array.from({ length: 12 }, () => {
 	        const mat = new THREE.MeshBasicMaterial({
 	          color: 0x0d0700, transparent: true, opacity: 0,
@@ -3114,10 +2998,23 @@
 	        const mesh = new THREE.Mesh(scorchGeo, mat);
 	        mesh.visible = false;
 	        scene.add(mesh);
-	        return { mesh, mat, timer: 0, duration: 5 };
+
+	        const innerMat = new THREE.MeshBasicMaterial({
+	          color: 0xff7722, transparent: true, opacity: 0,
+	          depthWrite: false, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5,
+	          blending: THREE.AdditiveBlending,
+	        });
+	        const innerMesh = new THREE.Mesh(scorchGeo, innerMat);
+	        innerMesh.visible = false;
+	        scene.add(innerMesh);
+
+	        return { mesh, mat, innerMesh, innerMat, timer: 0, duration: 5, innerTimer: 0, innerDuration: 0.55 };
 	      });
 
-	      const sparkGeo = new THREE.SphereGeometry(0.06, 3, 2);
+	      // Sparks — bumped from 3,2 to 6,4 segments so they're not visibly
+	      // bipyramids. Per-frame they get oriented along velocity and scaled
+	      // non-uniformly so they read as molten ejecta streaks.
+	      const sparkGeo = new THREE.SphereGeometry(0.06, 6, 4);
 	      const sparks = Array.from({ length: 30 }, () => {
 	        const mat = new THREE.MeshBasicMaterial({ color: 0xff8800 });
 	        const mesh = new THREE.Mesh(sparkGeo, mat.clone());
@@ -3126,11 +3023,12 @@
 	        return { mesh, mat: mesh.material, velocity: new THREE.Vector3(), timer: 0, duration: 0 };
 	      });
 
-	      const flashGeo = new THREE.CircleGeometry(1, 12);
+	      const flashGeo = new THREE.CircleGeometry(1, 16);
 	      const flashes = Array.from({ length: 4 }, () => {
 	        const mat = new THREE.MeshBasicMaterial({
 	          color: 0xffcc44, transparent: true, opacity: 0,
 	          depthWrite: false, side: THREE.DoubleSide,
+	          polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5,
 	        });
 	        const mesh = new THREE.Mesh(flashGeo, mat);
 	        mesh.visible = false;
@@ -3138,23 +3036,32 @@
 	        return { mesh, mat, timer: 0 };
 	      });
 
-	      return { scorches, sparks, flashes, Z_AXIS, tempQ, _si: 0, _pi: 0, _fi: 0 };
+	      return { scorches, sparks, flashes, Z_AXIS, tempQ, tempVelDir, _si: 0, _pi: 0, _fi: 0 };
 	    }
 
 	    function triggerLasgunRockHit(pos, normal) {
 	      const fx = lasgunRockFX;
 	      fx.tempQ.setFromUnitVectors(fx.Z_AXIS, normal);
 
-	      // Scorch mark
+	      // Scorch mark — outer dark soot decal
 	      const sc = fx.scorches[fx._si % fx.scorches.length];
 	      fx._si++;
+	      const scorchScale = randomRange(0.5, 1.1);
 	      sc.mesh.position.copy(pos).addScaledVector(normal, 0.03);
 	      sc.mesh.quaternion.copy(fx.tempQ);
-	      sc.mesh.scale.setScalar(randomRange(0.5, 1.1));
+	      sc.mesh.scale.setScalar(scorchScale);
 	      sc.mat.opacity = 0.72;
 	      sc.timer = 5.0;
 	      sc.duration = 5.0;
 	      sc.mesh.visible = true;
+
+	      // Inner hot ring — bright orange that fades quickly, sells the burn
+	      sc.innerMesh.position.copy(pos).addScaledVector(normal, 0.035);
+	      sc.innerMesh.quaternion.copy(fx.tempQ);
+	      sc.innerMesh.scale.setScalar(scorchScale * 0.46);
+	      sc.innerMat.opacity = 0.92;
+	      sc.innerTimer = sc.innerDuration;
+	      sc.innerMesh.visible = true;
 
 	      // Spark burst
 	      for (let i = 0; i < 6; i += 1) {
@@ -3189,10 +3096,24 @@
 	      const fx = lasgunRockFX;
 
 	      for (const sc of fx.scorches) {
-	        if (!sc.mesh.visible) continue;
-	        sc.timer -= delta;
-	        if (sc.timer <= 0) { sc.mesh.visible = false; continue; }
-	        sc.mat.opacity = 0.72 * (sc.timer / sc.duration);
+	        if (sc.mesh.visible) {
+	          sc.timer -= delta;
+	          if (sc.timer <= 0) {
+	            sc.mesh.visible = false;
+	          } else {
+	            sc.mat.opacity = 0.72 * (sc.timer / sc.duration);
+	          }
+	        }
+	        // Inner hot ring — independent fast fade so it disappears while the
+	        // outer soot decal lingers for the full 5s.
+	        if (sc.innerMesh.visible) {
+	          sc.innerTimer -= delta;
+	          if (sc.innerTimer <= 0) {
+	            sc.innerMesh.visible = false;
+	          } else {
+	            sc.innerMat.opacity = 0.92 * (sc.innerTimer / sc.innerDuration);
+	          }
+	        }
 	      }
 
 	      for (const sp of fx.sparks) {
@@ -3201,7 +3122,16 @@
 	        if (sp.timer <= 0) { sp.mesh.visible = false; continue; }
 	        sp.velocity.y -= 16 * delta;
 	        sp.mesh.position.addScaledVector(sp.velocity, delta);
-	        sp.mesh.scale.setScalar(sp.timer / sp.duration);
+	        // Velocity-aligned stretch — the long axis grows with current speed
+	        // so fast sparks read as motion-blur streaks, slow ones round out.
+	        const speed = sp.velocity.length();
+	        const fade = sp.timer / sp.duration;
+	        const stretch = THREE.MathUtils.clamp(speed * 0.18, 0.5, 2.6);
+	        sp.mesh.scale.set(0.55 * fade, stretch * fade, 0.55 * fade);
+	        if (speed > 0.01) {
+	          fx.tempVelDir.copy(sp.velocity).divideScalar(speed);
+	          sp.mesh.quaternion.setFromUnitVectors(tempUp, fx.tempVelDir);
+	        }
 	      }
 
 	      for (const fl of fx.flashes) {
@@ -3231,6 +3161,7 @@
 	          state.holtzmanDeathTimer > 0) {
 	        state.lasgunFiring = false;
 	        state.holtzmanFuse = 0;
+	        sfx.lasgunHum.stop();
 	        return;
 	      }
 
@@ -3240,9 +3171,13 @@
 	        if (state.lasgunCharge <= 0) {
 	          state.lasgunFiring = false;
 	          broadcastWormRadio("Lasgun power depleted.");
+	          sfx.lasgunHum.stop();
 	          return;
 	        }
 	      }
+
+	      // Strain effect — pitch hum darker as charge dies
+	      sfx.lasgunHum.setCharge(state.lasgunCharge);
 
 	      // Screen-space aim: cast from camera to world point, fire from muzzle toward it
 	      const aimPoint = getLasgunAimPoint(tempLasgunAimPoint);
@@ -3367,15 +3302,25 @@
 	    }
 
 	    function updateLasgunCombat(delta) {
-	      if (state.lasgunCooldown > 0) {
-	        state.lasgunCooldown = Math.max(0, state.lasgunCooldown - delta);
-	      }
 	      if (state.lasgunFireTimer > 0) {
 	        state.lasgunFireTimer = Math.max(0, state.lasgunFireTimer - delta);
 	      }
 	      if (state.lasgunBeamTimer > 0) {
 	        state.lasgunBeamTimer = Math.max(0, state.lasgunBeamTimer - delta);
 	      }
+	      if (state.lasgunSpinUpTimer > 0) {
+	        state.lasgunSpinUpTimer = Math.max(0, state.lasgunSpinUpTimer - delta);
+	      }
+	      if (state.lasgunFovPunchTimer > 0) {
+	        state.lasgunFovPunchTimer = Math.max(0, state.lasgunFovPunchTimer - delta);
+	      }
+	      // Spin-up swell — sin half-wave on (1 - timer/duration), peaks mid-curve
+	      const spinUpProgress = state.lasgunSpinUpTimer > 0
+	        ? 1 - (state.lasgunSpinUpTimer / CONFIG.lasgunSpinUpDuration)
+	        : 0;
+	      const spinUpSwell = state.lasgunSpinUpTimer > 0
+	        ? Math.sin(spinUpProgress * Math.PI)
+	        : 0;
 
 	      const beamVisible = state.lasgunBeamTimer > 0;
 	      lasgunBeam.group.visible = beamVisible;
@@ -3384,15 +3329,42 @@
 	        const length = Math.max(0.001, tempProjectileDelta.length());
 	        lasgunBeam.group.position.copy(state.lasgunBeamStart);
 	        lasgunBeam.group.quaternion.setFromUnitVectors(tempUp, tempProjectileDelta.normalize());
+	        // Charge-state tint — strain ramps 0→1 as charge drops from 50%→0%
+	        const strain = THREE.MathUtils.clamp(1 - state.lasgunCharge / 0.5, 0, 1);
+	        const strained = lasgunBeam.strainedColor;
+	        lasgunBeam.core.material.color.copy(lasgunBeam.baseCoreColor).lerp(strained, strain);
+	        lasgunBeam.glow.material.color.copy(lasgunBeam.baseGlowColor).lerp(strained, strain);
+	        lasgunBeam.flash.material.color.copy(lasgunBeam.baseFlashColor).lerp(strained, strain);
+	        lasgunBeam.impactFlash.material.color.copy(lasgunBeam.baseImpactFlashColor).lerp(strained, strain);
+	        lasgunBeam.muzzleLight.color.copy(lasgunBeam.baseMuzzleLightColor).lerp(strained, strain);
+	        lasgunBeam.impactLight.color.copy(lasgunBeam.baseImpactLightColor).lerp(strained, strain);
+	        // Per-frame animation — desync core and glow throb so the beam wobbles organically
+	        const throbCore = 1 + Math.sin(state.elapsed * 30) * 0.08;
+	        const throbGlow = 1 + Math.sin(state.elapsed * 22 + 0.7) * 0.16;
 	        lasgunBeam.core.position.set(0, length * 0.5, 0);
 	        lasgunBeam.glow.position.set(0, length * 0.5, 0);
-	        lasgunBeam.core.scale.set(1, length, 1);
-	        lasgunBeam.glow.scale.set(1, length, 1);
+	        lasgunBeam.core.scale.set(throbCore, length, throbCore);
+	        lasgunBeam.glow.scale.set(throbGlow, length, throbGlow);
 	        lasgunBeam.flash.position.set(0, 0, 0);
+	        // Spin-up swell — punches the muzzle flash size and brightness mid-curve
+	        lasgunBeam.flash.scale.setScalar(1 + spinUpSwell * 1.8);
 	        const alpha = state.lasgunFiring ? 1.0 : (state.lasgunBeamTimer / CONFIG.lasgunBeamDuration);
 	        lasgunBeam.core.material.opacity = 0.2 + (alpha * 0.72);
 	        lasgunBeam.glow.material.opacity = 0.08 + (alpha * 0.24);
-	        lasgunBeam.flash.material.opacity = 0.18 + (alpha * 0.5);
+	        lasgunBeam.flash.material.opacity = 0.18 + (alpha * 0.5) + (spinUpSwell * 0.4);
+	        // Impact-end glow — sits where the beam meets the rock, scale-pulses
+	        const impactPulse = 1 + Math.sin(state.elapsed * 18) * 0.18;
+	        lasgunBeam.impactFlash.position.set(0, length, 0);
+	        lasgunBeam.impactFlash.scale.setScalar(impactPulse);
+	        lasgunBeam.impactFlash.material.opacity = alpha * 0.95;
+	        // Dynamic lights — muzzle pegged at start, impact pegged at far end,
+	        // both with high-frequency intensity flicker for live-energy feel.
+	        // Spin-up boosts the muzzle light briefly so the ignition lights up
+	        // the gun and the player's right side in time with the audio swell.
+	        const flicker = Math.sin(state.elapsed * 47) * 0.12;
+	        lasgunBeam.muzzleLight.intensity = alpha * (8 + flicker * 6) + spinUpSwell * 14;
+	        lasgunBeam.impactLight.position.set(0, length, 0);
+	        lasgunBeam.impactLight.intensity = alpha * (12 + flicker * 8);
 	      }
 
 	      const armPivot = player.userData.rightArmPivot;
@@ -3578,6 +3550,120 @@
       };
     }
 
+	    // Procedural lightsaber-style hum for the lasgun beam — Web Audio synth.
+	    // Two detuned saws + bandpass-filtered noise + LFO vibrato + lowpass.
+	    // Built lazily on first start() so the AudioContext is created after a
+	    // user gesture (browser autoplay policy).
+	    function createLasgunHum() {
+	      let ctx = null;
+	      let nodes = null;
+
+	      function build() {
+	        if (nodes) return nodes;
+	        const AC = window.AudioContext || window.webkitAudioContext;
+	        if (!AC) return null;
+	        ctx = new AC();
+
+	        const master = ctx.createGain();
+	        master.gain.value = 0;
+	        master.connect(ctx.destination);
+
+	        const lowpass = ctx.createBiquadFilter();
+	        lowpass.type = "lowpass";
+	        lowpass.frequency.value = 820;
+	        lowpass.Q.value = 0.7;
+	        lowpass.connect(master);
+
+	        const oscGain = ctx.createGain();
+	        oscGain.gain.value = 0.22;
+	        oscGain.connect(lowpass);
+
+	        const osc1 = ctx.createOscillator();
+	        osc1.type = "sawtooth";
+	        osc1.frequency.value = 95;
+	        osc1.connect(oscGain);
+
+	        const osc2 = ctx.createOscillator();
+	        osc2.type = "sawtooth";
+	        osc2.frequency.value = 142;
+	        osc2.detune.value = 7;
+	        osc2.connect(oscGain);
+
+	        // LFO vibrato — wobble both oscillators ±10 cents at ~5 Hz
+	        const lfo = ctx.createOscillator();
+	        lfo.type = "sine";
+	        lfo.frequency.value = 5.2;
+	        const lfoGain = ctx.createGain();
+	        lfoGain.gain.value = 10;
+	        lfo.connect(lfoGain);
+	        lfoGain.connect(osc1.detune);
+	        lfoGain.connect(osc2.detune);
+
+	        // Bandpass-filtered noise — high-frequency edge crackle
+	        const noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+	        const noiseData = noiseBuf.getChannelData(0);
+	        for (let i = 0; i < noiseData.length; i += 1) noiseData[i] = Math.random() * 2 - 1;
+	        const noise = ctx.createBufferSource();
+	        noise.buffer = noiseBuf;
+	        noise.loop = true;
+
+	        const noiseFilter = ctx.createBiquadFilter();
+	        noiseFilter.type = "bandpass";
+	        noiseFilter.frequency.value = 2400;
+	        noiseFilter.Q.value = 6;
+
+	        const noiseGain = ctx.createGain();
+	        noiseGain.gain.value = 0.06;
+
+	        noise.connect(noiseFilter);
+	        noiseFilter.connect(noiseGain);
+	        noiseGain.connect(master);
+
+	        osc1.start();
+	        osc2.start();
+	        lfo.start();
+	        noise.start();
+
+	        nodes = { master, lowpass, oscGain, osc1, osc2, noiseGain };
+	        return nodes;
+	      }
+
+	      return {
+	        start() {
+	          if (!audioState.enabled) return;
+	          const n = build();
+	          if (!n) return;
+	          if (ctx.state === "suspended") ctx.resume();
+	          const now = ctx.currentTime;
+	          const peak = 0.34 * CONFIG.sfxMasterVolume;
+	          n.master.gain.cancelScheduledValues(now);
+	          n.master.gain.setValueAtTime(n.master.gain.value, now);
+	          n.master.gain.linearRampToValueAtTime(peak, now + 0.05);
+	          // Ignition pitch swell — start ~50% above target and slide down
+	          n.osc1.frequency.cancelScheduledValues(now);
+	          n.osc1.frequency.setValueAtTime(150, now);
+	          n.osc1.frequency.exponentialRampToValueAtTime(95, now + 0.13);
+	          n.osc2.frequency.cancelScheduledValues(now);
+	          n.osc2.frequency.setValueAtTime(220, now);
+	          n.osc2.frequency.exponentialRampToValueAtTime(142, now + 0.13);
+	        },
+	        stop() {
+	          if (!nodes) return;
+	          const now = ctx.currentTime;
+	          nodes.master.gain.cancelScheduledValues(now);
+	          nodes.master.gain.setValueAtTime(nodes.master.gain.value, now);
+	          nodes.master.gain.linearRampToValueAtTime(0, now + 0.09);
+	        },
+	        // Strain effect — darken the filter and tighten oscGain as charge dies
+	        setCharge(pct) {
+	          if (!nodes) return;
+	          const strain = Math.max(0, Math.min(1, 1 - pct / 0.3));
+	          nodes.lowpass.frequency.value = 820 - strain * 440;
+	          nodes.oscGain.gain.value = 0.22 - strain * 0.06;
+	        },
+	      };
+	    }
+
 	    function createSfxBank() {
 	      return {
 	        sandStep: createAudioEffect([
@@ -3599,6 +3685,7 @@
         ], { volume: 0.42, poolSize: 2, playbackRateMin: 0.94, playbackRateMax: 1.06 }),
         maulaFire: createAudioEffect("assets/audio/kenney/weapons/laserSmall_001.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 0.98 }),
         lasgunFire: createAudioEffect("assets/audio/kenney/weapons/laserLarge_002.ogg", { volume: 0.44, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 1.02 }),
+        lasgunHum: createLasgunHum(),
         shieldToggle: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.82, playbackRateMax: 1.04 }),
         shieldHum: createAudioEffect("assets/audio/kenney/shield/forceField_001.ogg", { volume: 0.26, loop: true }),
         thumperPulse: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.3, poolSize: 2, playbackRateMin: 0.68, playbackRateMax: 0.82 }),
@@ -4888,6 +4975,7 @@
 	    function triggerHoltzmanDetonation(pos) {
 		      state.holtzmanFuse = 0;
 	      state.lasgunFiring = false;
+	      sfx.lasgunHum.stop();
 	      state.holtzmanExplosionTimer = 0;
 	      state.holtzmanExplosionDamageDealt = false;
 	      state.holtzmanExplosionPos.copy(pos);
@@ -5083,8 +5171,44 @@
 	      );
 	      group.add(flash);
 
+	      // Impact-end glow — repositioned each frame to (0, length, 0). Brighter
+	      // and slightly larger than the muzzle flash so the impact reads as the
+	      // hot spot of the beam.
+	      const impactFlash = new THREE.Mesh(
+	        new THREE.SphereGeometry(0.32, 10, 10),
+	        new THREE.MeshBasicMaterial({
+	          color: 0xddfaff,
+	          transparent: true,
+	          opacity: 0,
+	          depthWrite: false,
+	          blending: THREE.AdditiveBlending,
+	        })
+	      );
+	      group.add(impactFlash);
+
+	      // Dynamic lights — cyan glow at the muzzle and at the impact point.
+	      // Intensity is driven each frame by updateLasgunCombat from the beam alpha.
+	      const muzzleLight = new THREE.PointLight(0x9cf2ff, 0, 14, 2);
+	      muzzleLight.position.set(0, 0, 0);
+	      group.add(muzzleLight);
+
+	      const impactLight = new THREE.PointLight(0xb6f5ff, 0, 10, 2);
+	      impactLight.position.set(0, 0, 0);
+	      group.add(impactLight);
+
 	      scene.add(group);
-	      return { group, core, glow, flash };
+	      // Base colors stashed for charge-state tinting (lerped toward `strained`
+	      // each frame in updateLasgunCombat as state.lasgunCharge drops).
+	      return {
+	        group, core, glow, flash, impactFlash, muzzleLight, impactLight,
+	        baseCoreColor: new THREE.Color(0x9cf2ff),
+	        baseGlowColor: new THREE.Color(0x5ed3ff),
+	        baseFlashColor: new THREE.Color(0xc9fbff),
+	        baseImpactFlashColor: new THREE.Color(0xddfaff),
+	        baseMuzzleLightColor: new THREE.Color(0x9cf2ff),
+	        baseImpactLightColor: new THREE.Color(0xb6f5ff),
+	        strainedColor: new THREE.Color(0xff4a18),
+	      };
 	    }
 
 	    function createShieldVisual() {
@@ -7528,6 +7652,7 @@
 	      document.addEventListener("pointerup", (event) => {
 	        if (event.button !== 0) return;
 	        state.lasgunFiring = false;
+	        sfx.lasgunHum.stop();
 	      });
 
       ui.overlay.addEventListener("click", () => {
@@ -7881,6 +8006,23 @@
         camera.position.x += Math.sin(state.elapsed * 57) * state.wormShake * 0.38;
         camera.position.y += Math.sin((state.elapsed * 79) + 0.6) * state.wormShake * 0.18;
         camera.position.z += Math.cos((state.elapsed * 63) + 1.4) * state.wormShake * 0.38;
+      }
+
+      // Lasgun firing — sub-pixel camera vibration so the held beam feels weighty
+      if (state.lasgunFiring) {
+        camera.position.x += Math.cos(state.elapsed * 71) * 0.012;
+        camera.position.y += Math.sin(state.elapsed * 87) * 0.015;
+      }
+
+      // Lasgun fire-start — brief FOV punch (sharp rise, fast decay)
+      if (state.lasgunFovPunchTimer > 0) {
+        const progress = state.lasgunFovPunchTimer / CONFIG.lasgunFovPunchDuration;
+        const bump = Math.pow(progress, 1.5) * CONFIG.lasgunFovPunchAmount;
+        camera.fov = CAMERA_BASE_FOV + bump;
+        camera.updateProjectionMatrix();
+      } else if (camera.fov !== CAMERA_BASE_FOV) {
+        camera.fov = CAMERA_BASE_FOV;
+        camera.updateProjectionMatrix();
       }
     }
 
