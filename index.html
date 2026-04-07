@@ -527,10 +527,11 @@
       playerRunMultiplier: 1.65,
       playerCrouchMultiplier: 0.45,
       playerAcceleration: 42,
-      playerAirControl: 0.42,
+      playerAirControl: 0.18,
       playerDrag: 8,
-      playerGravity: 28,
-      playerJumpVelocity: 14.0,
+      playerGravity: 50,
+      playerFallGravityMultiplier: 1.5,
+      playerJumpVelocity: 18.5,
       playerCollisionRadius: 0.8,
       playerCollisionHeight: 4.9,
       playerCrouchCollisionHeight: 3.6,
@@ -1064,7 +1065,11 @@
 	    const lasgunBeam = createLasgunBeam();
     const holtzmanExplosion = createHoltzmanExplosion();
     const lasgunRockFX = createLasgunRockFX();
+    const droppedSpicePickups = [];
+    const npcs = [];
 	    placePlayerOnGround();
+    npcs.push(createNpc(CONFIG.playerStart.x + 30, CONFIG.playerStart.z + 15));
+    npcs.push(createNpc(CONFIG.playerStart.x - 20, CONFIG.playerStart.z + 35));
 	    bindEvents();
     updateDayNight(0);
     refreshHud();
@@ -2377,9 +2382,20 @@
 	        trainingDummy &&
 	        testKnifeHitTarget(trainingDummy.group.position, CONFIG.trainingDummyHitRadius)
 	      ) {
-	        hitTrainingDummy(1, resolveImpactDamage(CONFIG.knifeDamage).damage);
+	        hitTarget(trainingDummy, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
 	        hit = true;
 	      }
+
+      if (!hit) {
+        for (const npc of npcs) {
+          if (npc.dead) continue;
+          if (testKnifeHitTarget(npc.group.position, CONFIG.trainingDummyHitRadius)) {
+            hitTarget(npc, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
+            hit = true;
+            break;
+          }
+        }
+      }
 
 	      if (!hit) {
 	        for (const [, rp] of remotePlayers) {
@@ -2608,7 +2624,7 @@
 
 	    function hitMaulaProjectileTarget(result, headshot = false) {
 	      const intensity = headshot ? 1.45 : result.isCritical ? 1.2 : 1;
-	      hitTrainingDummy(intensity, result.damage);
+	      hitTarget(trainingDummy, intensity, result.damage);
 	      if (!trainingDummy.dead) {
 	        trainingDummy.poisonTimer = CONFIG.maulaPoisonDuration;
 	      }
@@ -2721,6 +2737,32 @@
 	            }
 	          }
 	        }
+
+        if (!hit) {
+          for (const npc of npcs) {
+            if (npc.dead) continue;
+            npc.headDot.getWorldPosition(tempProjectileCenter);
+            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + CONFIG.maulaProjectileRadius)) {
+              const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
+              hitTarget(npc, 1.45, result.damage);
+              broadcastWormRadio(`Maula headshot for ${result.damage}.`);
+              sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
+              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+              hit = true;
+              break;
+            }
+            npc.targetPivot.getWorldPosition(tempProjectileCenter);
+            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + CONFIG.maulaProjectileRadius)) {
+              const result = resolveImpactDamage(CONFIG.maulaImpactDamage);
+              hitTarget(npc, result.isCritical ? 1.2 : 1, result.damage);
+              broadcastWormRadio(`Maula hit for ${result.damage}.`);
+              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: randomRange(0.98, 1.08) });
+              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+              hit = true;
+              break;
+            }
+          }
+        }
 
 	        if (!hit) {
 	          for (const [, rp] of remotePlayers) {
@@ -2865,6 +2907,21 @@
 	        }
 	      }
 
+      for (let ni = 0; ni < npcs.length; ni++) {
+        const npc = npcs[ni];
+        if (npc.dead) continue;
+        npc.headDot.getWorldPosition(tempProjectileCenter);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
+        }
+        npc.targetPivot.getWorldPosition(tempProjectileCenter);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
+        }
+      }
+
 	      if (bestType) {
 	        tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance);
 	        if (bestType === "thumper") {
@@ -2875,9 +2932,14 @@
 	          mp.emit("hitPlayer", { targetId, damage: CONFIG.lasgunImpactDamage });
 	          const rp = remotePlayers.get(targetId);
 	          if (rp) rp.hitFlash = 1.0;
+	        } else if (bestType.startsWith("npc:")) {
+	          const ni = parseInt(bestType.slice(4));
+	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
+	          hitTarget(npcs[ni], bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
+	          broadcastWormRadio(bestHeadshot ? `Lasgun headshot for ${result.damage}.` : `Lasgun hit for ${result.damage}.`);
 	        } else {
 	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
-	          hitTrainingDummy(bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
+	          hitTarget(trainingDummy, bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
 	          const hitLabel = bestHeadshot
 	            ? `Lasgun headshot for ${result.damage}.`
 	            : result.isCritical
@@ -3151,6 +3213,21 @@
 	      }
 
 	
+      for (let ni = 0; ni < npcs.length; ni++) {
+        const npc = npcs[ni];
+        if (npc.dead) continue;
+        npc.headDot.getWorldPosition(tempProjectileCenter);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
+        }
+        npc.targetPivot.getWorldPosition(tempProjectileCenter);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
+        }
+      }
+
 	      const impactPoint = bestType
 	        ? tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance)
 	        : tempLasgunEnd;
@@ -3159,7 +3236,10 @@
 	        setThumperActive(false);
 	        broadcastWormRadio("Lasgun beam sheared through the thumper.");
 	      } else if (bestType === "dummy") {
-	        hitTrainingDummy(0.35, CONFIG.lasgunDPS * delta);
+	        hitTarget(trainingDummy, 0.35, CONFIG.lasgunDPS * delta);
+	      } else if (bestType && bestType.startsWith("npc:")) {
+	        const ni = parseInt(bestType.slice(4));
+	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta);
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
@@ -3804,12 +3884,14 @@
       );
       const headY = feetY + bodyHeight;
       const pos = dummy.group.position;
+      const colliderRadius = dummy.colliderRadius ?? 0.72;
+      const colliderHeight = dummy.colliderHeight ?? 5.5;
       const bottomY = pos.y;
-      const topY = pos.y + 5.5;
+      const topY = pos.y + colliderHeight;
       if (headY <= bottomY + 0.05 || feetY >= topY - 0.05) return;
       const dx = player.position.x - pos.x;
       const dz = player.position.z - pos.z;
-      const minDist = 0.72 + CONFIG.playerCollisionRadius;
+      const minDist = colliderRadius + CONFIG.playerCollisionRadius;
       const distSq = (dx * dx) + (dz * dz);
       if (distSq >= minDist * minDist) return;
       const dist = Math.sqrt(distSq);
@@ -3827,6 +3909,7 @@
     function resolveDummyCollision(velocity) {
       resolveCylinderDummyCollision(trainingDummy, velocity);
       for (const sd of shieldedDummies) resolveCylinderDummyCollision(sd, velocity);
+      for (const npc of npcs) resolveCylinderDummyCollision(npc, velocity);
     }
 
     function hasNearbyRockObstacle(feetY, headY) {
@@ -4831,11 +4914,11 @@
 	        if (trainingDummy && !trainingDummy.dead) {
 	          const dDist = ePos.distanceTo(trainingDummy.group.position);
 	          if (dDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            hitTrainingDummy(2, trainingDummy.health);
+	            hitTarget(trainingDummy, 2, trainingDummy.health);
 	          } else if (dDist < CONFIG.holtzmanExplosionDamageRadius) {
 	            const f = 1 - (dDist - CONFIG.holtzmanExplosionLethalRadius) /
 	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
-	            hitTrainingDummy(1.5, CONFIG.holtzmanExplosionDamage * f);
+	            hitTarget(trainingDummy, 1.5, CONFIG.holtzmanExplosionDamage * f);
 	          }
 	        }
 	        // Shielded dummies
@@ -5800,28 +5883,33 @@
 	        spawnPos: group.position.clone(),
 	        hitFlash: 0,
 	        wobble: 0,
+	        respawnDelay: CONFIG.dummyRespawnDelay,
+	        colliderRadius: 0.72,
+	        colliderHeight: 5.5,
 	        shieldActive: !!opts.hasShield,
 	        shieldSphere,
 	        shieldHitFlash: 0,
 	      };
 	    }
 
-	    function hitTrainingDummy(intensity = 1, damage = 0) {
-	      if (trainingDummy.dead) return;
-	      trainingDummy.hitFlash = Math.max(trainingDummy.hitFlash, intensity);
-	      trainingDummy.wobble = Math.max(trainingDummy.wobble, intensity);
-	      if (damage > 0) {
-	        trainingDummy.health = Math.max(0, trainingDummy.health - damage);
-	        if (trainingDummy.health <= 0) killTrainingDummy();
-	      }
-	    }
+    // ── Universal hit/kill for any damageable target (dummy, NPC, etc.) ──
+    function hitTarget(target, intensity, damage = 0) {
+      if (target.dead) return;
+      target.hitFlash = Math.max(target.hitFlash, intensity);
+      if (target.wobble !== undefined) target.wobble = Math.max(target.wobble, intensity);
+      if (damage > 0) {
+        target.health = Math.max(0, target.health - damage);
+        if (target.health <= 0) killTarget(target);
+      }
+    }
 
-	    function killTrainingDummy() {
-	      trainingDummy.dead = true;
-	      trainingDummy.deadFallTimer = 0;
-	      trainingDummy.respawnTimer = CONFIG.dummyRespawnDelay;
-	      trainingDummy.healthBarGroup.visible = false;
-	    }
+    function killTarget(target) {
+      target.dead = true;
+      target.deadFallTimer = 0;
+      target.respawnTimer = target.respawnDelay;
+      target.healthBarGroup.visible = false;
+      if (target.onKill) target.onKill();
+    }
 
 	    function respawnTrainingDummy() {
 	      trainingDummy.health = CONFIG.dummyMaxHealth;
@@ -6367,11 +6455,17 @@
 	      trainingDummy.frontPlate.scale.setScalar(1 + (trainingDummy.hitFlash * 0.18));
 
 	      // Tick poison damage
+
+
 	      if (trainingDummy.poisonTimer > 0) {
+
+
 	        trainingDummy.poisonTimer = Math.max(0, trainingDummy.poisonTimer - delta);
-	        const poisonDmg = CONFIG.maulaPoisonDamagePerSecond * delta;
-	        trainingDummy.health = Math.max(0, trainingDummy.health - poisonDmg);
-	        if (trainingDummy.health <= 0) killTrainingDummy();
+
+
+	        hitTarget(trainingDummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta);
+
+
 	      }
 
 	      // Billboard health bar to always face camera
@@ -6986,6 +7080,221 @@
       }
     }
 
+    function spawnDroppedSpice(px, pz) {
+      const groundY = samplePlayerGroundHeight(px, pz);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xc4780a,
+        emissive: 0xff8800,
+        emissiveIntensity: 1.0,
+        roughness: 0.3,
+        metalness: 0.2,
+        flatShading: true,
+        transparent: true,
+        opacity: 1.0,
+      });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.5), mat);
+      mesh.position.set(px, groundY + 0.08, pz);
+      scene.add(mesh);
+      droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08 });
+    }
+
+    const DROPPED_SPICE_DECAY = 15;
+    const DROPPED_SPICE_PICKUP_RADIUS_SQ = 3 * 3;
+    const DROPPED_SPICE_SINK_THRESHOLD = 0.4; // start sinking when 40% life remains
+
+    function updateDroppedSpice(delta) {
+      for (let i = droppedSpicePickups.length - 1; i >= 0; i--) {
+        const drop = droppedSpicePickups[i];
+        drop.timer -= delta;
+
+        const t = drop.timer / DROPPED_SPICE_DECAY; // 1→0 over lifetime
+
+        if (t > DROPPED_SPICE_SINK_THRESHOLD) {
+          // Bob gently on surface
+          drop.mesh.position.y = drop.baseY + Math.sin(state.elapsed * 2.5) * 0.06;
+          drop.mat.opacity = 1.0;
+        } else {
+          // Sink into sand and fade
+          const sinkT = t / DROPPED_SPICE_SINK_THRESHOLD; // 1→0 during final 40%
+          drop.mesh.position.y = drop.baseY - (1 - sinkT) * 0.5;
+          drop.mat.opacity = sinkT * sinkT;
+        }
+
+        drop.mat.emissiveIntensity = 0.7 + Math.sin(state.elapsed * 3.5) * 0.4;
+
+        // Pickup — only if player isn't already carrying
+        if (state.spiceCarry === 0 && drop.timer > 0) {
+          const dx = player.position.x - drop.mesh.position.x;
+          const dz = player.position.z - drop.mesh.position.z;
+          if (dx * dx + dz * dz <= DROPPED_SPICE_PICKUP_RADIUS_SQ) {
+            state.spiceCarry = 1;
+            broadcastWormRadio("Spice recovered from fallen warrior.");
+            scene.remove(drop.mesh);
+            drop.mat.dispose();
+            droppedSpicePickups.splice(i, 1);
+            continue;
+          }
+        }
+
+        if (drop.timer <= 0) {
+          scene.remove(drop.mesh);
+          drop.mat.dispose();
+          droppedSpicePickups.splice(i, 1);
+        }
+      }
+    }
+
+    // ── NPC System ─────────────────────────────────────────────────────────────
+    function createNpc(spawnX, spawnZ) {
+      const groundY = samplePlayerGroundHeight(spawnX, spawnZ);
+
+      // Full player model — recolour in-place, add mohawk
+      const root = createPlayer();
+      root.position.set(spawnX, groundY, spawnZ);
+      root.rotation.y = Math.random() * Math.PI * 2;
+      scene.add(root);
+
+      // Map original player hex colours → enemy blue scheme
+      const RECOLOR = new Map([
+        [0x3a2f25, 0x12202e], // undersuit: brown → deep navy
+        [0x7e6a53, 0x1b3a55], // cloth: tan → blue-grey
+        [0x998468, 0x2a5878], // armor: sand → steel blue  (captured for hit flash)
+        [0x5e4a36, 0x0d2236], // trim: dark brown → dark navy
+        [0x9dd7e8, 0x00ffcc], // visor: pale blue → bright teal
+      ]);
+      let armorMat = null;
+      root.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        const mat = child.material;
+        if (!mat.color) return;
+        const hex = mat.color.getHex();
+        if (RECOLOR.has(hex)) {
+          mat.color.setHex(RECOLOR.get(hex));
+          if (hex === 0x998468) armorMat = mat; // steel-blue chest/pack — used for hit flash
+        }
+        // Brighten visor emissive to teal
+        if (hex === 0x9dd7e8 && mat.emissive) mat.emissive.setHex(0x006655);
+      });
+      if (!armorMat) armorMat = new THREE.MeshStandardMaterial({ color: 0x2a5878, flatShading: true });
+
+      // Mohawk — 4 orange cones along the head ridge (front-to-back)
+      const mohawkMat = new THREE.MeshStandardMaterial({
+        color: 0xff5500, emissive: 0xff2200, emissiveIntensity: 0.4, roughness: 0.35, flatShading: true,
+      });
+      for (let i = 0; i < 4; i++) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.42, 5), mohawkMat);
+        spike.castShadow = CONFIG.shadowEnabled;
+        spike.position.set(0, 4.72, -0.22 + i * 0.16);
+        root.add(spike);
+      }
+
+      // Spice cargo always visible + glowing on NPC
+      if (root.userData.spiceCargoMesh) {
+        root.userData.spiceCargoMesh.visible = true;
+        root.userData.spiceGlowMesh.visible = true;
+        root.userData.spiceCargoMat.emissiveIntensity = 0.8;
+        root.userData.spiceGlowMat.opacity = 0.15;
+      }
+
+      // Floating health bar (billboarded each frame)
+      const healthBarGroup = new THREE.Group();
+      healthBarGroup.position.set(0, 5.8, 0);
+      healthBarGroup.add(new THREE.Mesh(
+        new THREE.PlaneGeometry(2.2, 0.32),
+        new THREE.MeshBasicMaterial({ color: 0x1a1a1a, depthWrite: false, transparent: true, opacity: 0.72 })
+      ));
+      const hpFill = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.0, 0.22),
+        new THREE.MeshBasicMaterial({ color: 0x44cc44, depthWrite: false })
+      );
+      hpFill.position.z = 0.01;
+      healthBarGroup.add(hpFill);
+      root.add(healthBarGroup);
+
+      // Hit detection nodes — same positions as training dummy expects
+      const targetPivot = new THREE.Group();
+      targetPivot.position.y = 2.0;
+      root.add(targetPivot);
+
+      const headDot = new THREE.Object3D();
+      headDot.position.y = 4.1;
+      root.add(headDot);
+
+      const spawnPos = new THREE.Vector3(spawnX, groundY, spawnZ);
+      const npc = {
+        root, group: root,
+        targetPivot, headDot,
+        healthBarGroup, hpFill,
+        cargoMat: root.userData.spiceCargoMat,
+        glowMat:  root.userData.spiceGlowMat,
+        armorMat, mohawkMat,
+        health: 100, maxHealth: 100,
+        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0,
+        respawnDelay: 8,
+        colliderRadius: 0.5,
+        colliderHeight: 2.2,
+        spawnPos, phaseOffset: Math.random() * Math.PI * 2,
+      };
+      npc.onKill = () => {
+        spawnDroppedSpice(npc.root.position.x, npc.root.position.z);
+        broadcastWormRadio("Enemy slain — recover the melange!");
+      };
+      return npc;
+    }
+
+    function respawnNpcAtRandom(npc) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 25 + Math.random() * 60;
+      const nx = CONFIG.playerStart.x + Math.cos(angle) * dist;
+      const nz = CONFIG.playerStart.z + Math.sin(angle) * dist;
+      const ny = samplePlayerGroundHeight(nx, nz);
+      npc.root.position.set(nx, ny, nz);
+      npc.root.rotation.set(0, Math.random() * Math.PI * 2, 0);
+      npc.spawnPos.set(nx, ny, nz);
+      npc.health = npc.maxHealth;
+      npc.dead = false;
+      npc.deadFallTimer = 0;
+      npc.respawnTimer = 0;
+      npc.hitFlash = 0;
+      npc.healthBarGroup.visible = true;
+      // Re-show spice cargo on respawn
+      if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
+      if (npc.root.userData.spiceGlowMesh)  npc.root.userData.spiceGlowMesh.visible  = true;
+    }
+
+    function updateNpcs(delta) {
+      for (const npc of npcs) {
+        npc.hitFlash = Math.max(0, npc.hitFlash - delta * 3.0);
+
+        if (npc.dead) {
+          npc.deadFallTimer = Math.min(1, npc.deadFallTimer + delta / 0.6);
+          const fall = npc.deadFallTimer * npc.deadFallTimer;
+          npc.root.rotation.x = fall * (Math.PI * 0.48);
+          npc.root.position.y = npc.spawnPos.y - fall * 1.8;
+          npc.respawnTimer = Math.max(0, npc.respawnTimer - delta);
+          if (npc.respawnTimer <= 0) respawnNpcAtRandom(npc);
+          continue;
+        }
+
+        // Armor hit flash — emissive red burst on damage
+        npc.armorMat.emissive.setRGB(npc.hitFlash * 0.9, npc.hitFlash * 0.05, 0);
+        npc.armorMat.emissiveIntensity = npc.hitFlash * 0.8;
+
+        // Cargo glow pulse
+        const pulse = Math.sin(state.elapsed * 2.8 + npc.phaseOffset) * 0.5 + 0.5;
+        if (npc.cargoMat) npc.cargoMat.emissiveIntensity = 0.5 + pulse * 0.6;
+        if (npc.glowMat)  npc.glowMat.opacity = 0.07 + pulse * 0.12;
+
+        // Health bar billboard + colour update
+        npc.healthBarGroup.quaternion.copy(camera.quaternion);
+        const hp = npc.health / npc.maxHealth;
+        npc.hpFill.scale.x = Math.max(0.001, hp);
+        npc.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
+        npc.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
+      }
+    }
+    // ── End NPC System ──────────────────────────────────────────────────────────
+
     // Single respawn point for ALL deaths — same place as game start
     function respawnAtBase() {
       player.position.x = CONFIG.playerStart.x;
@@ -7160,7 +7469,9 @@
       }
 
       if (!player.userData.grounded) {
-        velocity.y -= CONFIG.playerGravity * delta;
+        // Asymmetric gravity — heavier on the way down for snappier falls
+        const gravMult = velocity.y < 0 ? CONFIG.playerFallGravityMultiplier : 1;
+        velocity.y -= CONFIG.playerGravity * gravMult * delta;
       }
 
       let hasMovementInput = false;
@@ -7204,6 +7515,19 @@
       const horizontalResponse = hasMovementInput
         ? CONFIG.playerAcceleration * (player.userData.grounded ? 1 : CONFIG.playerAirControl)
         : CONFIG.playerDrag;
+
+      // In the air, cap the target horizontal speed to whatever you launched with.
+      // This lets you steer slightly mid-jump but prevents direction-flicks from
+      // re-accelerating to full run speed in a new direction (the "floaty" feel).
+      if (!player.userData.grounded && hasMovementInput) {
+        const currentSpeed = Math.hypot(velocity.x, velocity.z);
+        const targetMag = Math.hypot(targetVelocityX, targetVelocityZ);
+        if (targetMag > currentSpeed && targetMag > 0.0001) {
+          const scale = currentSpeed / targetMag;
+          targetVelocityX *= scale;
+          targetVelocityZ *= scale;
+        }
+      }
 
       velocity.x = THREE.MathUtils.damp(velocity.x, targetVelocityX, horizontalResponse, delta);
       velocity.z = THREE.MathUtils.damp(velocity.z, targetVelocityZ, horizontalResponse, delta);
@@ -7641,6 +7965,8 @@
 	      updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
+      updateDroppedSpice(delta);
+      updateNpcs(delta);
       tickMultiplayer(delta);
       updateCameraRig(delta);
       refreshHud();
@@ -7848,6 +8174,10 @@
 
       socket.on("playerKilled", ({ id, killerId }) => {
         if (id === socket.id) {
+          if (state.spiceCarry > 0) {
+            spawnDroppedSpice(player.position.x, player.position.z);
+          }
+          state.pvpDead = true;
           broadcastWormRadio("You were killed!");
           state.damageFlashTimer = 1.2;
         } else {
@@ -7860,6 +8190,7 @@
         const rp = remotePlayers.get(id);
         if (rp) { rp.data.health = 100; rp.hitFlash = 0; }
         if (id === socket.id) {
+          state.pvpDead = false;
           state.damageFlashTimer = 0;
           respawnAtBase();
         }
