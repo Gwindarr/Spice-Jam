@@ -696,7 +696,7 @@
 	      maulaPoisonDuration: 6,
 	      maulaMaxDarts: 3,
 	      maulaCooldown: 0.72,
-	      maulaFireDuration: 0.24,
+	      maulaFireDuration: 0.42,
 	      maulaReloadDuration: 2.1,
 	      maulaProjectileSpeed: 55,
 	      maulaProjectileGravity: 3.5,
@@ -1106,9 +1106,9 @@
     };
       const tempRockColor = new THREE.Color();
 	    const maulaProjectiles = [];
-    const maulaTrailGeo = new THREE.CylinderGeometry(0.06, 0.008, 1, 5);
+    const maulaTrailGeo = new THREE.CylinderGeometry(0.022, 0.003, 1, 4);
     const maulaTrailMat = new THREE.MeshBasicMaterial({
-      color: 0x00ff44, transparent: true, opacity: 0.82, depthWrite: false,
+      color: 0x8aaa88, transparent: true, opacity: 0.22, depthWrite: false,
     });
     const rockMaterial = createRockMaterial();
     const worm = {
@@ -1143,6 +1143,7 @@
 	    const lasgunBeam = createLasgunBeam();
     const holtzmanExplosion = createHoltzmanExplosion();
     const lasgunRockFX = createLasgunRockFX();
+    const maulaDustFX = createMaulaDustFX();
     const droppedSpicePickups = [];
     const npcs = [];
 	    placePlayerOnGround();
@@ -2548,9 +2549,9 @@
 	      const shaft = new THREE.Mesh(
 	        new THREE.CylinderGeometry(0.04, 0.05, 0.9, 6),
 	        new THREE.MeshStandardMaterial({
-	          color: 0xc8d2ca,
-	          roughness: 0.42,
-	          metalness: 0.08,
+	          color: 0xd8e4dc,
+	          roughness: 0.38,
+	          metalness: 0.18,
 	          flatShading: true,
 	        })
 	      );
@@ -2560,7 +2561,14 @@
 
 	      const tip = new THREE.Mesh(
 	        new THREE.ConeGeometry(0.07, 0.22, 6),
-	        new THREE.MeshLambertMaterial({ color: 0x5c493a, flatShading: true })
+	        new THREE.MeshStandardMaterial({
+	          color: 0x3d6e2a,
+	          emissive: 0x44bb22,
+	          emissiveIntensity: 0.6,
+	          roughness: 0.6,
+	          metalness: 0.0,
+	          flatShading: true,
+	        })
 	      );
 	      tip.position.y = 0.56;
 	      tip.castShadow = CONFIG.shadowEnabled;
@@ -2578,6 +2586,11 @@
 	        group.add(fin);
 	      }
 
+	      // Small point light travels with the dart so it reads clearly in flight
+	      const dartLight = new THREE.PointLight(0x66ff44, 1.8, 4, 2);
+	      group.add(dartLight);
+
+	      group.scale.setScalar(1.6);
 	      return group;
 	    }
 
@@ -2606,6 +2619,7 @@
 	        trailMesh,
 	        velocity: tempMaulaVelocity.clone(),
 	        age: 0,
+	        travelDist: 0,
 	      });
 	    }
 
@@ -2631,6 +2645,14 @@
 
 	      cancelHarvest();
 	      const aimPoint = getLasgunAimPoint(tempLasgunAimPoint);
+
+	      // Rotate body first from camera direction so the muzzle world position
+	      // we read on the next line reflects the new yaw. Without this, strikeDir
+	      // would be computed from a stale (pre-rotation) muzzle and the dart
+	      // would miss aimPoint by the muzzle's orbit offset.
+	      camera.getWorldDirection(tempForward);
+	      player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
+
 	      const muzzle = player.userData.maulaMuzzle;
 	      if (muzzle) {
 	        muzzle.getWorldPosition(tempMaulaOrigin);
@@ -2645,15 +2667,16 @@
 	        tempKnifeDir.normalize();
 	      }
 	      const strikeDir = tempKnifeDir;
-	      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
 	      spawnMaulaProjectile(strikeDir);
 	      state.maulaLoaded = false;
 	      state.maulaCooldown = CONFIG.maulaCooldown;
 	      state.maulaFireTimer = CONFIG.maulaFireDuration;
 	      if (state.maulaReserveAmmo > 0) {
 	        state.maulaReloadTimer = CONFIG.maulaReloadDuration;
+	        sfx.maulaReload.play({});
 	      }
 	      sfx.maulaFire.play({ volumeMultiplier: 0.9 });
+	      sfx.maulaKick.play({});
 	      emitNoiseImpulse(CONFIG.maulaFireNoiseImpulse);
 	      return true;
 	    }
@@ -2740,6 +2763,7 @@
 	        if (state.maulaReloadTimer === 0 && state.maulaReserveAmmo > 0) {
 	          state.maulaLoaded = true;
 	          state.maulaReserveAmmo = Math.max(0, state.maulaReserveAmmo - 1);
+	          sfx.maulaReady.play({});
 	        }
 	      }
 
@@ -2751,20 +2775,36 @@
 
 	      let recoil = 0;
 	      if (state.maulaFireTimer > 0) {
+	        // Hard instant kick at dart spawn, slow settle back to idle.
+	        // Exponent < 1 keeps recoil high longer before it falls away.
 	        const fireProgress = 1 - (state.maulaFireTimer / CONFIG.maulaFireDuration);
-	        recoil = Math.sin(fireProgress * Math.PI);
+	        recoil = Math.pow(1 - fireProgress, 0.7);
 	      }
-	      const reloadBlend = state.maulaReloadTimer > 0
-	        ? 0.25 + (0.18 * Math.sin((1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration)) * Math.PI))
-	        : 0;
 
-	      armPivot.rotation.x = THREE.MathUtils.lerp(0.14, -0.1 - reloadBlend, recoil);
-	      armPivot.rotation.y = THREE.MathUtils.lerp(-0.04, -0.18, recoil);
-	      armPivot.rotation.z = THREE.MathUtils.lerp(0.26 + reloadBlend, 0.08, recoil);
+	      const muzzleLight = player.userData.maulaMuzzleLight;
+	      if (muzzleLight) muzzleLight.intensity = recoil * 7;
 
-	      maulaRoot.rotation.x = THREE.MathUtils.lerp(0.26 + reloadBlend, -0.06, recoil);
-	      maulaRoot.rotation.y = THREE.MathUtils.lerp(-0.02, -0.08, recoil);
-	      maulaRoot.rotation.z = THREE.MathUtils.lerp(0.22, -0.08, recoil);
+	      // 3-phase reload blend: quick swing-out → hold at reload pose → snap back ready.
+	      // Amplitude is large enough to be unmistakable even in peripheral vision.
+	      let reloadBlend = 0;
+	      if (state.maulaReloadTimer > 0) {
+	        const prog = 1 - (state.maulaReloadTimer / CONFIG.maulaReloadDuration);
+	        if (prog < 0.25) {
+	          reloadBlend = prog / 0.25;                       // swing out
+	        } else if (prog < 0.78) {
+	          reloadBlend = 1.0;                               // hold at reload position
+	        } else {
+	          reloadBlend = 1 - ((prog - 0.78) / 0.22);       // snap back to ready
+	        }
+	      }
+
+	      armPivot.rotation.x = THREE.MathUtils.lerp(0.14 - reloadBlend * 0.28, -0.26 - reloadBlend * 0.28, recoil);
+	      armPivot.rotation.y = THREE.MathUtils.lerp(-0.04, -0.28, recoil);
+	      armPivot.rotation.z = THREE.MathUtils.lerp(0.26 + reloadBlend * 0.68, -0.06, recoil);
+
+	      maulaRoot.rotation.x = THREE.MathUtils.lerp(0.26 + reloadBlend * 0.68, -0.22, recoil);
+	      maulaRoot.rotation.y = THREE.MathUtils.lerp(-0.02 - reloadBlend * 0.18, -0.14, recoil);
+	      maulaRoot.rotation.z = THREE.MathUtils.lerp(0.22 + reloadBlend * 0.38, -0.18, recoil);
 	    }
 
 	    function updateMaulaProjectiles(delta) {
@@ -2776,11 +2816,31 @@
 	        tempProjectileEnd.copy(projectile.mesh.position);
 	        projectile.age += delta;
 
+	        // Rock collision — segment cast from start to end. If a rock is in
+	        // the path this frame, shorten the segment to the impact point and
+	        // snap the dart mesh there. Entity checks below run on the shortened
+	        // segment so an enemy *between* the dart and the rock still wins.
+	        let rockHit = null;
+	        if (worldCollisionMesh?.geometry?.boundsTree) {
+	          tempProjectileDelta.subVectors(tempProjectileEnd, tempProjectileStart);
+	          const segLen = tempProjectileDelta.length();
+	          if (segLen > 0.0001) {
+	            tempProjectileDelta.divideScalar(segLen);
+	            rockHit = raycastWorldCollision(tempProjectileStart, tempProjectileDelta, segLen, 0);
+	            if (rockHit) {
+	              tempProjectileEnd.copy(rockHit.point);
+	              projectile.mesh.position.copy(rockHit.point);
+	            }
+	          }
+	        }
+
 	        if (projectile.velocity.lengthSq() > 0.0001) {
 	          const velDir = tempProjectileDelta.copy(projectile.velocity).normalize();
 	          projectile.mesh.quaternion.setFromUnitVectors(tempUp, velDir);
-	          // World-space trail: cylinder from 3.5 units behind to current position
-	          const trailLen = 3.5;
+	          // Accumulate travel distance so the trail ramps up from zero rather
+	          // than spawning at full length and clipping through the muzzle.
+	          projectile.travelDist += projectile.velocity.length() * delta;
+	          const trailLen = Math.min(3.5, projectile.travelDist);
 	          projectile.trailMesh.position.copy(projectile.mesh.position)
 	            .addScaledVector(velDir, -trailLen * 0.5);
 	          projectile.trailMesh.quaternion.setFromUnitVectors(tempUp, velDir);
@@ -2832,7 +2892,8 @@
             if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, npc.headHitRadius + CONFIG.maulaProjectileRadius)) {
               const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
               hitTarget(npc, 1.45, result.damage, { headshot: true });
-              broadcastWormRadio(`Maula headshot for ${result.damage}.`);
+              if (!npc.dead) npc.poisonTimer = CONFIG.maulaPoisonDuration;
+              broadcastWormRadio(`Maula headshot for ${result.damage}. Poison applied.`);
               sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
               emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
               hit = true;
@@ -2842,7 +2903,8 @@
             if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, npc.bodyHitRadius + CONFIG.maulaProjectileRadius)) {
               const result = resolveImpactDamage(CONFIG.maulaImpactDamage);
               hitTarget(npc, result.isCritical ? 1.2 : 1, result.damage);
-              broadcastWormRadio(`Maula hit for ${result.damage}.`);
+              if (!npc.dead) npc.poisonTimer = CONFIG.maulaPoisonDuration;
+              broadcastWormRadio(`Maula hit for ${result.damage}. Poison applied.`);
               sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: randomRange(0.98, 1.08) });
               emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
               hit = true;
@@ -2858,12 +2920,22 @@
 	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.5 + CONFIG.maulaProjectileRadius)) {
 	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
 	              rp.hitFlash = 1.0;
+	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
 	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
 	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
 	              hit = true;
 	              break;
 	            }
 	          }
+	        }
+
+	        // Rock impact wins if no entity claimed the dart this frame
+	        if (!hit && rockHit) {
+	          const hitNormal = getWorldCollisionHitNormal(rockHit, tempSupportNormal);
+	          triggerMaulaDustPuff(rockHit.point, hitNormal);
+	          sfx.maulaImpact.play({ volumeMultiplier: randomRange(0.7, 1.0) });
+	          emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	          hit = true;
 	        }
 
 	        const outOfBounds = !isInsideWorldBounds(projectile.mesh.position.x, projectile.mesh.position.z, 4);
@@ -3037,6 +3109,84 @@
 	      });
 
 	      return { scorches, sparks, flashes, Z_AXIS, tempQ, tempVelDir, _si: 0, _pi: 0, _fi: 0 };
+	    }
+
+	    function createMaulaDustFX() {
+	      const dustGeo = new THREE.SphereGeometry(0.09, 4, 3);
+	      const particles = Array.from({ length: 20 }, () => {
+	        const mat = new THREE.MeshBasicMaterial({
+	          color: 0xc4a96e, transparent: true, opacity: 0, depthWrite: false,
+	        });
+	        const mesh = new THREE.Mesh(dustGeo, mat.clone());
+	        mesh.visible = false;
+	        scene.add(mesh);
+	        return { mesh, mat: mesh.material, velocity: new THREE.Vector3(), timer: 0, duration: 0 };
+	      });
+	      const flashGeo = new THREE.CircleGeometry(0.22, 8);
+	      const flashes = Array.from({ length: 4 }, () => {
+	        const mat = new THREE.MeshBasicMaterial({
+	          color: 0xe8d4a0, transparent: true, opacity: 0,
+	          depthWrite: false, side: THREE.DoubleSide,
+	          polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+	        });
+	        const mesh = new THREE.Mesh(flashGeo, mat);
+	        mesh.visible = false;
+	        scene.add(mesh);
+	        return { mesh, mat, timer: 0 };
+	      });
+	      const Z_AXIS = new THREE.Vector3(0, 0, 1);
+	      const tempQ = new THREE.Quaternion();
+	      return { particles, flashes, Z_AXIS, tempQ, _pi: 0, _fi: 0 };
+	    }
+
+	    function triggerMaulaDustPuff(pos, normal) {
+	      const fx = maulaDustFX;
+	      fx.tempQ.setFromUnitVectors(fx.Z_AXIS, normal);
+	      for (let i = 0; i < 5; i += 1) {
+	        const p = fx.particles[fx._pi % fx.particles.length];
+	        fx._pi++;
+	        p.mesh.position.copy(pos).addScaledVector(normal, 0.05);
+	        p.velocity.set(
+	          normal.x + (Math.random() - 0.5) * 1.6,
+	          normal.y + (Math.random() - 0.5) * 1.6 + 0.5,
+	          normal.z + (Math.random() - 0.5) * 1.6
+	        ).normalize().multiplyScalar(randomRange(1.0, 3.2));
+	        p.duration = randomRange(0.28, 0.5);
+	        p.timer = p.duration;
+	        p.mat.opacity = randomRange(0.5, 0.8);
+	        p.mesh.scale.setScalar(randomRange(0.6, 1.5));
+	        p.mesh.visible = true;
+	      }
+	      const fl = fx.flashes[fx._fi % fx.flashes.length];
+	      fx._fi++;
+	      fl.mesh.position.copy(pos).addScaledVector(normal, 0.03);
+	      fl.mesh.quaternion.copy(fx.tempQ);
+	      fl.mesh.scale.setScalar(0.08);
+	      fl.mat.opacity = 0.88;
+	      fl.timer = 0.1;
+	      fl.mesh.visible = true;
+	    }
+
+	    function updateMaulaDustFX(delta) {
+	      const fx = maulaDustFX;
+	      for (const p of fx.particles) {
+	        if (!p.mesh.visible) continue;
+	        p.timer -= delta;
+	        if (p.timer <= 0) { p.mesh.visible = false; continue; }
+	        p.velocity.y -= 5 * delta;
+	        p.mesh.position.addScaledVector(p.velocity, delta);
+	        const fade = p.timer / p.duration;
+	        p.mat.opacity = fade * 0.68;
+	        p.mesh.scale.setScalar(fade * 0.6 + 0.4);
+	      }
+	      for (const fl of fx.flashes) {
+	        if (!fl.mesh.visible) continue;
+	        fl.timer -= delta;
+	        if (fl.timer <= 0) { fl.mesh.visible = false; continue; }
+	        const t = 1 - (fl.timer / 0.1);
+	        fl.mesh.scale.setScalar(0.08 + t * 0.5);
+	        fl.mat.opacity = 0.88 * (fl.timer / 0.1);
+	      }
 	    }
 
 	    function triggerLasgunRockHit(pos, normal) {
@@ -3683,7 +3833,15 @@
           "assets/audio/kenney/weapons/impactPunch_medium_000.ogg",
           "assets/audio/kenney/weapons/impactPunch_medium_001.ogg",
         ], { volume: 0.42, poolSize: 2, playbackRateMin: 0.94, playbackRateMax: 1.06 }),
-        maulaFire: createAudioEffect("assets/audio/kenney/weapons/laserSmall_001.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 0.98 }),
+        maulaFire: createAudioEffect("assets/audio/kenney/weapons/knifeSlice.ogg", { volume: 0.28, poolSize: 2, playbackRateMin: 2.0, playbackRateMax: 2.3 }),
+        maulaKick: createAudioEffect("assets/audio/kenney/weapons/impactPunch_medium_000.ogg", { volume: 0.38, poolSize: 2, playbackRateMin: 0.52, playbackRateMax: 0.64 }),
+        maulaReload: createAudioEffect("assets/audio/kenney/weapons/drawKnife1.ogg", { volume: 0.32, poolSize: 1, playbackRateMin: 1.3, playbackRateMax: 1.5 }),
+        maulaReady: createAudioEffect("assets/audio/kenney/weapons/footstep_concrete_000.ogg", { volume: 0.3, poolSize: 1, playbackRateMin: 1.7, playbackRateMax: 1.9 }),
+        maulaImpact: createAudioEffect([
+          "assets/audio/kenney/weapons/footstep_concrete_000.ogg",
+          "assets/audio/kenney/weapons/footstep_concrete_001.ogg",
+          "assets/audio/kenney/weapons/footstep_concrete_002.ogg",
+        ], { volume: 0.28, poolSize: 3, playbackRateMin: 1.4, playbackRateMax: 1.8 }),
         lasgunFire: createAudioEffect("assets/audio/kenney/weapons/laserLarge_002.ogg", { volume: 0.44, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 1.02 }),
         lasgunHum: createLasgunHum(),
         shieldToggle: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.82, playbackRateMax: 1.04 }),
@@ -4516,6 +4674,7 @@
 	      root.userData.knifeRoot = knifeRoot;
 	      root.userData.maulaRoot = maulaRoot;
 	      root.userData.maulaMuzzle = maulaRoot.userData.muzzle;
+      root.userData.maulaMuzzleLight = maulaRoot.userData.muzzleLight;
 	      root.userData.lasgunRoot = lasgunRoot;
 	      root.userData.lasgunMuzzle = lasgunRoot.userData.muzzle;
 	      root.userData.shieldVisual = shieldVisual;
@@ -4777,8 +4936,11 @@
 
 	      const muzzle = new THREE.Object3D();
 	      muzzle.position.set(0.04, 2.24, 0);
+	      const muzzleLight = new THREE.PointLight(0xaaff44, 0, 5, 2);
+	      muzzle.add(muzzleLight);
 	      group.add(muzzle);
 	      group.userData.muzzle = muzzle;
+	      group.userData.muzzleLight = muzzleLight;
 
 	      group.scale.setScalar(0.92);
 	      return group;
@@ -7490,7 +7652,7 @@
         glowMat:  root.userData.spiceGlowMat,
         armorMat, mohawkMat, flashMats,
         health: 100, maxHealth: 100,
-        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0, wobble: 0,
+        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0, wobble: 0, poisonTimer: 0,
         respawnDelay: 8,
         colliderRadius: 0.5,
         colliderHeight: 2.2,
@@ -7532,6 +7694,7 @@
       npc.deadFallTimer = 0;
       npc.respawnTimer = 0;
       npc.hitFlash = 0;
+      npc.poisonTimer = 0;
       // Re-show spice cargo on respawn
       if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
       if (npc.root.userData.spiceGlowMesh)  npc.root.userData.spiceGlowMesh.visible  = true;
@@ -7552,11 +7715,23 @@
           continue;
         }
 
-        // Whole-body hit flash — bright red emissive across every body material
+        // Poison damage tick
+        if (npc.poisonTimer > 0) {
+          npc.poisonTimer = Math.max(0, npc.poisonTimer - delta);
+          hitTarget(npc, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { silent: true });
+        }
+
+        // Whole-body hit flash + poison green tint
         const flash = npc.hitFlash;
+        const poisonStrength = THREE.MathUtils.clamp(npc.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
+        const poisonPulse = poisonStrength > 0 ? (0.5 + Math.sin(state.elapsed * 6) * 0.5) * poisonStrength : 0;
         for (const mat of npc.flashMats) {
-          mat.emissive.setRGB(flash, flash * 0.1, 0);
-          mat.emissiveIntensity = flash * 1.6;
+          mat.emissive.setRGB(
+            flash + poisonStrength * 0.05,
+            flash * 0.1 + poisonPulse * 0.5,
+            poisonPulse * 0.12
+          );
+          mat.emissiveIntensity = flash * 1.6 + poisonPulse * 0.5;
         }
 
         // Hit shake — high-frequency Z-axis wobble that decays out
@@ -8151,7 +8326,13 @@
 	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
 	      if (state.equippedWeapon === "maula") {
 	        const maulaTotal = state.maulaReserveAmmo + (state.maulaLoaded ? 1 : 0);
-	        ui.hudWeapon.textContent = `Maula ${maulaTotal}/${CONFIG.maulaMaxDarts}`;
+	        if (state.maulaReloadTimer > 0) {
+	          ui.hudWeapon.textContent = `Maula — loading...`;
+	        } else if (maulaTotal === 0) {
+	          ui.hudWeapon.textContent = `Maula — empty`;
+	        } else {
+	          ui.hudWeapon.textContent = `Maula ${maulaTotal}/${CONFIG.maulaMaxDarts}`;
+	        }
 	      } else if (state.equippedWeapon === "lasgun") {
 	        ui.hudWeapon.textContent = "Lasgun";
 	      } else {
@@ -8268,6 +8449,7 @@
 	      for (const sd of shieldedDummies) updateShieldedDummy(delta, sd);
 	      updateLasgunBeam(delta);
 	      updateLasgunRockFX(delta);
+      updateMaulaDustFX(delta);
 	      updateHoltzmanExplosion(delta);
 	      updateHoltzmanDeath(delta);
 	      updateWormActor(delta);
@@ -8328,7 +8510,7 @@
       mesh.position.set(data.x, data.y, data.z);
       mesh.rotation.y = data.rotY ?? 0;
       scene.add(mesh);
-      remotePlayers.set(data.id, { mesh, data: { ...data }, hitFlash: 0 });
+      remotePlayers.set(data.id, { mesh, data: { ...data }, hitFlash: 0, poisonTimer: 0 });
     }
 
     function removeRemotePlayer(id) {
@@ -8348,12 +8530,19 @@
         const diff = ((targetRotY - rp.mesh.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         rp.mesh.rotation.y += diff * (1 - Math.exp(-14 * delta));
         updateRemotePlayerState(rp);
-        // Hit flash
-        if (rp.hitFlash > 0) {
+        // Poison damage tick — emit server damage and show green glow
+        if (rp.poisonTimer > 0) {
+          rp.poisonTimer = Math.max(0, rp.poisonTimer - delta);
+          mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaPoisonDamagePerSecond * delta });
+        }
+        const poisonStrength = THREE.MathUtils.clamp(rp.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
+        const poisonPulse = poisonStrength > 0 ? (0.5 + Math.sin(state.elapsed * 6) * 0.5) * poisonStrength : 0;
+        if (rp.hitFlash > 0 || poisonPulse > 0) {
           rp.hitFlash = Math.max(0, rp.hitFlash - delta * 3.5);
           rp.mesh.traverse((obj) => {
             if (obj.isMesh && obj.material && obj.material.emissive) {
-              obj.material.emissiveIntensity = rp.hitFlash * 1.2;
+              obj.material.emissive.setRGB(rp.hitFlash + poisonStrength * 0.05, rp.hitFlash * 0.1 + poisonPulse * 0.5, poisonPulse * 0.12);
+              obj.material.emissiveIntensity = rp.hitFlash * 1.2 + poisonPulse * 0.5;
             }
           });
         }
