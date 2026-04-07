@@ -377,6 +377,74 @@
       height: 14px;
     }
 
+    /* Hit marker — bracket-corners that pulse red around the crosshair on confirmed hit */
+    #hitMarker {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 30px;
+      height: 30px;
+      margin-left: -15px;
+      margin-top: -15px;
+      z-index: 10;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.05s linear;
+    }
+    #hitMarker::before, #hitMarker::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 22px;
+      height: 22px;
+      margin-left: -11px;
+      margin-top: -11px;
+      border: 3px solid rgba(255, 80, 80, 0.95);
+    }
+    #hitMarker::before {
+      transform: rotate(45deg);
+      border-right: none;
+      border-bottom: none;
+    }
+    #hitMarker::after {
+      transform: rotate(45deg);
+      border-left: none;
+      border-top: none;
+    }
+
+    /* Floating damage numbers */
+    #damageNumbers {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 11;
+    }
+    .damage-number {
+      position: absolute;
+      color: #ffcc44;
+      font-family: "Inter", system-ui, sans-serif;
+      font-weight: 800;
+      font-size: 26px;
+      text-shadow: 0 0 6px rgba(0,0,0,0.95), 1px 1px 0 #000, -1px 1px 0 #000, 1px -1px 0 #000, -1px -1px 0 #000;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      animation: damageFloat 0.95s ease-out forwards;
+      will-change: transform, opacity;
+    }
+    .damage-number.crit {
+      color: #ff5522;
+      font-size: 34px;
+    }
+    @keyframes damageFloat {
+      0%   { opacity: 0; transform: translate(-50%, 0%) scale(0.6); }
+      15%  { opacity: 1; transform: translate(-50%, -120%) scale(1.25); }
+      100% { opacity: 0; transform: translate(-50%, -340%) scale(0.95); }
+    }
+
     @media (max-width: 640px) {
       #playerHud {
         left: 10px;
@@ -459,6 +527,8 @@
 	  </div>
 
   <div id="reticle"></div>
+  <div id="hitMarker"></div>
+  <div id="damageNumbers"></div>
 
   <div id="overlay">
     <div class="panel">
@@ -628,10 +698,10 @@
 	      maulaCooldown: 0.72,
 	      maulaFireDuration: 0.24,
 	      maulaReloadDuration: 2.1,
-	      maulaProjectileSpeed: 36,
-	      maulaProjectileGravity: 15.5,
-	      maulaProjectileLift: 4.2,
-	      maulaProjectileLifetime: 1.3,
+	      maulaProjectileSpeed: 55,
+	      maulaProjectileGravity: 3.5,
+	      maulaProjectileLift: 0,
+	      maulaProjectileLifetime: 1.6,
 	      maulaProjectileRadius: 0.18,
 	      maulaFireNoiseImpulse: 0.16,
 	      maulaImpactNoiseImpulse: 0.22,
@@ -785,6 +855,8 @@
       deathFlash: document.getElementById("deathFlash"),
       deathText: document.getElementById("deathText"),
       deathHint: document.getElementById("deathHint"),
+      hitMarker: document.getElementById("hitMarker"),
+      damageNumbers: document.getElementById("damageNumbers"),
       hudDay: document.getElementById("hudDay"),
       hudPhase: document.getElementById("hudPhase"),
       hudSpeed: document.getElementById("hudSpeed"),
@@ -859,6 +931,7 @@
 
     const skyDome = createSkyDome();
     const stars = createStarField();
+
     const player = createPlayer();
     const audioState = {
       enabled: false,
@@ -955,6 +1028,7 @@
       depositKeyConsumed: false,
       depositToastTimer: 0,
       damageFlashTimer: 0,
+      hitMarkerTimer: 0,
     };
 
     const keyState = {
@@ -2300,11 +2374,20 @@
 
 	    function testKnifeHitTarget(targetPosition, targetRadius = 0) {
 	      const strikeDir = getKnifeStrikeDirection(tempKnifeDir);
-      const originX = player.position.x + (strikeDir.x * 0.9);
-      const originZ = player.position.z + (strikeDir.z * 0.9);
-      tempKnifeOffset.set(targetPosition.x - originX, 0, targetPosition.z - originZ);
+      // Measure from player center (not a forward-offset origin) so a touching
+      // target can never overshoot into the negative-direction zone.
+      tempKnifeOffset.set(
+        targetPosition.x - player.position.x, 0,
+        targetPosition.z - player.position.z
+      );
       const distance = tempKnifeOffset.length();
-      if (distance > CONFIG.knifeRange + targetRadius || distance < 0.001) return false;
+      if (distance > CONFIG.knifeRange + targetRadius) return false;
+
+      // Hug-distance auto-hit — if you're touching the target collider, the
+      // knife always lands regardless of facing. No more "swung at empty air"
+      // when standing right next to an enemy.
+      const hugDist = CONFIG.playerCollisionRadius + targetRadius + 0.4;
+      if (distance < hugDist) return true;
 
       tempKnifeOffset.divideScalar(distance);
 	      const arcThreshold = Math.cos(THREE.MathUtils.degToRad(CONFIG.knifeArcDegrees * 0.5));
@@ -2389,7 +2472,7 @@
       if (!hit) {
         for (const npc of npcs) {
           if (npc.dead) continue;
-          if (testKnifeHitTarget(npc.group.position, CONFIG.trainingDummyHitRadius)) {
+          if (testKnifeHitTarget(npc.group.position, npc.bodyHitRadius)) {
             hitTarget(npc, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
             hit = true;
             break;
@@ -2742,9 +2825,9 @@
           for (const npc of npcs) {
             if (npc.dead) continue;
             npc.headDot.getWorldPosition(tempProjectileCenter);
-            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + CONFIG.maulaProjectileRadius)) {
+            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, npc.headHitRadius + CONFIG.maulaProjectileRadius)) {
               const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
-              hitTarget(npc, 1.45, result.damage);
+              hitTarget(npc, 1.45, result.damage, { headshot: true });
               broadcastWormRadio(`Maula headshot for ${result.damage}.`);
               sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
               emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
@@ -2752,7 +2835,7 @@
               break;
             }
             npc.targetPivot.getWorldPosition(tempProjectileCenter);
-            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + CONFIG.maulaProjectileRadius)) {
+            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, npc.bodyHitRadius + CONFIG.maulaProjectileRadius)) {
               const result = resolveImpactDamage(CONFIG.maulaImpactDamage);
               hitTarget(npc, result.isCritical ? 1.2 : 1, result.damage);
               broadcastWormRadio(`Maula hit for ${result.damage}.`);
@@ -2911,12 +2994,12 @@
         const npc = npcs[ni];
         if (npc.dead) continue;
         npc.headDot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.headHitRadius + 0.08)) {
           const d = origin.distanceTo(tempProjectileCenter);
           if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
         }
         npc.targetPivot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.bodyHitRadius + 0.1)) {
           const d = origin.distanceTo(tempProjectileCenter);
           if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
         }
@@ -2935,7 +3018,7 @@
 	        } else if (bestType.startsWith("npc:")) {
 	          const ni = parseInt(bestType.slice(4));
 	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
-	          hitTarget(npcs[ni], bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage);
+	          hitTarget(npcs[ni], bestHeadshot ? 1.6 : result.isCritical ? 1.35 : 1.1, result.damage, { headshot: bestHeadshot });
 	          broadcastWormRadio(bestHeadshot ? `Lasgun headshot for ${result.damage}.` : `Lasgun hit for ${result.damage}.`);
 	        } else {
 	          const result = resolveImpactDamage(CONFIG.lasgunImpactDamage, { headshot: bestHeadshot });
@@ -3166,7 +3249,8 @@
 	      const origin = getLasgunOrigin(tempMaulaOrigin);
 	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
 	      // Rotate player body to face horizontal aim direction
-	      player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
+	      camera.getWorldDirection(tempForward);
+        player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
 
 	      let maxDistance = origin.distanceTo(aimPoint);
         const rockHit = raycastWorldCollision(origin, strikeDir, maxDistance, 0.35);
@@ -3217,12 +3301,12 @@
         const npc = npcs[ni];
         if (npc.dead) continue;
         npc.headDot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.headHitRadius + 0.08)) {
           const d = origin.distanceTo(tempProjectileCenter);
           if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
         }
         npc.targetPivot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.bodyHitRadius + 0.1)) {
           const d = origin.distanceTo(tempProjectileCenter);
           if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
         }
@@ -3236,10 +3320,10 @@
 	        setThumperActive(false);
 	        broadcastWormRadio("Lasgun beam sheared through the thumper.");
 	      } else if (bestType === "dummy") {
-	        hitTarget(trainingDummy, 0.35, CONFIG.lasgunDPS * delta);
+	        hitTarget(trainingDummy, 0.35, CONFIG.lasgunDPS * delta, { continuous: true });
 	      } else if (bestType && bestType.startsWith("npc:")) {
 	        const ni = parseInt(bestType.slice(4));
-	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta);
+	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
@@ -3875,7 +3959,14 @@
     }
 
     function resolveCylinderDummyCollision(dummy, velocity) {
-      if (!dummy || dummy.dead) return;
+      if (!dummy) return;
+      // Fade collision out during the death-fall animation instead of vanishing
+      // instantly. fade=1 → full collision, fade=0 → pass-through.
+      let fade = 1;
+      if (dummy.dead) {
+        fade = 1 - (dummy.deadFallTimer ?? 0);
+        if (fade <= 0.01) return;
+      }
       const feetY = player.position.y;
       const bodyHeight = THREE.MathUtils.lerp(
         CONFIG.playerCollisionHeight,
@@ -3884,8 +3975,8 @@
       );
       const headY = feetY + bodyHeight;
       const pos = dummy.group.position;
-      const colliderRadius = dummy.colliderRadius ?? 0.72;
-      const colliderHeight = dummy.colliderHeight ?? 5.5;
+      const colliderRadius = (dummy.colliderRadius ?? 0.72) * fade;
+      const colliderHeight = (dummy.colliderHeight ?? 5.5) * fade;
       const bottomY = pos.y;
       const topY = pos.y + colliderHeight;
       if (headY <= bottomY + 0.05 || feetY >= topY - 0.05) return;
@@ -4287,41 +4378,32 @@
 	      leftArmPivot.rotation.set(0.04, -0.1, -0.28);
 	      root.add(leftArmPivot);
 
-	      const leftUpperArm = makeMesh(
-	        new THREE.CapsuleGeometry(0.17, 0.76, 4, 8),
+	      const leftArm = makeMesh(
+	        new THREE.CapsuleGeometry(0.17, 1.86, 4, 8),
 	        clothMaterial
 	      );
-	      leftUpperArm.position.set(0.06, -0.42, 0.02);
-	      leftArmPivot.add(leftUpperArm);
-
-	      const leftForearm = makeMesh(
-	        new THREE.CapsuleGeometry(0.14, 0.72, 4, 8),
-	        underSuitMaterial
-	      );
-	      leftForearm.position.set(0.1, -1.14, 0.12);
-	      leftForearm.rotation.z = -0.26;
-	      leftArmPivot.add(leftForearm);
+	      leftArm.position.set(0, -1.10, 0);
+	      leftArmPivot.add(leftArm);
 
 	      const rightArmPivot = new THREE.Group();
 	      rightArmPivot.position.set(-0.9, 3.36, 0.32);
 	      rightArmPivot.rotation.set(0.24, 0.12, 0.58);
 	      root.add(rightArmPivot);
 
-	      const upperArm = makeMesh(
-	        new THREE.CapsuleGeometry(0.18, 0.74, 4, 8),
+	      // Right arm reaches from shoulder pivot toward the weapon hand position.
+	      // Using the knife position as the canonical hand point — the maula and
+	      // lasgun sit slightly closer in but share the same general direction.
+	      const rightHandTarget = new THREE.Vector3(-0.9, -1.08, 0.46);
+	      const rightArmRadius = 0.18;
+	      const rightArmLen = rightHandTarget.length();
+	      const rightArm = makeMesh(
+	        new THREE.CapsuleGeometry(rightArmRadius, Math.max(0.05, rightArmLen - 2 * rightArmRadius), 4, 8),
 	        clothMaterial
 	      );
-	      upperArm.position.set(-0.26, -0.34, 0.06);
-	      upperArm.rotation.z = 0.48;
-	      rightArmPivot.add(upperArm);
-
-	      const forearm = makeMesh(
-	        new THREE.CapsuleGeometry(0.15, 0.82, 4, 8),
-	        underSuitMaterial
-	      );
-	      forearm.position.set(-0.66, -0.84, 0.24);
-	      forearm.rotation.set(-0.18, 0.08, 0.96);
-	      rightArmPivot.add(forearm);
+	      const rightArmDir = rightHandTarget.clone().normalize();
+	      rightArm.position.copy(rightArmDir).multiplyScalar(rightArmLen / 2);
+	      rightArm.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), rightArmDir);
+	      rightArmPivot.add(rightArm);
 
 	      const knifeRoot = createCrysknife();
 	      knifeRoot.position.set(-0.9, -1.08, 0.46);
@@ -4615,15 +4697,15 @@
 	      return group;
 	    }
 
-	    function createLasgun() {
-	      const group = new THREE.Group();
-	      const setShadow = (mesh) => {
-	        mesh.castShadow = CONFIG.shadowEnabled;
-	        mesh.receiveShadow = CONFIG.shadowEnabled;
-	        return mesh;
-	      };
+    function createLasgun() {
+      const group = new THREE.Group();
+      const setShadow = (mesh) => {
+        mesh.castShadow = CONFIG.shadowEnabled;
+        mesh.receiveShadow = CONFIG.shadowEnabled;
+        return mesh;
+      };
 
-	      const stockMaterial = new THREE.MeshLambertMaterial({ color: 0x4f3f30, flatShading: true });
+      const stockMaterial = new THREE.MeshLambertMaterial({ color: 0x4f3f30, flatShading: true });
 	      const metalMaterial = new THREE.MeshStandardMaterial({
 	        color: 0x8f8067,
 	        roughness: 0.48,
@@ -5845,6 +5927,7 @@
 	      hpFill.position.z = 0.01;
 	      healthBarGroup.add(hpFill);
 	      group.add(healthBarGroup);
+	      healthBarGroup.visible = false; // replaced by HUD hit-marker + damage numbers
 
 	      let shieldSphere = null;
 	      if (opts.hasShield) {
@@ -5893,13 +5976,66 @@
 	    }
 
     // ── Universal hit/kill for any damageable target (dummy, NPC, etc.) ──
-    function hitTarget(target, intensity, damage = 0) {
+    // opts.silent      — no hit marker, no damage number (e.g. poison ticks)
+    // opts.headshot    — bigger red damage number
+    // opts.continuous  — damage applied this frame, but the visual number is
+    //                    accumulated and only emitted every ~0.2s so the screen
+    //                    isn't spammed by the per-frame DPS of beam weapons.
+    //                    Damage itself is still applied every frame.
+    function hitTarget(target, intensity, damage = 0, opts = {}) {
       if (target.dead) return;
       target.hitFlash = Math.max(target.hitFlash, intensity);
       if (target.wobble !== undefined) target.wobble = Math.max(target.wobble, intensity);
       if (damage > 0) {
         target.health = Math.max(0, target.health - damage);
+        if (opts.silent !== true) {
+          if (opts.continuous === true) {
+            queueContinuousDamageNumber(target, damage, opts.headshot === true);
+          } else {
+            triggerHitFeedback(target, damage, opts.headshot === true);
+          }
+        }
         if (target.health <= 0) killTarget(target);
+      }
+    }
+
+    // ── Hit feedback: crosshair pulse + floating damage number at hit world pos ──
+    const tempHitProject = new THREE.Vector3();
+    function triggerHitFeedback(target, damage, headshot) {
+      state.hitMarkerTimer = 0.18;
+      const rounded = Math.round(damage);
+      if (rounded < 1) return; // never show "0"
+
+      const pos = target.group ? target.group.position : target.position;
+      if (!pos) return;
+      tempHitProject.set(pos.x, pos.y + 3.2, pos.z);
+      tempHitProject.project(camera);
+      if (tempHitProject.z > 1 || tempHitProject.z < -1) return;
+      const sx = (tempHitProject.x * 0.5 + 0.5) * window.innerWidth;
+      const sy = (-tempHitProject.y * 0.5 + 0.5) * window.innerHeight;
+
+      const el = document.createElement("div");
+      el.className = "damage-number" + (headshot ? " crit" : "");
+      el.textContent = String(rounded);
+      el.style.left = (sx + (Math.random() - 0.5) * 24) + "px";
+      el.style.top  = sy + "px";
+      ui.damageNumbers.appendChild(el);
+      setTimeout(() => el.remove(), 1000);
+    }
+
+    // For continuous-damage weapons (lasgun beam): damage was already applied
+    // by hitTarget; here we just bucket the visual number so we emit one per
+    // ~0.2s with the accumulated total. Hit marker still pulses every frame
+    // so beam contact is unmistakable.
+    function queueContinuousDamageNumber(target, damage, headshot) {
+      state.hitMarkerTimer = 0.18;
+      target._dpsAccum = (target._dpsAccum || 0) + damage;
+      target._dpsLastEmit = target._dpsLastEmit || 0;
+      const now = state.elapsed;
+      if (target._dpsAccum >= 1 && now - target._dpsLastEmit >= 0.2) {
+        triggerHitFeedback(target, target._dpsAccum, headshot);
+        target._dpsAccum = 0;
+        target._dpsLastEmit = now;
       }
     }
 
@@ -5920,7 +6056,6 @@
 	      trainingDummy.wobble = 0;
 	      trainingDummy.group.position.copy(trainingDummy.spawnPos);
 	      trainingDummy.group.rotation.set(0, 0, 0);
-	      trainingDummy.healthBarGroup.visible = true;
 	    }
 
 	    function updateShieldedDummy(delta, sd) {
@@ -5943,7 +6078,6 @@
 	          sd.wobble = 0;
 	          sd.group.position.copy(sd.spawnPos);
 	          sd.group.rotation.set(0, 0, 0);
-	          sd.healthBarGroup.visible = true;
 	          if (sd.shieldSphere) sd.shieldSphere.visible = true;
 	        }
 	        return;
@@ -6463,7 +6597,7 @@
 	        trainingDummy.poisonTimer = Math.max(0, trainingDummy.poisonTimer - delta);
 
 
-	        hitTarget(trainingDummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta);
+	        hitTarget(trainingDummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { silent: true });
 
 
 	      }
@@ -7163,6 +7297,7 @@
         [0x9dd7e8, 0x00ffcc], // visor: pale blue → bright teal
       ]);
       let armorMat = null;
+      const flashMats = []; // every body material that should flash red on hit
       root.traverse((child) => {
         if (!child.isMesh || !child.material) return;
         const mat = child.material;
@@ -7170,7 +7305,8 @@
         const hex = mat.color.getHex();
         if (RECOLOR.has(hex)) {
           mat.color.setHex(RECOLOR.get(hex));
-          if (hex === 0x998468) armorMat = mat; // steel-blue chest/pack — used for hit flash
+          flashMats.push(mat);
+          if (hex === 0x998468) armorMat = mat; // steel-blue chest/pack
         }
         // Brighten visor emissive to teal
         if (hex === 0x9dd7e8 && mat.emissive) mat.emissive.setHex(0x006655);
@@ -7198,7 +7334,7 @@
 
       // Floating health bar (billboarded each frame)
       const healthBarGroup = new THREE.Group();
-      healthBarGroup.position.set(0, 5.8, 0);
+      healthBarGroup.position.set(0, 4.7, 0);
       healthBarGroup.add(new THREE.Mesh(
         new THREE.PlaneGeometry(2.2, 0.32),
         new THREE.MeshBasicMaterial({ color: 0x1a1a1a, depthWrite: false, transparent: true, opacity: 0.72 })
@@ -7210,6 +7346,7 @@
       hpFill.position.z = 0.01;
       healthBarGroup.add(hpFill);
       root.add(healthBarGroup);
+      healthBarGroup.visible = false; // replaced by HUD hit-marker + damage numbers
 
       // Hit detection nodes — same positions as training dummy expects
       const targetPivot = new THREE.Group();
@@ -7227,12 +7364,14 @@
         healthBarGroup, hpFill,
         cargoMat: root.userData.spiceCargoMat,
         glowMat:  root.userData.spiceGlowMat,
-        armorMat, mohawkMat,
+        armorMat, mohawkMat, flashMats,
         health: 100, maxHealth: 100,
-        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0,
+        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0, wobble: 0,
         respawnDelay: 8,
         colliderRadius: 0.5,
         colliderHeight: 2.2,
+        bodyHitRadius: 1.4,
+        headHitRadius: 0.7,
         spawnPos, phaseOffset: Math.random() * Math.PI * 2,
       };
       npc.onKill = () => {
@@ -7243,11 +7382,24 @@
     }
 
     function respawnNpcAtRandom(npc) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 25 + Math.random() * 60;
-      const nx = CONFIG.playerStart.x + Math.cos(angle) * dist;
-      const nz = CONFIG.playerStart.z + Math.sin(angle) * dist;
-      const ny = samplePlayerGroundHeight(nx, nz);
+      // Try up to 12 candidate spots; reject any that intersect rock geometry
+      const radius = npc.colliderRadius ?? 0.5;
+      const height = npc.colliderHeight ?? 2.2;
+      let nx = 0, nz = 0, ny = 0;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 25 + Math.random() * 60;
+        nx = CONFIG.playerStart.x + Math.cos(angle) * dist;
+        nz = CONFIG.playerStart.z + Math.sin(angle) * dist;
+        ny = samplePlayerGroundHeight(nx, nz);
+
+        // Build a test capsule at this candidate ground position
+        tempPlayerCapsule.radius = radius;
+        tempPlayerCapsule.start.set(nx, ny + radius, nz);
+        tempPlayerCapsule.end.set(nx, ny + Math.max(radius, height - radius), nz);
+        if (!intersectWorldCapsule(tempPlayerCapsule, tempCapsuleHit)) break;
+      }
+
       npc.root.position.set(nx, ny, nz);
       npc.root.rotation.set(0, Math.random() * Math.PI * 2, 0);
       npc.spawnPos.set(nx, ny, nz);
@@ -7256,7 +7408,6 @@
       npc.deadFallTimer = 0;
       npc.respawnTimer = 0;
       npc.hitFlash = 0;
-      npc.healthBarGroup.visible = true;
       // Re-show spice cargo on respawn
       if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
       if (npc.root.userData.spiceGlowMesh)  npc.root.userData.spiceGlowMesh.visible  = true;
@@ -7264,7 +7415,8 @@
 
     function updateNpcs(delta) {
       for (const npc of npcs) {
-        npc.hitFlash = Math.max(0, npc.hitFlash - delta * 3.0);
+        npc.hitFlash = Math.max(0, npc.hitFlash - delta * 1.8);
+        npc.wobble = Math.max(0, npc.wobble - delta * 2.4);
 
         if (npc.dead) {
           npc.deadFallTimer = Math.min(1, npc.deadFallTimer + delta / 0.6);
@@ -7276,9 +7428,15 @@
           continue;
         }
 
-        // Armor hit flash — emissive red burst on damage
-        npc.armorMat.emissive.setRGB(npc.hitFlash * 0.9, npc.hitFlash * 0.05, 0);
-        npc.armorMat.emissiveIntensity = npc.hitFlash * 0.8;
+        // Whole-body hit flash — bright red emissive across every body material
+        const flash = npc.hitFlash;
+        for (const mat of npc.flashMats) {
+          mat.emissive.setRGB(flash, flash * 0.1, 0);
+          mat.emissiveIntensity = flash * 1.6;
+        }
+
+        // Hit shake — high-frequency Z-axis wobble that decays out
+        npc.root.rotation.z = Math.sin(state.elapsed * 38) * npc.wobble * 0.18;
 
         // Cargo glow pulse
         const pulse = Math.sin(state.elapsed * 2.8 + npc.phaseOffset) * 0.5 + 0.5;
@@ -7808,6 +7966,14 @@
     }
 
     function refreshHud() {
+      // Tick hit marker — set to 0.18 by triggerHitFeedback, decays each frame
+      if (state.hitMarkerTimer > 0) {
+        state.hitMarkerTimer = Math.max(0, state.hitMarkerTimer - 0.016);
+        ui.hitMarker.style.opacity = state.hitMarkerTimer > 0 ? "1" : "0";
+      } else if (ui.hitMarker.style.opacity !== "0") {
+        ui.hitMarker.style.opacity = "0";
+      }
+
       const horizontalSpeed = Math.hypot(player.userData.velocity.x, player.userData.velocity.z);
       const shiftActive = keyState.Shift || keyState.ShiftLeft || keyState.ShiftRight;
       const controlActive = keyState.Control || keyState.ControlLeft || keyState.ControlRight;
