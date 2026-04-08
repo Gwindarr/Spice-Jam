@@ -217,6 +217,7 @@
         rgba(8, 4, 2, 0.38) 80%,
         rgba(4, 2, 0, 0.72) 100%);
       z-index: 4;
+      display: none;
     }
 
 
@@ -617,6 +618,7 @@
       starSize: 2.4,
 
       cycleDuration: 300,
+      dayTimeStart: 0,    // 0=noon, 0.25=6pm, 0.5=midnight, 0.75=dawn
 
       playerStart: new THREE.Vector3(-380, 3, -380),
       harkonnenBase: new THREE.Vector3(380, 3, 380),
@@ -821,20 +823,20 @@
       {
         t: 0.0,
         name: "Day",
-        sky: 0x5ab4e8,
-        fog: 0xd8c09a,
-        hemiSky: 0xa0d8f8,
-        hemiGround: 0xc49060,
+        sky: 0x6ab8e8,
+        fog: 0xe0a840,
+        hemiSky: 0xa8d8f8,
+        hemiGround: 0xd49850,
         sunColor: 0xfff4cc,
         sunIntensity: 1.4,
       },
       {
         t: 0.25,
         name: "Sunset",
-        sky: 0xff6030,
-        fog: 0xe86028,
+        sky: 0xff5020,
+        fog: 0xff7020,
         hemiSky: 0xffb060,
-        hemiGround: 0x9e5028,
+        hemiGround: 0xb05820,
         sunColor: 0xff9940,
         sunIntensity: 0.88,
       },
@@ -851,20 +853,20 @@
       {
         t: 0.75,
         name: "Dawn",
-        sky: 0xff8840,
-        fog: 0xd87040,
+        sky: 0xff7830,
+        fog: 0xe89040,
         hemiSky: 0xffcc88,
-        hemiGround: 0x9e6040,
+        hemiGround: 0xb07040,
         sunColor: 0xffcc88,
         sunIntensity: 0.72,
       },
       {
         t: 1.0,
         name: "Day",
-        sky: 0x5ab4e8,
-        fog: 0xd8c09a,
-        hemiSky: 0xa0d8f8,
-        hemiGround: 0xc49060,
+        sky: 0x6ab8e8,
+        fog: 0xe0a840,
+        hemiSky: 0xa8d8f8,
+        hemiGround: 0xd49850,
         sunColor: 0xfff4cc,
         sunIntensity: 1.4,
       },
@@ -920,7 +922,7 @@
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x5ab4e8);
-    scene.fog = new THREE.Fog(0xd8c09a, 70, 220);
+    scene.fog = new THREE.Fog(0xc27a2e, 45, 320);
 
     const StaticCollisionGroup = new THREE.Group();
     StaticCollisionGroup.name = "StaticCollisionGroup";
@@ -944,7 +946,7 @@
     const controls = new PointerLockControls(camera, document.body);
     scene.add(camera);
 
-    const hemiLight = new THREE.HemisphereLight(0xa0d8f8, 0xc49060, 1.05);
+    const hemiLight = new THREE.HemisphereLight(0xa0d8f8, 0xc49060, 0.6);
     scene.add(hemiLight);
 
     const sun = new THREE.DirectionalLight(0xfff4cc, 1.4);
@@ -2123,6 +2125,136 @@
       return getRockPlatformSupport(player.position.x, player.position.z, feetY, velocityY) ? "rock" : "sand";
     }
 
+    // Procedural sand normal map. Multi-octave value noise gives natural
+    // scale variation: large swells modulate the amplitude of medium ripples,
+    // which sit on top of fine grain. Tiles across the terrain.
+    function createSandNormalTexture(size = 512) {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      const img = ctx.createImageData(size, size);
+      const data = img.data;
+
+      // Fixed-seed PRNG so the texture is identical every reload, independent
+      // of the world seed.
+      const seedRng = mulberry32(0xC0FFEE);
+
+      // Tiling value-noise layer: gridSize x gridSize random values, bilinear
+      // upsampled to (size x size) with smoothstep for soft interpolation.
+      // Wraparound on the grid coords so the layer tiles seamlessly.
+      function makeNoiseLayer(gridSize) {
+        const grid = new Float32Array(gridSize * gridSize);
+        for (let i = 0; i < grid.length; i += 1) grid[i] = seedRng();
+
+        const out = new Float32Array(size * size);
+        const scale = gridSize / size;
+        for (let y = 0; y < size; y += 1) {
+          const fy = y * scale;
+          const y0 = Math.floor(fy);
+          const y1 = (y0 + 1) % gridSize;
+          const ty = fy - y0;
+          const sy = ty * ty * (3 - 2 * ty);
+          for (let x = 0; x < size; x += 1) {
+            const fx = x * scale;
+            const x0 = Math.floor(fx);
+            const x1 = (x0 + 1) % gridSize;
+            const tx = fx - x0;
+            const sx = tx * tx * (3 - 2 * tx);
+            const v00 = grid[y0 * gridSize + x0];
+            const v10 = grid[y0 * gridSize + x1];
+            const v01 = grid[y1 * gridSize + x0];
+            const v11 = grid[y1 * gridSize + x1];
+            const a = v00 * (1 - sx) + v10 * sx;
+            const b = v01 * (1 - sx) + v11 * sx;
+            out[y * size + x] = a * (1 - sy) + b * sy;
+          }
+        }
+        return out;
+      }
+
+      // Octaves: broad swells -> medium ripples -> fine grain.
+      // Plus a pair of low-frequency layers used as a domain-warp displacement
+      // field, so medium/fine sampling drifts and bends instead of grid-aligning.
+      const broad  = makeNoiseLayer(8);   // ~64 px features (broad amplitude variation)
+      const medium = makeNoiseLayer(32);  // ~16 px features (the visible "ripples")
+      const fine   = makeNoiseLayer(128); // ~4 px features (grain)
+      const warpX  = makeNoiseLayer(12);  // low-freq displacement
+      const warpY  = makeNoiseLayer(12);
+
+      // Bilinear sample of an upsampled (size x size) layer at fractional
+      // coords with wraparound — used for domain-warped lookups.
+      function sampleLayer(layer, fx, fy) {
+        const xi = ((fx % size) + size) % size;
+        const yi = ((fy % size) + size) % size;
+        const x0 = Math.floor(xi);
+        const y0 = Math.floor(yi);
+        const x1 = (x0 + 1) % size;
+        const y1 = (y0 + 1) % size;
+        const tx = xi - x0;
+        const ty = yi - y0;
+        const v00 = layer[y0 * size + x0];
+        const v10 = layer[y0 * size + x1];
+        const v01 = layer[y1 * size + x0];
+        const v11 = layer[y1 * size + x1];
+        const a = v00 * (1 - tx) + v10 * tx;
+        const b = v01 * (1 - tx) + v11 * tx;
+        return a * (1 - ty) + b * ty;
+      }
+
+      // Sum with diminishing amplitudes. The broad layer modulates the medium
+      // layer's effective amplitude, so ripples are tighter/stronger in some
+      // areas and softer in others. Warp displaces the medium/fine sample
+      // points so the noise drifts and bends.
+      const WARP_AMT = 16; // pixels
+      const heights = new Float32Array(size * size);
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const idx = y * size + x;
+          const wx = (warpX[idx] - 0.5) * 2 * WARP_AMT;
+          const wy = (warpY[idx] - 0.5) * 2 * WARP_AMT;
+          const broadVal  = broad[idx];
+          const mediumVal = sampleLayer(medium, x + wx, y + wy);
+          const fineVal   = sampleLayer(fine,   x + wx * 0.6, y + wy * 0.6);
+          const broadMod  = 0.4 + broadVal * 1.2; // 0.4 .. 1.6
+          heights[idx] =
+            broadVal  * 0.55 +
+            mediumVal * 0.45 * broadMod +
+            fineVal   * 0.18;
+        }
+      }
+
+      // Central differences -> tangent-space normal, encoded as RGB.
+      const STRENGTH = 5.0;
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const xL = (x - 1 + size) % size;
+          const xR = (x + 1) % size;
+          const yU = (y - 1 + size) % size;
+          const yD = (y + 1) % size;
+          const dhx = (heights[y * size + xR] - heights[y * size + xL]) * STRENGTH;
+          const dhy = (heights[yD * size + x] - heights[yU * size + x]) * STRENGTH;
+          const nx = -dhx;
+          const ny = -dhy;
+          const nz = 1.0;
+          const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+          const i = (y * size + x) * 4;
+          data[i]     = ((nx / len) * 0.5 + 0.5) * 255;
+          data[i + 1] = ((ny / len) * 0.5 + 0.5) * 255;
+          data[i + 2] = ((nz / len) * 0.5 + 0.5) * 255;
+          data[i + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(img, 0, 0);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = 4;
+      texture.needsUpdate = true;
+      return texture;
+    }
+
     function createTerrain() {
       const geometry = new THREE.PlaneGeometry(
         CONFIG.worldSize, CONFIG.worldSize,
@@ -2131,17 +2263,59 @@
       geometry.rotateX(-Math.PI / 2);
 
       const positions = geometry.attributes.position;
-      const sandColor = new THREE.Color(0xd4a870);
-      const rockColor = new THREE.Color(0x8d6f4d);
       const colorData = new Float32Array(positions.count * 3);
 
+      // Sun direction (normalised from sun.position 130, 120, 40)
+      const SUN_X = 0.717, SUN_Y = 0.662, SUN_Z = 0.221;
+      const valleyColor    = new THREE.Color(0x8f6030); // warm sand shadow
+      const crestColor     = new THREE.Color(0xe7bc6a); // sun-caught crest
+      const rockPatchColor = new THREE.Color(0x9a7b55);
+      const sandColor      = new THREE.Color();
+
+      const STEP = 1.2;
+      const CREST_HEIGHT = 38;
       for (let i = 0; i < positions.count; i += 1) {
         const x = positions.getX(i);
         const z = positions.getZ(i);
         positions.setY(i, sampleGroundHeight(x, z));
+        const y = positions.getY(i);
+
+        // Height factor: 0 at valley, 1 at crest — curved to push contrast toward extremes
+        const heightFactor = THREE.MathUtils.clamp(y / CREST_HEIGHT, 0, 1);
+
+        // Sun-facing factor
+        const gdx = sampleGroundHeight(x + STEP, z) - sampleGroundHeight(x - STEP, z);
+        const gdz = sampleGroundHeight(x, z + STEP) - sampleGroundHeight(x, z - STEP);
+        const nnx = -gdx / (2 * STEP);
+        const nnz = -gdz / (2 * STEP);
+        const nlen = Math.sqrt(nnx * nnx + 1 + nnz * nnz);
+        const facing = THREE.MathUtils.clamp(
+          (nnx * SUN_X + SUN_Y + nnz * SUN_Z) / nlen, 0, 1
+        );
+
+        const upness = THREE.MathUtils.clamp(1 / nlen, 0, 1);
+        const slopeFade = upness * upness;
+
+        // Wind ripples — phase warped along Z so ripple lines drift and bend
+        // rather than running in a straight global direction.
+        const dirWarp =
+          Math.sin(z * 0.03) * 0.8 +
+          Math.sin(x * 0.02) * 0.6;
+        const ripple = Math.sin((x + dirWarp) * 0.25) * 0.035 * slopeFade;
+
+        const t = THREE.MathUtils.clamp(
+          Math.pow(heightFactor, 0.65) * (0.3 + facing * 0.7) + ripple, 0, 1
+        );
+        sandColor.lerpColors(valleyColor, crestColor, t);
+        // Subtle Macro Variation
+        const macro = Math.sin(x * 0.008) * Math.sin(z * 0.01);
+        sandColor.offsetHSL(0.0, 0.0, macro * 0.02);
+
+        // Rock patch overlay
         const blend = sampleRockPatchBlend(x, z);
-        tempRockColor.copy(sandColor).lerp(rockColor, blend * 0.85);
-        colorData[i * 3] = tempRockColor.r;
+        tempRockColor.copy(sandColor).lerp(rockPatchColor, blend * 0.9);
+
+        colorData[i * 3]     = tempRockColor.r;
         colorData[i * 3 + 1] = tempRockColor.g;
         colorData[i * 3 + 2] = tempRockColor.b;
       }
@@ -2150,10 +2324,22 @@
       geometry.setAttribute("color", new THREE.Float32BufferAttribute(colorData, 3));
       geometry.computeVertexNormals();
 
-      const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 })
-      );
+      const sandNormalMap = createSandNormalTexture(512);
+      // Tile across the world. 30 repeats over worldSize=1500 -> 50u/tile.
+      sandNormalMap.repeat.set(30, 30);
+
+      const sandMaterial = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 1.0,
+        metalness: 0.0,
+        normalMap: sandNormalMap,
+        polygonOffset: true,
+        polygonOffsetFactor: 2,
+        polygonOffsetUnits: 2
+      });
+      sandMaterial.normalScale.set(0.7, 0.7);
+
+      const mesh = new THREE.Mesh(geometry, sandMaterial);
       mesh.receiveShadow = CONFIG.shadowEnabled;
       scene.add(mesh);
     }
@@ -8346,7 +8532,7 @@
 
     function updateDayNight(delta) {
       state.elapsed += delta;
-      state.dayTime = (state.elapsed % CONFIG.cycleDuration) / CONFIG.cycleDuration;
+      state.dayTime = ((state.elapsed + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
 
       const current = getCycleKeyPair(state.dayTime);
       const amount = (state.dayTime - current.a.t) / (current.b.t - current.a.t || 1);
