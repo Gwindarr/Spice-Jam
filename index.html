@@ -266,6 +266,27 @@
       display: none;
     }
 
+    #resumeHint {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      background: rgba(10, 6, 0, 0.75);
+      color: #e8d5a3;
+      padding: 7px 20px;
+      border-radius: 20px;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      display: none;
+      border: 1px solid rgba(200, 160, 80, 0.3);
+      pointer-events: auto;
+    }
+    #resumeHint.visible {
+      display: block;
+    }
+
     #deathFlash {
       position: fixed;
       inset: 0;
@@ -439,6 +460,10 @@
       color: #ff5522;
       font-size: 34px;
     }
+    .damage-number.poison {
+      color: #55ee66;
+      font-size: 20px;
+    }
     @keyframes damageFloat {
       0%   { opacity: 0; transform: translate(-50%, 0%) scale(0.6); }
       15%  { opacity: 1; transform: translate(-50%, -120%) scale(1.25); }
@@ -529,6 +554,8 @@
   <div id="reticle"></div>
   <div id="hitMarker"></div>
   <div id="damageNumbers"></div>
+
+  <div id="resumeHint">CLICK TO RESUME</div>
 
   <div id="overlay">
     <div class="panel">
@@ -854,6 +881,7 @@
       overlayBody: document.getElementById("overlayBody"),
       overlayHint: document.getElementById("overlayHint"),
       overlayCta: document.getElementById("overlayCta"),
+      resumeHint: document.getElementById("resumeHint"),
       deathFlash: document.getElementById("deathFlash"),
       deathText: document.getElementById("deathText"),
       deathHint: document.getElementById("deathHint"),
@@ -2679,9 +2707,31 @@
 	        tempMaulaOrigin.copy(player.position);
 	        tempMaulaOrigin.y += 3.3;
 	      }
-	      // Use camera look direction directly — aimPoint was terrain-only and
-	      // caused parallax misses against NPCs at close range / different elevation.
-	      const strikeDir = tempForward;
+	      // Find aim point: terrain/rock from camera ray, then snap to any NPC whose
+	      // hitbox the ray passes through — so muzzle offset never causes a miss.
+	      getLasgunAimPoint(tempLasgunAimPoint);
+	      let aimDist = tempLasgunAimPoint.distanceTo(camera.position);
+	      const checkNpcAim = (pivot, radius) => {
+	        pivot.getWorldPosition(tempProjectileCenter);
+	        const t = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+	        if (t < 0.5 || t >= aimDist) return;
+	        tempKnifeDir.copy(camera.position).addScaledVector(tempForward, t);
+	        if (tempKnifeDir.distanceTo(tempProjectileCenter) < radius + 0.3) {
+	          aimDist = t;
+	          tempLasgunAimPoint.copy(tempKnifeDir);
+	        }
+	      };
+	      for (const npc of npcs) {
+	        if (npc.dead) continue;
+	        checkNpcAim(npc.headDot, npc.headHitRadius);
+	        checkNpcAim(npc.targetPivot, npc.bodyHitRadius);
+	      }
+	      if (trainingDummy && !trainingDummy.dead) {
+	        checkNpcAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
+	        checkNpcAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
+	      }
+	      tempKnifeDir.subVectors(tempLasgunAimPoint, tempMaulaOrigin).normalize();
+	      const strikeDir = tempKnifeDir;
 	      spawnMaulaProjectile(strikeDir);
 	      state.maulaLoaded = false;
 	      state.maulaCooldown = CONFIG.maulaCooldown;
@@ -6361,9 +6411,9 @@
         target.health = Math.max(0, target.health - damage);
         if (opts.silent !== true) {
           if (opts.continuous === true) {
-            queueContinuousDamageNumber(target, damage, opts.headshot === true);
+            queueContinuousDamageNumber(target, damage, opts.headshot === true, opts.poison === true);
           } else {
-            triggerHitFeedback(target, damage, opts.headshot === true);
+            triggerHitFeedback(target, damage, opts.headshot === true, opts.poison === true);
           }
         }
         if (target.health <= 0) killTarget(target);
@@ -6372,8 +6422,8 @@
 
     // ── Hit feedback: crosshair pulse + floating damage number at hit world pos ──
     const tempHitProject = new THREE.Vector3();
-    function triggerHitFeedback(target, damage, headshot) {
-      state.hitMarkerTimer = 0.18;
+    function triggerHitFeedback(target, damage, headshot, poison = false) {
+      if (!poison) state.hitMarkerTimer = 0.18;
       const rounded = Math.round(damage);
       if (rounded < 1) return; // never show "0"
 
@@ -6386,7 +6436,7 @@
       const sy = (-tempHitProject.y * 0.5 + 0.5) * window.innerHeight;
 
       const el = document.createElement("div");
-      el.className = "damage-number" + (headshot ? " crit" : "");
+      el.className = "damage-number" + (headshot ? " crit" : poison ? " poison" : "");
       el.textContent = String(rounded);
       el.style.left = (sx + (Math.random() - 0.5) * 24) + "px";
       el.style.top  = sy + "px";
@@ -6394,19 +6444,20 @@
       setTimeout(() => el.remove(), 1000);
     }
 
-    // For continuous-damage weapons (lasgun beam): damage was already applied
-    // by hitTarget; here we just bucket the visual number so we emit one per
-    // ~0.2s with the accumulated total. Hit marker still pulses every frame
-    // so beam contact is unmistakable.
-    function queueContinuousDamageNumber(target, damage, headshot) {
-      state.hitMarkerTimer = 0.18;
-      target._dpsAccum = (target._dpsAccum || 0) + damage;
-      target._dpsLastEmit = target._dpsLastEmit || 0;
+    // For continuous-damage weapons (lasgun beam, poison): damage already applied
+    // by hitTarget; bucket the visual number so we emit one per ~0.2s (poison: ~0.5s).
+    function queueContinuousDamageNumber(target, damage, headshot, poison = false) {
+      if (!poison) state.hitMarkerTimer = 0.18;
+      const accKey = poison ? "_poisonAccum" : "_dpsAccum";
+      const timeKey = poison ? "_poisonLastEmit" : "_dpsLastEmit";
+      const interval = poison ? 0.5 : 0.2;
       const now = state.elapsed;
-      if (target._dpsAccum >= 1 && now - target._dpsLastEmit >= 0.2) {
-        triggerHitFeedback(target, target._dpsAccum, headshot);
-        target._dpsAccum = 0;
-        target._dpsLastEmit = now;
+      target[accKey] = (target[accKey] || 0) + damage;
+      if (target[timeKey] === undefined) target[timeKey] = now;
+      if (target[accKey] >= 1 && now - target[timeKey] >= interval) {
+        triggerHitFeedback(target, target[accKey], headshot, poison);
+        target[accKey] = 0;
+        target[timeKey] = now;
       }
     }
 
@@ -6968,7 +7019,7 @@
 	        trainingDummy.poisonTimer = Math.max(0, trainingDummy.poisonTimer - delta);
 
 
-	        hitTarget(trainingDummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { silent: true });
+	        hitTarget(trainingDummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { continuous: true, poison: true });
 
 
 	      }
@@ -7780,6 +7831,8 @@
       npc.respawnTimer = 0;
       npc.hitFlash = 0;
       npc.poisonTimer = 0;
+      npc._dpsAccum = undefined; npc._dpsLastEmit = undefined;
+      npc._poisonAccum = undefined; npc._poisonLastEmit = undefined;
       // Re-show spice cargo on respawn
       if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
       if (npc.root.userData.spiceGlowMesh)  npc.root.userData.spiceGlowMesh.visible  = true;
@@ -7803,7 +7856,7 @@
         // Poison damage tick
         if (npc.poisonTimer > 0) {
           npc.poisonTimer = Math.max(0, npc.poisonTimer - delta);
-          hitTarget(npc, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { silent: true });
+          hitTarget(npc, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { continuous: true, poison: true });
         }
 
         // Whole-body hit flash + poison green tint
@@ -7920,22 +7973,21 @@
         controls.lock();
       });
 
+      ui.resumeHint.addEventListener("click", () => {
+        controls.lock();
+      });
+
       controls.addEventListener("lock", () => {
         state.paused = false;
         ui.overlay.classList.add("hidden");
+        ui.resumeHint.classList.remove("visible");
       });
 
       controls.addEventListener("unlock", () => {
         state.paused = true;
         clearMovementInput();
-        ui.overlay.classList.remove("hidden");
-	        setOverlay(
-	          "Paused",
-	          "The desert is waiting.",
-	          "Click to resume. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a spice patch, Q to deploy a thumper.",
-	          "Click to Resume"
-	        );
-	      });
+        ui.resumeHint.classList.add("visible");
+      });
 
 	      setOverlay(
 	        "Spice Jam",
