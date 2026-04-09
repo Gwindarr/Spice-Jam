@@ -549,6 +549,7 @@
       <span class="noise-label">Worm</span>
       <span class="noise-track"><span id="wormFill" class="noise-fill"></span></span>
 	    </div>
+	    <div id="hudPlume" class="hint"></div>
 	    <div id="hudSeed" class="hint"></div>
 	  </div>
 
@@ -683,7 +684,7 @@
       spiceSmallYieldMax: 9,
       spicePlumeYieldMin: 16,
       spicePlumeYieldMax: 20,
-      spicePlumeSpawnCheckInterval: 60,
+      spicePlumeSpawnCheckInterval: 10, // TODO: restore to 60 after testing
       spicePlumeSpawnChance: 0.35,
       spicePlumeMaxActive: 1,
       spicePlumeCooldown: 35,
@@ -857,10 +858,10 @@
         name: "Night",
         sky: 0x0a1428,
         fog: 0x0d1828,
-        hemiSky: 0x203060,
-        hemiGround: 0x0a1020,
+        hemiSky: 0x2a3a6a,
+        hemiGround: 0x181410,
         sunColor: 0x8090c0,
-        sunIntensity: 0.12,
+        sunIntensity: 0.20,
       },
       {
         t: 0.75,
@@ -929,6 +930,7 @@
       noiseFill: document.getElementById("noiseFill"),
       signFill: document.getElementById("signFill"),
       wormFill: document.getElementById("wormFill"),
+      hudPlume: document.getElementById("hudPlume"),
       hudSeed: document.getElementById("hudSeed"),
     };
 
@@ -1115,6 +1117,7 @@
     const tempDevourTarget = new THREE.Vector3();
 	    const tempThumperPlacement = new THREE.Vector3();
 	    const tempThumperDirection = new THREE.Vector3();
+	    // TODO: rename these — tempKnife* vars are reused across knife/maula/lasgun as generic temp vectors
 	    const tempKnifeDir = new THREE.Vector3();
 	    const tempKnifeOffset = new THREE.Vector3();
 	    const tempMaulaOrigin = new THREE.Vector3();
@@ -1171,6 +1174,8 @@
       const worldCollisionMesh = generateCollisionBVH(rockCollisionMesh);
 	    const wormHazard = createWormHazard();
 	    const thumper = createThumper();
+    // Must be initialized before createSpiceObjective so the initial plume event can fire
+    var plumeEventState = { active: false, elapsed: 0, burstRing: null, dustPuffs: [], coreNode: null };
 	    const spiceObjective = createSpiceObjective();
     const spiceDepot = createSpiceDepot();
 	    const trainingDummy = createTrainingDummy();
@@ -3667,9 +3672,34 @@
 	      // Screen-space aim: cast from camera to world point, fire from muzzle toward it
 	      const aimPoint = getLasgunAimPoint(tempLasgunAimPoint);
 	      const origin = getLasgunOrigin(tempMaulaOrigin);
-	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
-	      // Rotate player body to face horizontal aim direction
+	      // Snap aim to NPC hitboxes along camera ray (prevents muzzle parallax misses)
 	      camera.getWorldDirection(tempForward);
+	      let lasgunAimDist = aimPoint.distanceTo(camera.position);
+	      const snapAim = (pivot, radius) => {
+	        pivot.getWorldPosition(tempProjectileCenter);
+	        const t = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+	        if (t < 0.5 || t >= lasgunAimDist) return;
+	        tempKnifeDir.copy(camera.position).addScaledVector(tempForward, t);
+	        if (tempKnifeDir.distanceTo(tempProjectileCenter) < radius + 0.6) {
+	          lasgunAimDist = t;
+	          aimPoint.copy(tempProjectileCenter);
+	        }
+	      };
+	      for (const npc of npcs) {
+	        if (npc.dead) continue;
+	        snapAim(npc.headDot, npc.headHitRadius);
+	        snapAim(npc.targetPivot, npc.bodyHitRadius);
+	      }
+	      if (trainingDummy && !trainingDummy.dead) {
+	        snapAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
+	        snapAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
+	      }
+	      for (const sd of shieldedDummies) {
+	        if (!sd || sd.dead) continue;
+	        snapAim(sd.headDot, CONFIG.trainingDummyHeadRadius);
+	        snapAim(sd.targetPivot, CONFIG.trainingDummyHitRadius);
+	      }
+	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
         player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
 
 	      let maxDistance = origin.distanceTo(aimPoint);
@@ -3721,12 +3751,12 @@
         const npc = npcs[ni];
         if (npc.dead) continue;
         npc.headDot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.headHitRadius + 0.08)) {
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.headHitRadius + 0.25)) {
           const d = origin.distanceTo(tempProjectileCenter);
           if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
         }
         npc.targetPivot.getWorldPosition(tempProjectileCenter);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.bodyHitRadius + 0.1)) {
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.bodyHitRadius + 0.25)) {
           const d = origin.distanceTo(tempProjectileCenter);
           if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
         }
@@ -4185,6 +4215,7 @@
         wormWarning: createAudioEffect("assets/audio/kenney/worm/spaceEngineLow_001.ogg", { volume: 0.32, poolSize: 1, playbackRateMin: 0.9, playbackRateMax: 0.96 }),
         wormBreach: createAudioEffect("assets/audio/kenney/worm/lowFrequency_explosion_000.ogg", { volume: 0.52, poolSize: 1, playbackRateMin: 0.82, playbackRateMax: 0.9 }),
         wormDevour: createAudioEffect("assets/audio/kenney/worm/explosionCrunch_001.ogg", { volume: 0.58, poolSize: 1, playbackRateMin: 0.82, playbackRateMax: 0.92 }),
+        spiceBlow: createAudioEffect("assets/audio/kenney/worm/lowFrequency_explosion_000.ogg", { volume: 0.48, poolSize: 1, playbackRateMin: 0.52, playbackRateMax: 0.64 }),
       };
     }
 
@@ -4365,8 +4396,7 @@
       node.group.visible = active;
       if (!active) {
         node.decayTimer = -1;
-        // Plume nodes don't use respawnTimer — the plume spawn timer handles them
-        node.respawnTimer = node.type === "plume" ? -1 : CONFIG.spiceRespawnDuration;
+        node.respawnTimer = CONFIG.spiceRespawnDuration;
       }
       if (!active && state.harvestNode === node) {
         state.harvestNode = null;
@@ -4452,7 +4482,8 @@
       state.plumeSpawnTimer += delta;
       if (state.plumeSpawnTimer >= CONFIG.spicePlumeSpawnCheckInterval) {
         state.plumeSpawnTimer -= CONFIG.spicePlumeSpawnCheckInterval;
-        if (!spiceObjective.plumeNode.active && state.plumeCooldownTimer <= 0) {
+        const hasActivePlume = spiceObjective.nodes.some(n => n.type === "plume" && n.active);
+        if (!hasActivePlume && state.plumeCooldownTimer <= 0) {
           if (Math.random() < CONFIG.spicePlumeSpawnChance) {
             spiceObjective.spawnPlume();
           }
@@ -4461,10 +4492,10 @@
 
       for (const node of spiceObjective.nodes) {
         if (!node.active) {
-          // Plume nodes don't auto-respawn; the plume timer handles that
-          if (node.type === "plume") continue;
           node.respawnTimer = Math.max(0, node.respawnTimer - delta);
           if (node.respawnTimer === 0) {
+            // Depleted plumes revert to small on respawn (slot returns to pool)
+            if (node.type === "plume") node.type = "small";
             spiceObjective.relocateNode(node);
             setSpiceNodeActive(node, true);
           }
@@ -4483,7 +4514,8 @@
           }
         }
 
-	        const pulse = 0.5 + (0.5 * Math.sin(pulseTime + node.phase));
+	        const pulseFactor = node.type === "plume" ? 1.6 : 1.0;
+	        const pulse = 0.5 + (0.5 * Math.sin(pulseTime * pulseFactor + node.phase));
 	        node.haze.material.opacity = 0.18 + (pulse * 0.12);
 	        node.inner.material.opacity = 0.12 + (pulse * 0.1);
 	        node.sparkles.material.opacity = 0.24 + (pulse * 0.28);
@@ -6862,7 +6894,8 @@
 
       function updateSpicePatchVisual(node) {
         const baseY = sampleGroundHeight(node.x, node.z);
-        const patchRadius = CONFIG.spicePatchRadius;
+        const isPlume = node.type === "plume";
+        const patchRadius = isPlume ? CONFIG.spicePatchRadius * 1.5 : CONFIG.spicePatchRadius;
         const pocketRng = mulberry32((Math.floor(node.seed * 1000000) ^ 0x5f35791d) >>> 0);
         const crystalRng = mulberry32((Math.floor(node.seed * 1000000) ^ 0x93a74c11) >>> 0);
         node.group.position.set(node.x, baseY, node.z);
@@ -6937,6 +6970,14 @@
             randomRange(0, Math.PI * 2, crystalRng),
             randomRange(-0.5, 0.5, crystalRng)
           );
+        }
+
+        if (isPlume) {
+          node.crystalPivot.scale.setScalar(1.8);
+          node.crystalCore.material.emissiveIntensity = 0.45;
+        } else {
+          node.crystalPivot.scale.setScalar(1.0);
+          node.crystalCore.material.emissiveIntensity = 0.2;
         }
       }
 
@@ -7033,51 +7074,181 @@
         };
       }
 
-      // Create 8 small patches
-      while (nodes.length < CONFIG.spiceNodeCount) {
+      // Roll for initial plume (15% chance, uses world seed)
+      const initialPlume = rng() < CONFIG.spicePlumeInitialChance;
+      const smallCount = initialPlume ? CONFIG.spiceNodeCount - 1 : CONFIG.spiceNodeCount;
+
+      // Create small patches
+      while (nodes.length < smallCount) {
         const spawn = findSpiceNodeSpawn();
         if (!spawn) break;
-        const node = makeNode("small", nodes.length, true);
+        const node = makeNode("small", nodes.length);
         placeSpiceNode(node, spawn.x, spawn.z);
         node.active = true;
         node.group.visible = true;
         nodes.push(node);
       }
 
-      // Create 1 plume node (starts inactive; may activate on initial roll below)
-      const plumeNode = makeNode("plume", nodes.length, false);
-      plumeNode.group.visible = false;
-      nodes.push(plumeNode);
-
-      // On game load: 15% chance of an immediate plume spawn (uses world seed)
-      if (rng() < CONFIG.spicePlumeInitialChance) {
-        const plumeSpawn = findSpiceNodeSpawn(plumeNode);
-        if (plumeSpawn) {
-          placeSpiceNode(plumeNode, plumeSpawn.x, plumeSpawn.z);
-          plumeNode.active = true;
-          plumeNode.group.visible = true;
+      // If initial roll succeeded, spawn a plume as the last slot (with event)
+      if (initialPlume) {
+        const spawn = findSpiceNodeSpawn();
+        if (spawn) {
+          const node = makeNode("plume", nodes.length);
+          placeSpiceNode(node, spawn.x, spawn.z);
+          node.active = true;
+          node.group.visible = true;
+          nodes.push(node);
+          triggerSpicePlumeEvent(node);
         }
       }
 
       return {
         nodes,
-        plumeNode,
         relocateNode(node) {
           const spawn = findSpiceNodeSpawn(node);
           if (!spawn) return false;
           placeSpiceNode(node, spawn.x, spawn.z);
           return true;
         },
+        // Find an inactive node, convert it to plume, place + activate
         spawnPlume() {
-          if (plumeNode.active) return false;
-          const spawn = findSpiceNodeSpawn(plumeNode);
-          if (!spawn) return false;
-          placeSpiceNode(plumeNode, spawn.x, spawn.z);
-          plumeNode.active = true;
-          plumeNode.group.visible = true;
+          // Check: is there already an active plume?
+          if (nodes.some(n => n.type === "plume" && n.active)) return false;
+          // Find an inactive node to convert
+          const slot = nodes.find(n => !n.active);
+          if (!slot) return false;
+          slot.type = "plume";
+          const spawn = findSpiceNodeSpawn(slot);
+          if (!spawn) { slot.type = "small"; return false; }
+          placeSpiceNode(slot, spawn.x, spawn.z);
+          slot.active = true;
+          slot.group.visible = true;
+          triggerSpicePlumeEvent(slot);
           return true;
         },
       };
+    }
+
+    // ── Plume Spawn Event ─────────────────────────────────────────────────────
+
+    function triggerSpicePlumeEvent(node) {
+      cleanupPlumeEvent();
+      const baseY = sampleGroundHeight(node.x, node.z);
+
+      // A) Ground burst ring
+      const ringGeo = new THREE.RingGeometry(0.3, 1.0, 32);
+      ringGeo.rotateX(-Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xc89760, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.position.set(node.x, baseY + 0.15, node.z);
+      ring.renderOrder = 10;
+      scene.add(ring);
+      plumeEventState.burstRing = { mesh: ring, mat: ringMat };
+
+      // B) Dust cloud puffs
+      const dustGeo = new THREE.SphereGeometry(1, 6, 5);
+      const puffs = [];
+      for (let i = 0; i < 8; i += 1) {
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xb8864a, transparent: true, opacity: 0.45, depthWrite: false,
+        });
+        const puff = new THREE.Mesh(dustGeo, mat);
+        const angle = (i / 8) * Math.PI * 2 + Math.random() * 0.5;
+        const outSpeed = 1.5 + Math.random() * 2.5;
+        const upSpeed = 2.0 + Math.random() * 3.0;
+        puff.position.set(node.x, baseY + 0.5 + Math.random() * 0.5, node.z);
+        puff.scale.setScalar(0.3 + Math.random() * 0.3);
+        puff.renderOrder = 11;
+        scene.add(puff);
+        puffs.push({ mesh: puff, mat, vx: Math.cos(angle) * outSpeed, vz: Math.sin(angle) * outSpeed, vy: upSpeed, scaleRate: 0.8 + Math.random() * 0.6 });
+      }
+      plumeEventState.dustPuffs = puffs;
+
+      // C) Core flash
+      plumeEventState.coreNode = node;
+      node.crystalCore.material.emissiveIntensity = 3.0;
+      if (node.crystalGlow) {
+        node.crystalGlow.material.opacity = 0.8;
+        node.crystalGlow.scale.setScalar(3.0);
+      }
+
+      sfx.spiceBlow.play({ volumeMultiplier: 1.0 });
+      emitNoiseImpulse(0.5);
+      plumeEventState.active = true;
+      plumeEventState.elapsed = 0;
+    }
+
+    function updatePlumeEvent(delta) {
+      if (!plumeEventState || !plumeEventState.active) return;
+      plumeEventState.elapsed += delta;
+      const t = plumeEventState.elapsed;
+
+      // A) Burst ring: expand and fade over 0.7s
+      if (plumeEventState.burstRing) {
+        const bt = Math.min(t / 0.7, 1);
+        const ring = plumeEventState.burstRing;
+        const scale = 1 + bt * 16;
+        ring.mesh.scale.set(scale, scale, scale);
+        ring.mat.opacity = 0.7 * (1 - bt);
+        if (bt >= 1) {
+          scene.remove(ring.mesh);
+          ring.mesh.geometry.dispose();
+          ring.mat.dispose();
+          plumeEventState.burstRing = null;
+        }
+      }
+
+      // B) Dust puffs: rise, expand, fade over 4s
+      for (let i = plumeEventState.dustPuffs.length - 1; i >= 0; i -= 1) {
+        const p = plumeEventState.dustPuffs[i];
+        const dt = Math.min(t / 4.0, 1);
+        const drag = 1 - dt * 0.7;
+        p.mesh.position.x += p.vx * delta * drag;
+        p.mesh.position.y += p.vy * delta * drag;
+        p.mesh.position.z += p.vz * delta * drag;
+        p.vy -= delta * 1.5;
+        p.mesh.scale.setScalar(p.mesh.scale.x + p.scaleRate * delta);
+        p.mat.opacity = 0.45 * (1 - dt);
+        if (dt >= 1) {
+          scene.remove(p.mesh);
+          p.mat.dispose();
+          plumeEventState.dustPuffs.splice(i, 1);
+        }
+      }
+
+      // C) Core flash lerp back over 1.2s
+      if (plumeEventState.coreNode && t < 1.2) {
+        const node = plumeEventState.coreNode;
+        const ft = Math.min(t / 1.2, 1);
+        node.crystalCore.material.emissiveIntensity = 3.0 + (0.45 - 3.0) * ft;
+        if (node.crystalGlow) {
+          node.crystalGlow.material.opacity = 0.8 + (0.2 - 0.8) * ft;
+          node.crystalGlow.scale.setScalar(3.0 + (1.3 - 3.0) * ft);
+        }
+      }
+
+      if (!plumeEventState.burstRing && plumeEventState.dustPuffs.length === 0 && t >= 1.2) {
+        plumeEventState.active = false;
+        plumeEventState.coreNode = null;
+      }
+    }
+
+    function cleanupPlumeEvent() {
+      if (plumeEventState.burstRing) {
+        scene.remove(plumeEventState.burstRing.mesh);
+        plumeEventState.burstRing.mesh.geometry.dispose();
+        plumeEventState.burstRing.mat.dispose();
+        plumeEventState.burstRing = null;
+      }
+      for (const p of plumeEventState.dustPuffs) {
+        scene.remove(p.mesh);
+        p.mat.dispose();
+      }
+      plumeEventState.dustPuffs = [];
+      plumeEventState.active = false;
+      plumeEventState.coreNode = null;
     }
 
     function createSpiceDepot() {
@@ -8702,6 +8873,10 @@
 	      ui.hudSurface.textContent = `Surf ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
 	      ui.hudCargo.textContent = `Carry ${state.spiceCarry}/${CONFIG.spiceMaxCarry}`;
 	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
+	      const activePlume = spiceObjective.nodes.find(n => n.type === "plume" && n.active);
+	      ui.hudPlume.textContent = activePlume
+	        ? `Plume (${activePlume.x.toFixed(0)}, ${activePlume.z.toFixed(0)}) ${activePlume.remaining}/${activePlume.totalYield}`
+	        : "Plume —";
 	      if (state.equippedWeapon === "maula") {
 	        const maulaTotal = state.maulaReserveAmmo + (state.maulaLoaded ? 1 : 0);
 	        if (state.maulaReloadTimer > 0) {
@@ -8836,6 +9011,7 @@
 	      updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
+      updatePlumeEvent(delta);
       updateDroppedSpice(delta);
       updateNpcs(delta);
       tickMultiplayer(delta);
