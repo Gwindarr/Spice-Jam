@@ -678,6 +678,18 @@
       noiseSignRockDecayRate: 0.28,
 
       spiceNodeCount: 8,
+      spiceMaxCarry: 10,
+      spiceSmallYieldMin: 6,
+      spiceSmallYieldMax: 9,
+      spicePlumeYieldMin: 16,
+      spicePlumeYieldMax: 20,
+      spicePlumeSpawnCheckInterval: 60,
+      spicePlumeSpawnChance: 0.35,
+      spicePlumeMaxActive: 1,
+      spicePlumeCooldown: 35,
+      spicePlumeInitialChance: 0.15,
+      spiceSmallDecayDuration: 45,
+      spicePlumeDecayDuration: 45,
       spiceHarvestRadius: 8,
       spicePatchRadius: 12,
       spicePatchPocketRadius: 3.6,
@@ -1016,6 +1028,8 @@
       spiceScore: 0,
       harvestNode: null,
       harvestTimer: 0,
+      plumeSpawnTimer: 0,
+      plumeCooldownTimer: 0,
       interactHint: "Find a spice patch in the open sand.",
       wormPhase: "idle",
       wormTimer: 0,
@@ -4350,7 +4364,9 @@
       node.active = active;
       node.group.visible = active;
       if (!active) {
-        node.respawnTimer = CONFIG.spiceRespawnDuration;
+        node.decayTimer = -1;
+        // Plume nodes don't use respawnTimer — the plume spawn timer handles them
+        node.respawnTimer = node.type === "plume" ? -1 : CONFIG.spiceRespawnDuration;
       }
       if (!active && state.harvestNode === node) {
         state.harvestNode = null;
@@ -4374,11 +4390,10 @@
 	        const progress = THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1);
 	        return `Harvesting spice patch: ${Math.round(progress * 100)}%`;
       }
-      if (state.spiceCarry > 0) {
-        if (nearDepot) return "Press E to deposit spice.";
-        return "Carry spice back to the sietch depot.";
-      }
+      if (state.spiceCarry > 0 && nearDepot) return "Press E to deposit spice.";
+      if (state.spiceCarry >= CONFIG.spiceMaxCarry) return "Bag full — return to the sietch depot.";
       if (canHarvest) return "Stand in the spice patch and hold E to harvest.";
+      if (state.spiceCarry > 0) return "Find more spice, or return to the depot to bank.";
       return "Leave rock and find a spice patch in the open sand.";
     }
 
@@ -4391,8 +4406,8 @@
       const nearDepot = (_dpDx * _dpDx) + (_dpDz * _dpDz) <= spiceDepot.depositRadius * spiceDepot.depositRadius;
       const ePressed = keyState.KeyE && !state.paused && controls.isLocked;
       if (nearDepot && state.spiceCarry > 0 && state.wormPhase !== "devour" && ePressed && !state.depositKeyConsumed) {
+        state.spiceScore += state.spiceCarry;
         state.spiceCarry = 0;
-        state.spiceScore += 1;
         state.depositKeyConsumed = true;
         state.depositToastTimer = 2.8;
         spiceDepot.triggerDeposit();
@@ -4432,14 +4447,40 @@
       let nearbyHarvestNode = null;
       let nearestHarvestDistSq = Infinity;
 
+      // Plume spawn timer
+      if (state.plumeCooldownTimer > 0) state.plumeCooldownTimer -= delta;
+      state.plumeSpawnTimer += delta;
+      if (state.plumeSpawnTimer >= CONFIG.spicePlumeSpawnCheckInterval) {
+        state.plumeSpawnTimer -= CONFIG.spicePlumeSpawnCheckInterval;
+        if (!spiceObjective.plumeNode.active && state.plumeCooldownTimer <= 0) {
+          if (Math.random() < CONFIG.spicePlumeSpawnChance) {
+            spiceObjective.spawnPlume();
+          }
+        }
+      }
+
       for (const node of spiceObjective.nodes) {
         if (!node.active) {
+          // Plume nodes don't auto-respawn; the plume timer handles that
+          if (node.type === "plume") continue;
           node.respawnTimer = Math.max(0, node.respawnTimer - delta);
           if (node.respawnTimer === 0) {
             spiceObjective.relocateNode(node);
             setSpiceNodeActive(node, true);
           }
           continue;
+        }
+
+        // Decay timer: ticks down after first successful harvest
+        if (node.decayTimer > 0) {
+          node.decayTimer -= delta;
+          if (node.decayTimer <= 0) {
+            setSpiceNodeActive(node, false);
+            if (node.type === "plume") {
+              state.plumeCooldownTimer = CONFIG.spicePlumeCooldown;
+            }
+            continue;
+          }
         }
 
 	        const pulse = 0.5 + (0.5 * Math.sin(pulseTime + node.phase));
@@ -4463,7 +4504,8 @@
 	          shard.rotation.y += delta * (0.55 + (i * 0.08));
 	        }
 
-	        if (state.spiceCarry > 0) continue;
+	        if (state.spiceCarry >= CONFIG.spiceMaxCarry) continue;
+	        if (node.remaining <= 0) continue;
 
         const dx = player.position.x - node.x;
         const dz = player.position.z - node.z;
@@ -4477,7 +4519,7 @@
         }
       }
 
-      const canHarvest = Boolean(nearbyHarvestNode) && state.spiceCarry === 0;
+      const canHarvest = Boolean(nearbyHarvestNode) && state.spiceCarry < CONFIG.spiceMaxCarry;
 
       const harvestHeld = keyState.KeyE && !state.paused && controls.isLocked && state.wormPhase === "idle";
       if (state.harvestNode) {
@@ -4501,8 +4543,22 @@
               pocket.material.opacity = 0.24 + (harvestPulse * 0.16);
             }
             if (state.harvestTimer >= CONFIG.spiceHarvestDuration) {
-              state.spiceCarry = 1;
-              setSpiceNodeActive(activeNode, false);
+              const bagSpace = CONFIG.spiceMaxCarry - state.spiceCarry;
+              const take = Math.min(bagSpace, activeNode.remaining);
+              state.spiceCarry += take;
+              activeNode.remaining -= take;
+              // Start decay timer on first successful harvest (>= 1 unit taken)
+              if (take > 0 && activeNode.decayTimer < 0) {
+                activeNode.decayTimer = activeNode.type === "plume"
+                  ? CONFIG.spicePlumeDecayDuration
+                  : CONFIG.spiceSmallDecayDuration;
+              }
+              if (activeNode.remaining <= 0) {
+                setSpiceNodeActive(activeNode, false);
+                if (activeNode.type === "plume") {
+                  state.plumeCooldownTimer = CONFIG.spicePlumeCooldown;
+                }
+              }
               cancelHarvest();
               emitNoiseImpulse(0.2);
               mp.emit("harvestNode", activeNode.id);
@@ -6767,6 +6823,11 @@
         node.z = z;
         node.phase = randomRange(0, Math.PI * 2, rng);
         node.seed = randomRange(0, Math.PI * 2, rng);
+        // Roll fresh yield based on patch type
+        const yMin = node.type === "plume" ? CONFIG.spicePlumeYieldMin : CONFIG.spiceSmallYieldMin;
+        const yMax = node.type === "plume" ? CONFIG.spicePlumeYieldMax : CONFIG.spiceSmallYieldMax;
+        node.totalYield = Math.floor(randomRange(yMin, yMax + 1, rng));
+        node.remaining = node.totalYield;
         node.group.position.set(x, sampleGroundHeight(x, z), z);
         updateSpicePatchVisual(node);
       }
@@ -6882,36 +6943,19 @@
       const crystalCoreGeometry = new THREE.OctahedronGeometry(0.5, 0);
       const crystalShardGeometry = new THREE.OctahedronGeometry(0.24, 0);
 
-      while (nodes.length < CONFIG.spiceNodeCount) {
-        const spawn = findSpiceNodeSpawn();
-        if (!spawn) break;
-
-        const { x, z } = spawn;
+      // Shared mesh hierarchy builder for both small and plume nodes
+      function buildNodeMeshes() {
         const group = new THREE.Group();
-        group.position.set(x, sampleGroundHeight(x, z), z);
-
         const haze = new THREE.Mesh(
           new THREE.BufferGeometry(),
-          new THREE.MeshBasicMaterial({
-            color: 0xd98e33,
-            transparent: true,
-            opacity: 0.24,
-            depthWrite: false,
-            side: THREE.DoubleSide,
-          })
+          new THREE.MeshBasicMaterial({ color: 0xd98e33, transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide })
         );
         haze.renderOrder = 3;
         group.add(haze);
 
         const inner = new THREE.Mesh(
           new THREE.BufferGeometry(),
-          new THREE.MeshBasicMaterial({
-            color: 0xffd56f,
-            transparent: true,
-            opacity: 0.18,
-            depthWrite: false,
-            side: THREE.DoubleSide,
-          })
+          new THREE.MeshBasicMaterial({ color: 0xffd56f, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide })
         );
         inner.renderOrder = 4;
         group.add(inner);
@@ -6920,13 +6964,7 @@
         for (let i = 0; i < 3; i += 1) {
           const pocket = new THREE.Mesh(
             new THREE.BufferGeometry(),
-            new THREE.MeshBasicMaterial({
-              color: 0xffefb0,
-              transparent: true,
-              opacity: 0.16,
-              depthWrite: false,
-              side: THREE.DoubleSide,
-            })
+            new THREE.MeshBasicMaterial({ color: 0xffefb0, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide })
           );
           pocket.renderOrder = 5;
           group.add(pocket);
@@ -6935,14 +6973,7 @@
 
         const sparkles = new THREE.Points(
           new THREE.BufferGeometry(),
-          new THREE.PointsMaterial({
-            color: 0xfff2c4,
-            size: 0.72,
-            transparent: true,
-            opacity: 0.44,
-            depthWrite: false,
-            sizeAttenuation: true,
-          })
+          new THREE.PointsMaterial({ color: 0xfff2c4, size: 0.72, transparent: true, opacity: 0.44, depthWrite: false, sizeAttenuation: true })
         );
         sparkles.renderOrder = 6;
         group.add(sparkles);
@@ -6951,31 +6982,19 @@
         crystalPivot.position.y = 0.46;
         group.add(crystalPivot);
 
-        const crystalCoreMaterial = new THREE.MeshStandardMaterial({
-          color: 0xf6c766,
-          emissive: 0xc27a20,
-          emissiveIntensity: 0.2,
-          roughness: 0.24,
-          metalness: 0.08,
-          flatShading: true,
-        });
-        const crystalCore = new THREE.Mesh(crystalCoreGeometry, crystalCoreMaterial);
+        const crystalCore = new THREE.Mesh(crystalCoreGeometry, new THREE.MeshStandardMaterial({
+          color: 0xf6c766, emissive: 0xc27a20, emissiveIntensity: 0.2, roughness: 0.24, metalness: 0.08, flatShading: true,
+        }));
         crystalCore.castShadow = CONFIG.shadowEnabled;
         crystalCore.receiveShadow = CONFIG.shadowEnabled;
         crystalCore.scale.set(1, 1.44, 1);
         crystalPivot.add(crystalCore);
 
-        const crystalShardMaterial = new THREE.MeshStandardMaterial({
-          color: 0xffd786,
-          emissive: 0xa96d1a,
-          emissiveIntensity: 0.14,
-          roughness: 0.3,
-          metalness: 0.06,
-          flatShading: true,
-        });
         const crystalShards = [];
         for (let i = 0; i < 4; i += 1) {
-          const shard = new THREE.Mesh(crystalShardGeometry, crystalShardMaterial);
+          const shard = new THREE.Mesh(crystalShardGeometry, new THREE.MeshStandardMaterial({
+            color: 0xffd786, emissive: 0xa96d1a, emissiveIntensity: 0.14, roughness: 0.3, metalness: 0.06, flatShading: true,
+          }));
           shard.castShadow = CONFIG.shadowEnabled;
           shard.receiveShadow = CONFIG.shadowEnabled;
           crystalPivot.add(shard);
@@ -6984,45 +7003,78 @@
 
         const crystalGlow = new THREE.Mesh(
           new THREE.SphereGeometry(0.8, 10, 10),
-          new THREE.MeshBasicMaterial({
-            color: 0xffcc73,
-            transparent: true,
-            opacity: 0.12,
-            depthWrite: false,
-          })
+          new THREE.MeshBasicMaterial({ color: 0xffcc73, transparent: true, opacity: 0.12, depthWrite: false })
         );
         crystalGlow.position.y = 0.14;
         crystalPivot.add(crystalGlow);
 
         scene.add(group);
-        const node = {
-          x,
-          z,
-          group,
-          haze,
-          inner,
-          pockets,
-          sparkles,
-          crystalPivot,
-          crystalCore,
-          crystalShards,
-          crystalGlow,
+        return { group, haze, inner, pockets, sparkles, crystalPivot, crystalCore, crystalShards, crystalGlow };
+      }
+
+      function makeNode(type, id, active) {
+        const meshes = buildNodeMeshes();
+        const yMin = type === "plume" ? CONFIG.spicePlumeYieldMin : CONFIG.spiceSmallYieldMin;
+        const yMax = type === "plume" ? CONFIG.spicePlumeYieldMax : CONFIG.spiceSmallYieldMax;
+        const totalYield = Math.floor(randomRange(yMin, yMax + 1, rng));
+        return {
+          x: 0, z: 0,
+          ...meshes,
           crystalBaseY: 0.46,
           phase: randomRange(0, Math.PI * 2, rng),
           seed: randomRange(0, Math.PI * 2, rng),
-          active: true,
+          active: false,
           respawnTimer: 0,
+          type,
+          totalYield,
+          remaining: totalYield,
+          decayTimer: -1,
+          id,
         };
-        updateSpicePatchVisual(node);
+      }
+
+      // Create 8 small patches
+      while (nodes.length < CONFIG.spiceNodeCount) {
+        const spawn = findSpiceNodeSpawn();
+        if (!spawn) break;
+        const node = makeNode("small", nodes.length, true);
+        placeSpiceNode(node, spawn.x, spawn.z);
+        node.active = true;
+        node.group.visible = true;
         nodes.push(node);
+      }
+
+      // Create 1 plume node (starts inactive; may activate on initial roll below)
+      const plumeNode = makeNode("plume", nodes.length, false);
+      plumeNode.group.visible = false;
+      nodes.push(plumeNode);
+
+      // On game load: 15% chance of an immediate plume spawn (uses world seed)
+      if (rng() < CONFIG.spicePlumeInitialChance) {
+        const plumeSpawn = findSpiceNodeSpawn(plumeNode);
+        if (plumeSpawn) {
+          placeSpiceNode(plumeNode, plumeSpawn.x, plumeSpawn.z);
+          plumeNode.active = true;
+          plumeNode.group.visible = true;
+        }
       }
 
       return {
         nodes,
+        plumeNode,
         relocateNode(node) {
           const spawn = findSpiceNodeSpawn(node);
           if (!spawn) return false;
           placeSpiceNode(node, spawn.x, spawn.z);
+          return true;
+        },
+        spawnPlume() {
+          if (plumeNode.active) return false;
+          const spawn = findSpiceNodeSpawn(plumeNode);
+          if (!spawn) return false;
+          placeSpiceNode(plumeNode, spawn.x, spawn.z);
+          plumeNode.active = true;
+          plumeNode.group.visible = true;
           return true;
         },
       };
@@ -7822,7 +7874,7 @@
       }
     }
 
-    function spawnDroppedSpice(px, pz) {
+    function spawnDroppedSpice(px, pz, amount = 1) {
       const groundY = samplePlayerGroundHeight(px, pz);
       const mat = new THREE.MeshStandardMaterial({
         color: 0xc4780a,
@@ -7837,7 +7889,7 @@
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.5), mat);
       mesh.position.set(px, groundY + 0.08, pz);
       scene.add(mesh);
-      droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08 });
+      droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08, amount });
     }
 
     const DROPPED_SPICE_DECAY = 15;
@@ -7864,12 +7916,13 @@
 
         drop.mat.emissiveIntensity = 0.7 + Math.sin(state.elapsed * 3.5) * 0.4;
 
-        // Pickup — only if player isn't already carrying
-        if (state.spiceCarry === 0 && drop.timer > 0) {
+        // Pickup — if player has bag space
+        if (state.spiceCarry < CONFIG.spiceMaxCarry && drop.timer > 0) {
           const dx = player.position.x - drop.mesh.position.x;
           const dz = player.position.z - drop.mesh.position.z;
           if (dx * dx + dz * dz <= DROPPED_SPICE_PICKUP_RADIUS_SQ) {
-            state.spiceCarry = 1;
+            const take = Math.min(drop.amount, CONFIG.spiceMaxCarry - state.spiceCarry);
+            state.spiceCarry += take;
             broadcastWormRadio("Spice recovered from fallen warrior.");
             scene.remove(drop.mesh);
             drop.mat.dispose();
@@ -7983,7 +8036,7 @@
         spawnPos, phaseOffset: Math.random() * Math.PI * 2,
       };
       npc.onKill = () => {
-        spawnDroppedSpice(npc.root.position.x, npc.root.position.z);
+        spawnDroppedSpice(npc.root.position.x, npc.root.position.z, 3);
         broadcastWormRadio("Enemy slain — recover the melange!");
       };
       return npc;
@@ -8647,7 +8700,7 @@
 	      ui.hudSpeed.textContent = `Spd ${horizontalSpeed.toFixed(1)} ${moveMode}`;
 	      ui.hudPos.textContent = `Pos: (${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
 	      ui.hudSurface.textContent = `Surf ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
-	      ui.hudCargo.textContent = `Carry ${state.spiceCarry}`;
+	      ui.hudCargo.textContent = `Carry ${state.spiceCarry}/${CONFIG.spiceMaxCarry}`;
 	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
 	      if (state.equippedWeapon === "maula") {
 	        const maulaTotal = state.maulaReserveAmmo + (state.maulaLoaded ? 1 : 0);
@@ -8713,8 +8766,10 @@
         ui.hudStatus.textContent = "Worm incoming";
       } else if (state.harvestNode) {
         ui.hudStatus.textContent = "Harvesting spice";
+      } else if (state.spiceCarry >= CONFIG.spiceMaxCarry) {
+        ui.hudStatus.textContent = state.surfaceType === "rock" ? "Bag full — deposit" : "Bag full — get to rock";
       } else if (state.spiceCarry > 0) {
-        ui.hudStatus.textContent = state.surfaceType === "rock" ? "Spice secured" : "Get back to rock";
+        ui.hudStatus.textContent = state.surfaceType === "rock" ? "Spice secured" : "Find more spice";
       } else if (state.shieldActive && state.surfaceType === "sand") {
         ui.hudStatus.textContent = "Shield draws worms";
       } else if (state.interactHint.includes("Hold E")) {
@@ -8998,7 +9053,7 @@
       socket.on("playerKilled", ({ id, killerId }) => {
         if (id === socket.id) {
           if (state.spiceCarry > 0) {
-            spawnDroppedSpice(player.position.x, player.position.z);
+            spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
           }
           state.pvpDead = true;
           broadcastWormRadio("You were killed!");
