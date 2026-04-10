@@ -288,6 +288,30 @@
       display: block;
     }
 
+    #portalPrompt {
+      position: fixed;
+      left: 50%;
+      bottom: 120px;
+      transform: translateX(-50%);
+      z-index: 22;
+      padding: 9px 18px;
+      border-radius: 999px;
+      background: rgba(10, 6, 0, 0.78);
+      border: 1px solid rgba(255, 205, 120, 0.48);
+      color: #ffe1a6;
+      font-size: 14px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 120ms linear;
+      white-space: nowrap;
+    }
+
+    #portalPrompt.show {
+      opacity: 1;
+    }
+
     #deathFlash {
       position: fixed;
       inset: 0;
@@ -556,6 +580,7 @@
   <div id="reticle"></div>
   <div id="hitMarker"></div>
   <div id="damageNumbers"></div>
+  <div id="portalPrompt">Press E to Enter Portal</div>
 
   <div id="resumeHint">CLICK TO RESUME</div>
 
@@ -704,6 +729,9 @@
       spiceNodeMinSpacing: 95,
       spiceNodeMinSafeClearance: 46,
       spiceNodeEdgePadding: 70,
+      portalTriggerRadius: 4.2,
+      portalVisualRadius: 3.2,
+      portalVisualHeight: 7.2,
 
       thumperDuration: 24,
       thumperPulseInterval: 0.9,
@@ -902,6 +930,7 @@
       deathHint: document.getElementById("deathHint"),
       hitMarker: document.getElementById("hitMarker"),
       damageNumbers: document.getElementById("damageNumbers"),
+      portalPrompt: document.getElementById("portalPrompt"),
       hudDay: document.getElementById("hudDay"),
       hudPhase: document.getElementById("hudPhase"),
       hudSpeed: document.getElementById("hudSpeed"),
@@ -1000,6 +1029,7 @@
     const _urlSeed = new URLSearchParams(window.location.search).get("seed");
     const MAP_SEED = _urlSeed ? (parseInt(_urlSeed, 16) >>> 0) : Math.floor(Math.random() * 0xFFFFFF);
     const rng = mulberry32(MAP_SEED);
+    const portalInboundParams = new URLSearchParams(window.location.search);
 
     // Each dune layer: random ridge direction and phase offset, fixed amplitude and frequency magnitude.
     const DUNE_LAYERS = [
@@ -1079,6 +1109,7 @@
       depositToastTimer: 0,
       damageFlashTimer: 0,
       hitMarkerTimer: 0,
+      portalRedirecting: false,
     };
 
     const keyState = {
@@ -1178,6 +1209,7 @@
     var plumeEventState = { active: false, elapsed: 0, burstRing: null, dustPuffs: [], coreNode: null };
 	    const spiceObjective = createSpiceObjective();
     const spiceDepot = createSpiceDepot();
+    const portalSystem = createPortalSystem();
 	    const trainingDummy = createTrainingDummy();
     const shieldedDummies = [
       createTrainingDummy({ offsetX: 8.8, offsetZ: -6.2, hasShield: true }),
@@ -1195,8 +1227,9 @@
     const maulaDustFX = createMaulaDustFX();
     const knifeHitFX = createKnifeHitFX();
     const droppedSpicePickups = [];
-    const npcs = [];
-	    placePlayerOnGround();
+	    const npcs = [];
+		    placePlayerOnGround();
+    portalSystem.applyInitialSpawn();
     npcs.push(createNpc(CONFIG.playerStart.x + 30, CONFIG.playerStart.z + 15));
     npcs.push(createNpc(CONFIG.playerStart.x - 20, CONFIG.playerStart.z + 35));
 	    bindEvents();
@@ -7321,6 +7354,219 @@
       };
     }
 
+    function normalizePortalRefUrl(rawRef) {
+      if (!rawRef) return null;
+      const trimmed = rawRef.trim();
+      if (!trimmed) return null;
+      const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      try {
+        const url = new URL(withProtocol);
+        if (!/^https?:$/.test(url.protocol)) return null;
+        return url.toString();
+      } catch {
+        return null;
+      }
+    }
+
+    function createPortalLabel(text, color = "#ffe6b0") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(18, 12, 6, 0.62)";
+      ctx.fillRect(6, 22, canvas.width - 12, canvas.height - 44);
+      ctx.strokeStyle = "rgba(255, 210, 140, 0.68)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(6, 22, canvas.width - 12, canvas.height - 44);
+      ctx.font = "700 42px Arial";
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, canvas.width * 0.5, canvas.height * 0.5);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(9, 2.2, 1);
+      return sprite;
+    }
+
+    function createPortalSystem() {
+      function findPortalPlacement(anchorX, anchorZ, minDist, maxDist) {
+        for (let i = 0; i < 180; i += 1) {
+          const angle = rng() * Math.PI * 2;
+          const dist = randomRange(minDist, maxDist, rng);
+          const x = anchorX + Math.cos(angle) * dist;
+          const z = anchorZ + Math.sin(angle) * dist;
+          if (!isInsideWorldBounds(x, z, 20)) continue;
+          if (getSurfaceType(x, z) !== "sand") continue;
+          return { x, z, angle };
+        }
+        return null;
+      }
+
+      const currentGameRef = `${window.location.origin}${window.location.pathname}`;
+      const inboundRef = normalizePortalRefUrl(portalInboundParams.get("ref"));
+      const spawnedFromPortal = portalInboundParams.get("portal") === "true";
+      const portals = [];
+      let activateKeyConsumed = false;
+
+      function buildPortalVisual(x, z, tint, labelText) {
+        const group = new THREE.Group();
+        group.position.set(x, sampleGroundHeight(x, z), z);
+        scene.add(group);
+
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(CONFIG.portalVisualRadius, 0.35, 12, 40),
+          new THREE.MeshStandardMaterial({
+            color: tint,
+            emissive: tint,
+            emissiveIntensity: 0.45,
+            roughness: 0.24,
+            metalness: 0.1,
+          })
+        );
+        ring.position.y = CONFIG.portalVisualHeight * 0.52;
+        group.add(ring);
+
+        const core = new THREE.Mesh(
+          new THREE.CircleGeometry(CONFIG.portalVisualRadius * 0.82, 28),
+          new THREE.MeshBasicMaterial({
+            color: tint,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+          })
+        );
+        core.position.y = ring.position.y;
+        group.add(core);
+
+        const label = createPortalLabel(labelText);
+        label.position.set(0, ring.position.y + 2.2, 0);
+        group.add(label);
+
+        return { group, ring, core, label, worldPos: new THREE.Vector3(x, group.position.y, z) };
+      }
+
+      function buildForwardParams() {
+        const params = new URLSearchParams(window.location.search);
+        params.delete("portal");
+        params.set("ref", currentGameRef);
+        const vel = player.userData.velocity;
+        const speed = Math.hypot(vel.x, vel.z);
+        params.set("speed", speed.toFixed(2));
+        params.set("speed_x", vel.x.toFixed(3));
+        params.set("speed_y", vel.y.toFixed(3));
+        params.set("speed_z", vel.z.toFixed(3));
+        params.set("rotation_x", camera.rotation.x.toFixed(4));
+        params.set("rotation_y", player.rotation.y.toFixed(4));
+        params.set("rotation_z", camera.rotation.z.toFixed(4));
+        params.set("hp", Math.round(THREE.MathUtils.clamp(state.playerHealth, 1, 100)).toString());
+        if (!params.has("color")) params.set("color", "amber");
+        return params;
+      }
+
+      function buildDestinationUrl(baseUrl) {
+        const target = new URL(baseUrl, window.location.href);
+        const params = buildForwardParams();
+        params.forEach((value, key) => target.searchParams.set(key, value));
+        return target.toString();
+      }
+
+      function triggerPortal(portal) {
+        if (state.portalRedirecting) return;
+        state.portalRedirecting = true;
+        state.paused = true;
+        state.interactHint = "Entering portal...";
+        window.location.href = buildDestinationUrl(portal.destinationUrl);
+      }
+
+      const exitPlacement = findPortalPlacement(spiceDepot.worldPos.x, spiceDepot.worldPos.z, 44, 92)
+        || { x: spiceDepot.worldPos.x + 58, z: spiceDepot.worldPos.z + 24 };
+      const exitVisual = buildPortalVisual(exitPlacement.x, exitPlacement.z, 0x7ec8ff, "Vibe Jam Portal");
+      portals.push({
+        ...exitVisual,
+        kind: "exit",
+        destinationUrl: "https://vibejam.cc/portal/2026",
+      });
+
+      let spawnPoint = null;
+      if (spawnedFromPortal && inboundRef) {
+        const startPlacement = findPortalPlacement(CONFIG.playerStart.x, CONFIG.playerStart.z, 20, 52)
+          || { x: CONFIG.playerStart.x + 30, z: CONFIG.playerStart.z + 8, angle: 0 };
+        const startVisual = buildPortalVisual(startPlacement.x, startPlacement.z, 0xbe98ff, "Return Portal");
+        portals.push({
+          ...startVisual,
+          kind: "return",
+          destinationUrl: inboundRef,
+        });
+
+        const outDir = new THREE.Vector3(Math.cos(startPlacement.angle), 0, Math.sin(startPlacement.angle));
+        const sx = startPlacement.x + outDir.x * (CONFIG.portalTriggerRadius + 3.2);
+        const sz = startPlacement.z + outDir.z * (CONFIG.portalTriggerRadius + 3.2);
+        spawnPoint = new THREE.Vector3(sx, samplePlayerGroundHeight(sx, sz), sz);
+      }
+
+      return {
+        hasInboundPortal: spawnedFromPortal && Boolean(inboundRef),
+        spawnPoint,
+        applyInitialSpawn() {
+          if (!spawnPoint) return;
+          player.position.copy(spawnPoint);
+          player.userData.velocity.set(0, 0, 0);
+          updateCameraRig(1);
+        },
+        update(delta) {
+          if (ui.portalPrompt) {
+            ui.portalPrompt.classList.remove("show");
+          }
+          let nearest = null;
+          let nearestDistSq = Infinity;
+
+          for (const portal of portals) {
+            const pulse = 0.5 + (0.5 * Math.sin((state.elapsed * 2.2) + (portal.kind === "return" ? 1.2 : 0)));
+            portal.ring.rotation.z += delta * 0.7;
+            portal.ring.material.emissiveIntensity = 0.32 + pulse * 0.7;
+            portal.core.material.opacity = 0.12 + pulse * 0.2;
+            portal.core.scale.setScalar(0.92 + pulse * 0.16);
+            portal.label.quaternion.copy(camera.quaternion);
+
+            const dx = player.position.x - portal.worldPos.x;
+            const dz = player.position.z - portal.worldPos.z;
+            const distSq = (dx * dx) + (dz * dz);
+            if (distSq < nearestDistSq) {
+              nearestDistSq = distSq;
+              nearest = portal;
+            }
+          }
+
+          if (!nearest) return;
+          const triggerSq = CONFIG.portalTriggerRadius * CONFIG.portalTriggerRadius;
+          const canUse = controls.isLocked && !state.paused;
+          const ePressed = keyState.KeyE && canUse;
+          if (nearestDistSq <= triggerSq && ePressed && !activateKeyConsumed) {
+            activateKeyConsumed = true;
+            triggerPortal(nearest);
+            return;
+          }
+          if (!keyState.KeyE) activateKeyConsumed = false;
+          if (nearestDistSq <= (triggerSq * 5) && !state.portalRedirecting) {
+            const prompt = nearest.kind === "return"
+              ? "Press E to Enter Return Portal"
+              : "Press E to Enter Vibe Jam Portal";
+            state.interactHint = prompt;
+            if (ui.portalPrompt) {
+              ui.portalPrompt.textContent = prompt;
+              ui.portalPrompt.classList.add("show");
+            }
+          }
+        },
+      };
+    }
+
         function pickWormTargetForActor(actor) {
       const velocity = actor.velocity ?? tempWormPull.set(0, 0, 0);
       const speed = Math.hypot(velocity.x, velocity.z);
@@ -8399,9 +8645,12 @@
         ui.resumeHint.classList.add("visible");
       });
 
+	      const portalBody = portalSystem.hasInboundPortal
+	        ? "You arrived through a portal. Step into the return portal to go back, or find the Vibe Jam portal to continue."
+	        : "Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.";
 	      setOverlay(
 	        "Spice Jam",
-	        "Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.",
+	        portalBody,
 	        "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper.",
 	        "Click to Play"
 	      );
@@ -8947,6 +9196,8 @@
         ui.hudStatus.textContent = state.surfaceType === "rock" ? "Spice secured" : "Find more spice";
       } else if (state.shieldActive && state.surfaceType === "sand") {
         ui.hudStatus.textContent = "Shield draws worms";
+      } else if (state.interactHint.includes("Press E to enter")) {
+        ui.hudStatus.textContent = state.interactHint;
       } else if (state.interactHint.includes("Hold E")) {
         ui.hudStatus.textContent = "Hold E to harvest";
       } else {
@@ -9011,6 +9262,7 @@
 	      updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
+      portalSystem.update(delta);
       updatePlumeEvent(delta);
       updateDroppedSpice(delta);
       updateNpcs(delta);
