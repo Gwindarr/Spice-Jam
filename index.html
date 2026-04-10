@@ -1230,8 +1230,23 @@
 	    const npcs = [];
 		    placePlayerOnGround();
     portalSystem.applyInitialSpawn();
-    npcs.push(createNpc(CONFIG.playerStart.x + 30, CONFIG.playerStart.z + 15));
-    npcs.push(createNpc(CONFIG.playerStart.x - 20, CONFIG.playerStart.z + 35));
+    const mesaNpcSpawns = [
+      { dx: 48, dz: 18, shielded: false },   // near
+      { dx: -56, dz: 26, shielded: false },  // near
+      { dx: 74, dz: -14, shielded: false },  // mid
+      { dx: -70, dz: 54, shielded: true },   // mid shielded (visible side)
+      { dx: 102, dz: 42, shielded: false },  // farther
+      { dx: 26, dz: 88, shielded: true },    // farther shielded (in front arc)
+    ];
+    for (const spawn of mesaNpcSpawns) {
+      npcs.push(
+        createNpc(
+          CONFIG.playerStart.x + spawn.dx,
+          CONFIG.playerStart.z + spawn.dz,
+          { hasShield: spawn.shielded }
+        )
+      );
+    }
 	    bindEvents();
     updateDayNight(0);
     refreshHud();
@@ -3765,6 +3780,7 @@
 	      }
 
 	      let bestShieldedDummy = null;
+      let bestShieldedNpc = null;
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
 	        sd.headDot.getWorldPosition(tempProjectileCenter);
@@ -3786,12 +3802,22 @@
         npc.headDot.getWorldPosition(tempProjectileCenter);
         if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.headHitRadius + 0.25)) {
           const d = origin.distanceTo(tempProjectileCenter);
-          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = true; }
+          if (d < bestDistance) {
+            bestDistance = d;
+            bestType = npc.shieldActive ? "shielded_npc" : "npc:" + ni;
+            bestHeadshot = true;
+            bestShieldedNpc = npc.shieldActive ? npc : null;
+          }
         }
         npc.targetPivot.getWorldPosition(tempProjectileCenter);
         if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, npc.bodyHitRadius + 0.25)) {
           const d = origin.distanceTo(tempProjectileCenter);
-          if (d < bestDistance) { bestDistance = d; bestType = "npc:" + ni; bestHeadshot = false; }
+          if (d < bestDistance) {
+            bestDistance = d;
+            bestType = npc.shieldActive ? "shielded_npc" : "npc:" + ni;
+            bestHeadshot = false;
+            bestShieldedNpc = npc.shieldActive ? npc : null;
+          }
         }
       }
 
@@ -3820,8 +3846,20 @@
 	        if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
 	          triggerHoltzmanDetonation(bestShieldedDummy.group.position.clone());
 	        }
+	      } else if (bestType === "shielded_npc" && bestShieldedNpc) {
+        state.holtzmanFuse += delta;
+        bestShieldedNpc.shieldHitFlash = Math.sin(state.elapsed * 45) > 0 ? 1.0 : 0.05;
+        bestShieldedNpc.shieldMessageTimer = (bestShieldedNpc.shieldMessageTimer || 0) - delta;
+        if (bestShieldedNpc.shieldMessageTimer <= 0) {
+          const fusePercent = Math.round((state.holtzmanFuse / CONFIG.holtzmanWarningTime) * 100);
+          broadcastWormRadio(`WARNING — HOLTZMAN RESONANCE ${fusePercent}% — RELEASE BEAM!`);
+          bestShieldedNpc.shieldMessageTimer = 0.12;
+        }
+        if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
+          triggerHoltzmanDetonation(bestShieldedNpc.group.position.clone());
+        }
 	      }
-	      if (bestType !== "shielded") state.holtzmanFuse = 0;
+	      if (bestType !== "shielded" && bestType !== "shielded_npc") state.holtzmanFuse = 0;
 
 	      // Rock impact FX
 	      if (bestType === null && rockHit) {
@@ -5718,6 +5756,18 @@
 	            }
 	          }
 	        }
+	        // NPCs (including shielded NPCs) take blast damage
+	        for (const npc of npcs) {
+	          if (!npc || npc.dead) continue;
+	          const nDist = ePos.distanceTo(npc.group.position);
+	          if (nDist < CONFIG.holtzmanExplosionLethalRadius) {
+	            hitTarget(npc, 2.0, npc.health, { silent: true, bypassShield: true });
+	          } else if (nDist < CONFIG.holtzmanExplosionDamageRadius) {
+	            const f = 1 - (nDist - CONFIG.holtzmanExplosionLethalRadius) /
+	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
+	            hitTarget(npc, 1.5, CONFIG.holtzmanExplosionDamage * f, { silent: true, bypassShield: true });
+	          }
+	        }
 	      }
 
 	      if (t >= dur) {
@@ -6712,6 +6762,10 @@
     //                    Damage itself is still applied every frame.
     function hitTarget(target, intensity, damage = 0, opts = {}) {
       if (target.dead) return;
+      if (target.shieldActive && opts.bypassShield !== true) {
+        target.shieldHitFlash = Math.max(target.shieldHitFlash ?? 0, Math.max(0.35, intensity));
+        return;
+      }
       target.hitFlash = Math.max(target.hitFlash, intensity);
       if (target.wobble !== undefined) target.wobble = Math.max(target.wobble, intensity);
       if (damage > 0) {
@@ -8278,6 +8332,16 @@
           beginDevour();
           return;
         }
+        // NPCs in kill zone
+        const npcKillRadiusSq = CONFIG.wormKillRadius * CONFIG.wormKillRadius;
+        for (const npc of npcs) {
+          if (!npc || npc.dead) continue;
+          const ndx = npc.group.position.x - state.wormTarget.x;
+          const ndz = npc.group.position.z - state.wormTarget.z;
+          if ((ndx * ndx) + (ndz * ndz) <= npcKillRadiusSq) {
+            hitTarget(npc, 1.8, npc.health, { silent: true, bypassShield: true });
+          }
+        }
       }
 
       state.wormTimer = Math.max(0, state.wormTimer - delta);
@@ -8357,7 +8421,7 @@
     }
 
     // ── NPC System ─────────────────────────────────────────────────────────────
-    function createNpc(spawnX, spawnZ) {
+    function createNpc(spawnX, spawnZ, opts = {}) {
       const groundY = samplePlayerGroundHeight(spawnX, spawnZ);
 
       // Full player model — recolour in-place, add mohawk
@@ -8400,6 +8464,25 @@
         spike.castShadow = CONFIG.shadowEnabled;
         spike.position.set(0, 4.72, -0.22 + i * 0.16);
         root.add(spike);
+      }
+
+      let shieldSphere = null;
+      if (opts.hasShield) {
+        shieldSphere = new THREE.Mesh(
+          new THREE.SphereGeometry(1.28, 14, 12),
+          new THREE.MeshStandardMaterial({
+            color: 0x8fe1ff,
+            emissive: 0x5fc8ff,
+            emissiveIntensity: 0.85,
+            transparent: true,
+            opacity: 0.3,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          })
+        );
+        shieldSphere.position.y = 3.9;
+        shieldSphere.renderOrder = 6;
+        root.add(shieldSphere);
       }
 
       // Spice cargo always visible + glowing on NPC
@@ -8451,6 +8534,9 @@
         bodyHitRadius: 1.4,
         headHitRadius: 0.55,
         spawnPos, phaseOffset: Math.random() * Math.PI * 2,
+        shieldActive: !!opts.hasShield,
+        shieldSphere,
+        shieldHitFlash: 0,
       };
       npc.onKill = () => {
         spawnDroppedSpice(npc.root.position.x, npc.root.position.z, 3);
@@ -8486,18 +8572,21 @@
       npc.deadFallTimer = 0;
       npc.respawnTimer = 0;
       npc.hitFlash = 0;
+      npc.shieldHitFlash = 0;
       npc.poisonTimer = 0;
       npc._dpsAccum = undefined; npc._dpsLastEmit = undefined;
       npc._poisonAccum = undefined; npc._poisonLastEmit = undefined;
       // Re-show spice cargo on respawn
       if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
       if (npc.root.userData.spiceGlowMesh)  npc.root.userData.spiceGlowMesh.visible  = true;
+      if (npc.shieldSphere) npc.shieldSphere.visible = npc.shieldActive;
     }
 
     function updateNpcs(delta) {
       for (const npc of npcs) {
         npc.hitFlash = Math.max(0, npc.hitFlash - delta * 1.8);
         npc.wobble = Math.max(0, npc.wobble - delta * 2.4);
+        npc.shieldHitFlash = Math.max(0, (npc.shieldHitFlash || 0) - (delta * 3.0));
 
         if (npc.dead) {
           npc.deadFallTimer = Math.min(1, npc.deadFallTimer + delta / 0.6);
@@ -8535,6 +8624,15 @@
         const pulse = Math.sin(state.elapsed * 2.8 + npc.phaseOffset) * 0.5 + 0.5;
         if (npc.cargoMat) npc.cargoMat.emissiveIntensity = 0.5 + pulse * 0.6;
         if (npc.glowMat)  npc.glowMat.opacity = 0.07 + pulse * 0.12;
+
+        if (npc.shieldSphere) {
+          const hitGlow = npc.shieldHitFlash || 0;
+          npc.shieldSphere.visible = npc.shieldActive;
+          npc.shieldSphere.material.opacity = 0.24 + pulse * 0.1 + hitGlow * 0.45;
+          npc.shieldSphere.material.emissiveIntensity = 0.75 + pulse * 0.2 + hitGlow * 1.1;
+          const s = 1.02 + pulse * 0.03 + hitGlow * 0.16;
+          npc.shieldSphere.scale.setScalar(s);
+        }
 
         // Health bar billboard + colour update
         npc.healthBarGroup.quaternion.copy(camera.quaternion);
