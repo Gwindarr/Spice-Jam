@@ -702,6 +702,7 @@
       noiseSignRiseRate: 0.28,
       noiseSignDecayRate: 0.09,
       noiseSignRockDecayRate: 0.28,
+      noiseHotspotMaxEvents: 24,
 
       spiceNodeCount: 8,
       spiceMaxCarry: 10,
@@ -801,7 +802,7 @@
 	      shieldNoiseBonusSand: 0.62,
 	      shieldNoiseBonusRock: 0.18,
 	      shieldSignFloorSand: 0.58,
-	      shieldHotspotBonus: 0.34,
+      shieldHotspotBonus: 0.34,
 
 	      wormNoisePressureSpawnThreshold: 0.68,
       wormNoisePressureRise: 0.38,
@@ -1055,6 +1056,7 @@
       noiseLevel: 0,
       signLevel: 0,
       noiseImpulse: 0,
+      noiseHotspots: [],
       surfaceType: "sand",
       spiceCarry: 0,
       spiceScore: 0,
@@ -1459,6 +1461,8 @@
 
 	      return new THREE.MeshStandardMaterial({
 	        color: 0xc8b296,
+          emissive: 0x6d5b46,
+          emissiveIntensity: 0,
 	        map: diffuseMap,
 	        normalMap,
 	        normalScale: new THREE.Vector2(1.05, 1.05),
@@ -4066,6 +4070,58 @@
       state.noiseImpulse = THREE.MathUtils.clamp(state.noiseImpulse + amount, 0, 1);
     }
 
+    function getNoiseHotspotTypeWeight(kind) {
+      switch (kind) {
+        case "atomic_holtzman": return 1.15;
+        case "thumper": return 1.05;
+        case "spice_blow": return 0.92;
+        case "battle": return 0.86;
+        default: return 1.0;
+      }
+    }
+
+    function getNoiseHotspotDefaults(kind) {
+      switch (kind) {
+        case "atomic_holtzman":
+          return { radius: 520, ttl: 28, signLevel: 0.98 };
+        case "thumper":
+          return { radius: 260, ttl: 1.0, signLevel: 0.92 };
+        case "spice_blow":
+          return { radius: 210, ttl: 10, signLevel: 0.72 };
+        case "battle":
+          return { radius: 130, ttl: 5, signLevel: 0.6 };
+        default:
+          return { radius: 120, ttl: 4, signLevel: 0.5 };
+      }
+    }
+
+    function emitNoiseHotspot(kind, position, strength = 1, opts = {}) {
+      if (!position) return;
+      const defaults = getNoiseHotspotDefaults(kind);
+      const ttl = Math.max(0.05, opts.ttl ?? defaults.ttl);
+      const hotspot = {
+        kind,
+        position: new THREE.Vector3(position.x, sampleGroundHeight(position.x, position.z), position.z),
+        baseStrength: THREE.MathUtils.clamp(strength, 0, 1),
+        signLevel: THREE.MathUtils.clamp(opts.signLevel ?? defaults.signLevel, 0, 1),
+        radius: Math.max(1, opts.radius ?? defaults.radius),
+        ttl,
+        maxTtl: ttl,
+      };
+      state.noiseHotspots.push(hotspot);
+      if (state.noiseHotspots.length > CONFIG.noiseHotspotMaxEvents) {
+        state.noiseHotspots.splice(0, state.noiseHotspots.length - CONFIG.noiseHotspotMaxEvents);
+      }
+    }
+
+    function updateNoiseHotspots(delta) {
+      for (let i = state.noiseHotspots.length - 1; i >= 0; i -= 1) {
+        const hotspot = state.noiseHotspots[i];
+        hotspot.ttl -= delta;
+        if (hotspot.ttl <= 0) state.noiseHotspots.splice(i, 1);
+      }
+    }
+
     function enableAudio() {
       audioState.enabled = true;
     }
@@ -5622,7 +5678,12 @@
 	      state.holtzmanExplosionDamageDealt = false;
 	      state.holtzmanExplosionPos.copy(pos);
 	      state.wormShake = CONFIG.wormShakeBreach * 1.4;
-	      emitNoiseImpulse(1.0);
+      emitNoiseHotspot("atomic_holtzman", pos, 1.0, {
+        radius: 540,
+        ttl: 30,
+        signLevel: 1.0,
+      });
+	      emitNoiseImpulse(0.2);
 	    	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
 	    }
 
@@ -7262,7 +7323,11 @@
       }
 
       sfx.spiceBlow.play({ volumeMultiplier: 1.0 });
-      emitNoiseImpulse(0.5);
+      emitNoiseHotspot("spice_blow", node.group.position, 0.82, {
+        radius: 230,
+        ttl: 12,
+        signLevel: 0.76,
+      });
       plumeEventState.active = true;
       plumeEventState.elapsed = 0;
     }
@@ -7744,11 +7809,58 @@
 	    function sampleStrongestNoiseHotspot() {
       if (state.wormPhase === "devour" || state.wormPhase === "recover") return null;
 
-      // Thumper always takes priority — it is a decoy device
-      const thumperHotspot = getThumperHotspot();
-      if (thumperHotspot) return thumperHotspot;
-
+      const clusterCenter = getPlayerClusterCenter(tempClusterCenter);
       let strongest = null;
+
+      const considerHotspot = (position, rawStrength, signLevel, source, radius = Infinity) => {
+        if (!position) return;
+        if (getSurfaceType(position.x, position.z) !== "sand") return;
+
+        let falloff = 1;
+        if (Number.isFinite(radius)) {
+          const dx = position.x - clusterCenter.x;
+          const dz = position.z - clusterCenter.z;
+          const dist = Math.hypot(dx, dz);
+          falloff = THREE.MathUtils.clamp(1 - (dist / Math.max(1, radius)), 0, 1);
+          if (falloff <= 0) return;
+        }
+
+        const strength = THREE.MathUtils.clamp(rawStrength * falloff, 0, 1);
+        if (strength < CONFIG.wormHotspotMinIntensity) return;
+        if (strongest && strongest.strength >= strength) return;
+
+        strongest = {
+          position: position.clone(),
+          signLevel: THREE.MathUtils.clamp(signLevel * falloff, 0, 1),
+          strength,
+          source,
+        };
+      };
+
+      const thumperHotspot = getThumperHotspot();
+      if (thumperHotspot) {
+        const defaults = getNoiseHotspotDefaults("thumper");
+        considerHotspot(
+          thumperHotspot.position,
+          thumperHotspot.strength * getNoiseHotspotTypeWeight("thumper"),
+          thumperHotspot.signLevel,
+          "thumper",
+          defaults.radius
+        );
+      }
+
+      for (const hs of state.noiseHotspots) {
+        const life = THREE.MathUtils.clamp(hs.ttl / Math.max(0.001, hs.maxTtl), 0, 1);
+        const lifeScale = 0.28 + (life * 0.72);
+        considerHotspot(
+          hs.position,
+          hs.baseStrength * getNoiseHotspotTypeWeight(hs.kind) * lifeScale,
+          hs.signLevel * lifeScale,
+          hs.kind,
+          hs.radius
+        );
+      }
+
       for (const actor of getWormTrackedActors()) {
         if (actor.surfaceType !== "sand") continue;
 
@@ -7770,14 +7882,12 @@
           0,
           1
         );
-        if (strength < CONFIG.wormHotspotMinIntensity) continue;
-        if (strongest && strongest.strength >= strength) continue;
-
-        strongest = {
-          position: pickWormTargetForActor(actor).clone(),
-          signLevel: actor.signLevel,
+        considerHotspot(
+          pickWormTargetForActor(actor),
           strength,
-        };
+          actor.signLevel,
+          "actor"
+        );
       }
 
       return strongest;
@@ -9117,6 +9227,9 @@
       copyLerpedColor(hemiLight.groundColor, current.a.hemiGround, current.b.hemiGround, amount);
       copyLerpedColor(sun.color, current.a.sunColor, current.b.sunColor, amount);
       sun.intensity = THREE.MathUtils.lerp(current.a.sunIntensity, current.b.sunIntensity, amount);
+      const nightFactor = THREE.MathUtils.clamp((0.62 - sun.intensity) / 0.62, 0, 1);
+      hemiLight.intensity = 0.6 + (nightFactor * 0.38);
+      rockMaterial.emissiveIntensity = 0.02 + (nightFactor * 0.3);
       stars.material.opacity = THREE.MathUtils.clamp((0.72 - sun.intensity) / 0.54, 0, 0.95);
       stars.position.set(player.position.x, 0, player.position.z);
 
@@ -9357,6 +9470,7 @@
       updateKnifeHitFX(delta);
 	      updateHoltzmanExplosion(delta);
 	      updateHoltzmanDeath(delta);
+      updateNoiseHotspots(delta);
 	      updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
