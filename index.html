@@ -1134,9 +1134,14 @@
       wormPhase: "idle",
       wormTimer: 0,
       wormCooldown: 0,
+      wormNetState: "off_map",
+      wormNetPhase: "idle",
+      wormNetTimer: 0,
+      wormNetCooldown: 0,
+      wormNetVisualsEnabled: true,
       wormRecoveryTimer: 0,
-	      wormRadioTimer: 0,
-	      wormRadioMessage: "",
+		      wormRadioTimer: 0,
+		      wormRadioMessage: "",
 	      wormShake: 0,
 	      playerHealth: 100,
 	      equippedWeapon: "knife",
@@ -1333,8 +1338,8 @@
 	    bindEvents();
     updateDayNight(0);
     refreshHud();
-    initMultiplayer();
     animate();
+    initMultiplayer();
 
     function createSpicePatchGeometry(worldX, worldZ, radius, segments, seed, baseY, heightOffset, edgeWarp) {
       const geometry = new THREE.CircleGeometry(radius, segments);
@@ -2636,6 +2641,25 @@
       return THREE.MathUtils.clamp(1 - (distance / Math.max(1, radius)), 0, 1);
     }
 
+    function isLocalWormDeathPhase() {
+      return state.wormPhase === "devour" || state.wormPhase === "recover";
+    }
+
+    function getDisplayedWormPhase() {
+      if (!mp.connected) return state.wormPhase;
+      return isLocalWormDeathPhase() ? state.wormPhase : state.wormNetPhase;
+    }
+
+    function getDisplayedWormTimer() {
+      if (!mp.connected) return state.wormTimer;
+      return isLocalWormDeathPhase() ? state.wormTimer : state.wormNetTimer;
+    }
+
+    function getDisplayedWormState() {
+      if (!mp.connected) return worm.state;
+      return state.wormNetState;
+    }
+
     function getThumperHotspot() {
       if (!thumper.active) return null;
       const strength = THREE.MathUtils.lerp(
@@ -2651,6 +2675,19 @@
       };
     }
 
+    function emitNetworkThumperHotspot(strength = CONFIG.thumperPulseStrength) {
+      if (!mp.connected || !thumper.active) return;
+      mp.emit("noiseHotspot", {
+        kind: "thumper",
+        x: thumper.group.position.x,
+        z: thumper.group.position.z,
+        strength: THREE.MathUtils.clamp(strength, 0, 1),
+        radius: 260,
+        ttl: 1.0,
+        signLevel: 0.92,
+      });
+    }
+
     function triggerThumperPulse(resetAge = true) {
       if (resetAge) thumper.pulseAge = 0;
       thumper.signal = 1;
@@ -2659,6 +2696,7 @@
         volumeMultiplier: resetAge ? 1 : 0.82,
         playbackRate: resetAge ? 0.78 : 0.72,
       });
+      emitNetworkThumperHotspot(CONFIG.thumperPulseStrength);
     }
 
     function setThumperActive(active) {
@@ -4602,26 +4640,28 @@
 	        * cadenceMultiplier;
 	    }
 
-    function getNoiseStatus() {
-      if (state.wormRecoveryTimer > 0) {
-        return "Devoured. Regroup from rock.";
-      }
-      if (state.wormPhase === "devour") {
-        return "Devoured by Shai-Hulud.";
-      }
-      if (state.wormPhase === "recover") {
-        return "Shai-Hulud rises from the dunes.";
-      }
-      if (state.wormPhase === "warning") {
-        if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
-          return "Worm sign detected. Move off the marker.";
-        }
-        return "Worm warning marked in the distance.";
-      }
-      if (state.wormPhase === "breach") {
-        if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
-          return "Breach imminent. Clear the impact zone.";
-        }
+	    function getNoiseStatus() {
+      const wormPhase = getDisplayedWormPhase();
+      const wormState = getDisplayedWormState();
+	      if (state.wormRecoveryTimer > 0) {
+	        return "Devoured. Regroup from rock.";
+	      }
+	      if (wormPhase === "devour" && isLocalWormDeathPhase()) {
+	        return "Devoured by Shai-Hulud.";
+	      }
+	      if (wormPhase === "recover" && isLocalWormDeathPhase()) {
+	        return "Shai-Hulud rises from the dunes.";
+	      }
+	      if (wormPhase === "warning") {
+	        if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
+	          return "Worm sign detected. Move off the marker.";
+	        }
+	        return "Worm warning marked in the distance.";
+	      }
+	      if (wormPhase === "breach") {
+	        if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
+	          return "Breach imminent. Clear the impact zone.";
+	        }
         return "The worm is breaching away from your position.";
       }
 	      if (isShieldOperational()) {
@@ -4639,10 +4679,10 @@
 	      if (state.wormRadioTimer > 0) {
 	        return state.wormRadioMessage;
 	      }
-      if (worm.state === "hunting") {
+      if (wormState === "hunting") {
         return "Deep vibration below the sand. The worm is hunting this sector.";
       }
-      if (worm.state === "inbound") {
+      if (wormState === "inbound") {
         return "Radio: worm sign. Contact inbound.";
       }
       if (thumper.active) {
@@ -8280,7 +8320,7 @@
       player.position.z += tempWormPull.z * pullStrength * delta * 0.18;
     }
 
-    function updateWormMawPose(delta, openAmount, spinRate, tiltStrength) {
+	    function updateWormMawPose(delta, openAmount, spinRate, tiltStrength) {
       const dx = player.position.x - state.wormTarget.x;
       const dz = player.position.z - state.wormTarget.z;
       const distance = Math.max(0.001, Math.hypot(dx, dz));
@@ -8311,23 +8351,26 @@
       );
       wormHazard.throat.scale.setScalar(0.96 + (openAmount * 0.08));
 
-      for (const lobePivot of wormHazard.lobePivots) {
-        lobePivot.rotation.x = 0.16 + (openAmount * 0.76);
-      }
-    }
+	      for (const lobePivot of wormHazard.lobePivots) {
+	        lobePivot.rotation.x = 0.16 + (openAmount * 0.76);
+	      }
+	    }
 
-    function updateWormActor(delta) {
-      if (state.wormCooldown > 0) {
-        state.wormCooldown = Math.max(0, state.wormCooldown - delta);
-      }
+    function updateWormUiTimers(delta) {
       if (state.wormRecoveryTimer > 0) {
         state.wormRecoveryTimer = Math.max(0, state.wormRecoveryTimer - delta);
       }
       if (state.wormRadioTimer > 0) {
         state.wormRadioTimer = Math.max(0, state.wormRadioTimer - delta);
       }
+    }
 
-      const hotspot = sampleStrongestNoiseHotspot();
+	    function updateWormActor(delta) {
+	      if (state.wormCooldown > 0) {
+	        state.wormCooldown = Math.max(0, state.wormCooldown - delta);
+	      }
+
+	      const hotspot = sampleStrongestNoiseHotspot();
       const hotspotStrength = hotspot ? hotspot.strength : 0;
       const pressureResponse = hotspotStrength > worm.noisePressure
         ? CONFIG.wormNoisePressureRise
@@ -8463,39 +8506,296 @@
       state.wormTimer = CONFIG.wormRespawnDelayDuration;
     }
 
-    function finishDevour() {
-      anchorWormAtStrikeTarget();
-      state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
-      state.wormPhase = "idle";
-      state.wormCooldown = CONFIG.wormCooldownDuration;
-      state.wormShake = 0;
-      wormHazard.group.visible = false;
-      startWormRetreat();
-      respawnAtBase();
+	    function finishDevour() {
+	      anchorWormAtStrikeTarget();
+	      state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
+	      state.wormPhase = "idle";
+	      state.wormCooldown = CONFIG.wormCooldownDuration;
+	      state.wormShake = 0;
+	      wormHazard.group.visible = false;
+      if (!mp.connected) {
+	        startWormRetreat();
+	        respawnAtBase();
+      }
+	    }
+
+    function startNetworkWormDevour(data) {
+      if (!data?.target) return;
+      state.wormTarget.set(
+        data.target.x ?? state.wormTarget.x,
+        state.wormTarget.y,
+        data.target.z ?? state.wormTarget.z
+      );
+      state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
+      state.wormDevourStart.copy(player.position);
+      player.userData.velocity.set(0, 0, 0);
+      player.userData.grounded = false;
+      player.userData.jumpBuffer = 0;
+      state.spiceCarry = 0;
+      cancelHarvest();
+      state.noiseLevel = 0;
+      state.signLevel = 0;
+      state.noiseImpulse = 0;
+      state.playerPoisonTimer = 0;
+      state.pvpDead = false;
+      state.pvpDeathTimer = 0;
+      state.pvpDeathPose = 0;
+      state.wormPhase = "devour";
+      state.wormTimer = typeof data.devourDuration === "number"
+        ? data.devourDuration
+        : CONFIG.wormDevourDuration;
+      state.wormShake = Math.max(state.wormShake, CONFIG.wormShakeBreach * 0.9);
+      sfx.wormDevour.play({ volumeMultiplier: 1 });
     }
 
-    function updateWormBreach(delta) {
-      if (mp.connected) {
-        // Online mode: worm phase/target are server-authoritative.
-        state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
-        if (state.wormPhase === "idle") {
-          state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
-          wormHazard.group.visible = false;
+	    function updateWormBreach(delta) {
+	      if (mp.connected && state.wormNetVisualsEnabled) {
+        try {
+        const wormPhase = getDisplayedWormPhase();
+        const wormTimer = getDisplayedWormTimer();
+        const localDeathPhase = isLocalWormDeathPhase();
+	        state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
+	        if (wormPhase === "idle") {
+	          state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
+	          wormHazard.group.visible = false;
+	          return;
+	        }
+	        wormHazard.group.visible = true;
+	        wormHazard.group.position.copy(state.wormTarget);
+
+        if (wormPhase === "devour") {
+          const progress = 1 - (wormTimer / CONFIG.wormDevourDuration);
+          const sink = smoothstep(THREE.MathUtils.clamp((progress - 0.08) / 0.42, 0, 1));
+          const breachRise = smoothstep(THREE.MathUtils.clamp(progress / 0.26, 0, 1));
+          const reveal = smoothstep(THREE.MathUtils.clamp(
+            (progress - CONFIG.wormDevourRevealStart) / (1 - CONFIG.wormDevourRevealStart),
+            0,
+            1
+          ));
+          const holeRadius = CONFIG.wormKillRadius * (1.02 + (sink * 0.23));
+          if (localDeathPhase) {
+            tempDevourTarget.set(
+              state.wormTarget.x,
+              state.wormTarget.y - 22,
+              state.wormTarget.z
+            );
+            player.position.lerpVectors(state.wormDevourStart, tempDevourTarget, sink);
+            player.userData.velocity.set(0, 0, 0);
+            player.userData.grounded = false;
+          }
+          state.wormShake = THREE.MathUtils.damp(state.wormShake, CONFIG.wormShakeBreach * 1.15, 11, delta);
+
+          wormHazard.warningShadow.material.opacity = 0.12 * (1 - sink);
+          wormHazard.warningShadow.scale.setScalar(CONFIG.wormKillRadius * (1.1 + (sink * 0.35)));
+          wormHazard.warningRing.material.opacity = 0.16 * (1 - sink);
+          wormHazard.warningRing.scale.setScalar(CONFIG.wormKillRadius * (1.2 + (sink * 0.8)));
+          wormHazard.rippleRing.material.opacity = 0.34 * (1 - sink);
+          wormHazard.rippleRing.scale.setScalar(CONFIG.wormKillRadius * (1.1 + (sink * 1.2)));
+          wormHazard.vortexOuter.material.opacity = 0.24 * (1 - sink);
+          wormHazard.vortexOuter.scale.set(holeRadius * 1.36, 1, holeRadius * 1.02);
+          wormHazard.vortexOuter.rotation.y = state.elapsed * 0.85;
+          wormHazard.vortexInner.material.opacity = 0.34 * (1 - sink);
+          wormHazard.vortexInner.scale.set(holeRadius * 1.1, 1, holeRadius * 0.82);
+          wormHazard.vortexInner.rotation.y = -state.elapsed * 1.35;
+          wormHazard.holeDisk.material.opacity = 0.54 - (sink * 0.08);
+          wormHazard.holeDisk.scale.setScalar(holeRadius);
+          wormHazard.holeWell.material.opacity = 0.76 - (sink * 0.1);
+          wormHazard.holeWell.scale.set(holeRadius * 0.96, 1, holeRadius * 0.96);
+          wormHazard.holeRing.material.opacity = 0.52 - (sink * 0.08);
+          wormHazard.holeRing.scale.setScalar(holeRadius * 1.12);
+          wormHazard.holeRing.position.y = 0.6 + (sink * 0.22);
+          wormHazard.dust.material.opacity = 0.7 * (1 - (sink * 0.28));
+          wormHazard.dust.scale.setScalar(1.02 + (sink * 0.55));
+          wormHazard.dust.position.y = 20 + (sink * 10.5);
+          wormHazard.mouthRoot.visible = true;
+          wormHazard.mouthRoot.position.y = -10 + (breachRise * 26) + (reveal * 18);
+          wormHazard.mouthRoot.scale.setScalar(0.98 + (breachRise * 0.16) + (reveal * 0.1));
+          updateWormMawPose(
+            delta,
+            0.68 + (breachRise * 0.46) + (reveal * 0.12),
+            1.08,
+            0.1
+          );
           return;
         }
-        wormHazard.group.visible = true;
-        wormHazard.group.position.copy(state.wormTarget);
-        const phaseOpen = state.wormPhase === "warning" ? 0.38 : state.wormPhase === "breach" ? 1.0 : 0.56;
-        const phaseSpin = state.wormPhase === "warning" ? 0.9 : state.wormPhase === "breach" ? 1.2 : 1.0;
-        const phaseTilt = state.wormPhase === "warning" ? 0.12 : 0.22;
-        wormHazard.warningShadow.material.opacity = state.wormPhase === "warning" ? 0.18 : 0.05;
-        wormHazard.warningRing.material.opacity = state.wormPhase === "warning" ? 0.4 : 0.08;
-        wormHazard.rippleRing.material.opacity = state.wormPhase === "warning" ? 0.28 : 0.16;
+
+        if (wormPhase === "recover") {
+          const progress = 1 - (wormTimer / CONFIG.wormRespawnDelayDuration);
+          const holeRadius = CONFIG.wormKillRadius * (1.18 + (progress * 0.24));
+          if (localDeathPhase) {
+            player.userData.velocity.set(0, 0, 0);
+            player.userData.grounded = false;
+          }
+
+          wormHazard.warningShadow.material.opacity = 0;
+          wormHazard.warningRing.material.opacity = 0;
+          wormHazard.rippleRing.material.opacity = 0.18 * (1 - progress);
+          wormHazard.rippleRing.scale.setScalar(CONFIG.wormKillRadius * (1.6 + (progress * 1.1)));
+          wormHazard.vortexOuter.material.opacity = 0.16 * (1 - progress);
+          wormHazard.vortexOuter.scale.set(holeRadius * 1.34, 1, holeRadius);
+          wormHazard.vortexOuter.rotation.y = state.elapsed * 0.72;
+          wormHazard.vortexInner.material.opacity = 0.24 * (1 - progress);
+          wormHazard.vortexInner.scale.set(holeRadius * 1.08, 1, holeRadius * 0.82);
+          wormHazard.vortexInner.rotation.y = -state.elapsed * 1.08;
+          wormHazard.holeDisk.material.opacity = 0.42 - (progress * 0.14);
+          wormHazard.holeDisk.scale.setScalar(holeRadius);
+          wormHazard.holeWell.material.opacity = 0.58 - (progress * 0.18);
+          wormHazard.holeWell.scale.set(holeRadius * 0.98, 1, holeRadius * 0.98);
+          wormHazard.holeRing.material.opacity = 0.36 - (progress * 0.16);
+          wormHazard.holeRing.scale.setScalar(holeRadius * 1.14);
+          wormHazard.holeRing.position.y = 0.84 + (progress * 0.44);
+          wormHazard.dust.material.opacity = 0.42 - (progress * 0.16);
+          wormHazard.dust.scale.setScalar(1.28 + (progress * 0.72));
+          wormHazard.dust.position.y = 26 + (progress * 16);
+          wormHazard.mouthRoot.visible = true;
+          wormHazard.mouthRoot.position.y = 26 + (progress * 24);
+          wormHazard.mouthRoot.scale.setScalar(1.18 + (progress * 0.16));
+          updateWormMawPose(delta, 1.16 + (progress * 0.12), 0.82, 0.04);
+          state.wormShake = THREE.MathUtils.damp(state.wormShake, CONFIG.wormShakeBreach * 0.48, 6, delta);
+          return;
+        }
+
+        if (wormPhase === "warning") {
+          state.signLevel = Math.max(
+            state.signLevel,
+            CONFIG.wormWarningSignFloor * getWormThreatFactor(CONFIG.wormWarningRadius)
+          );
+          const progress = 1 - (wormTimer / CONFIG.wormWarningDuration);
+          const pulse = 0.5 + (0.5 * Math.sin(state.elapsed * 15));
+          const ripple = (progress * 1.7) % 1;
+          const holeOpen = smoothstep(THREE.MathUtils.clamp((progress - 0.16) / 0.62, 0, 1));
+          const holeRadius = CONFIG.wormKillRadius * (0.34 + (holeOpen * 0.76));
+          const dustWake = THREE.MathUtils.clamp((holeOpen - 0.3) / 0.7, 0, 1);
+
+          applyWormPull(delta, CONFIG.wormPullWarningStrength * holeOpen);
+
+          wormHazard.warningShadow.material.opacity = 0.14 + (pulse * 0.08);
+          wormHazard.warningShadow.scale.setScalar(CONFIG.wormWarningRadius * (0.96 + (pulse * 0.04)));
+          wormHazard.warningRing.material.opacity = 0.34 + (pulse * 0.18);
+          wormHazard.warningRing.scale.setScalar(CONFIG.wormWarningRadius * (0.92 + (pulse * 0.12)));
+          wormHazard.rippleRing.material.opacity = 0.26 * (1 - ripple);
+          wormHazard.rippleRing.scale.setScalar((CONFIG.wormWarningRadius * 0.45) + (ripple * CONFIG.wormWarningRadius));
+          wormHazard.vortexOuter.material.opacity = (0.08 + (pulse * 0.05)) * dustWake;
+          wormHazard.vortexOuter.scale.set(
+            holeRadius * (1.2 + (ripple * 0.12)),
+            1,
+            holeRadius * (0.92 + (ripple * 0.06))
+          );
+          wormHazard.vortexOuter.rotation.y = state.elapsed * 0.78;
+          wormHazard.vortexInner.material.opacity = (0.12 + (pulse * 0.06)) * dustWake;
+          wormHazard.vortexInner.scale.set(
+            holeRadius * (0.92 + (ripple * 0.08)),
+            1,
+            holeRadius * (0.72 + (ripple * 0.05))
+          );
+          wormHazard.vortexInner.rotation.y = -state.elapsed * 1.25;
+          wormHazard.holeDisk.material.opacity = 0.1 + (holeOpen * 0.5) + (pulse * 0.04);
+          wormHazard.holeDisk.scale.setScalar(holeRadius);
+          wormHazard.holeWell.material.opacity = 0.06 + (holeOpen * 0.58);
+          wormHazard.holeWell.scale.set(holeRadius * 0.96, 1, holeRadius * 0.96);
+          wormHazard.holeRing.material.opacity = 0.08 + (holeOpen * 0.5);
+          wormHazard.holeRing.scale.setScalar(holeRadius * 1.12);
+          wormHazard.holeRing.position.y = 0.36 + (holeOpen * 0.3);
+          wormHazard.dust.material.opacity = (0.04 + (pulse * 0.04)) * dustWake;
+          wormHazard.dust.scale.setScalar((0.42 + (pulse * 0.06)) + (dustWake * 0.28));
+          wormHazard.dust.position.y = 16.5 + (holeOpen * 3.6) + (pulse * 1.2);
+          wormHazard.mouthRoot.visible = false;
+
+          state.wormShake = THREE.MathUtils.damp(state.wormShake, CONFIG.wormShakeWarning, 5, delta);
+          return;
+        }
+
+        const breachElapsed = CONFIG.wormBreachDuration - wormTimer;
+        const breachProgress = THREE.MathUtils.clamp(breachElapsed / CONFIG.wormBreachDuration, 0, 1);
+        state.signLevel = Math.max(
+          state.signLevel,
+          CONFIG.wormWarningSignFloor * getWormThreatFactor(CONFIG.wormWarningRadius)
+        );
+        const strikeActive = breachElapsed >= CONFIG.wormStrikeDelay
+          && breachElapsed <= (CONFIG.wormStrikeDelay + CONFIG.wormStrikeWindow);
+        const rise = smoothstep(THREE.MathUtils.clamp(breachProgress / 0.42, 0, 1));
+        const settle = 1 - (smoothstep(THREE.MathUtils.clamp((breachProgress - 0.72) / 0.28, 0, 1)) * 0.24);
+        const emerge = rise * settle;
+        const holeRadius = CONFIG.wormKillRadius * (0.96 + (breachProgress * 0.29));
+
+        applyWormPull(delta, CONFIG.wormPullBreachStrength * (0.45 + (emerge * 0.55)));
+
+        wormHazard.warningShadow.material.opacity = 0.18 * (1 - breachProgress);
+        wormHazard.warningShadow.scale.setScalar(CONFIG.wormKillRadius * (1.05 + (breachProgress * 0.5)));
+        wormHazard.warningRing.material.opacity = 0.42 * (1 - breachProgress);
+        wormHazard.warningRing.scale.setScalar(CONFIG.wormKillRadius * (1 + (breachProgress * 1.5)));
+        wormHazard.rippleRing.material.opacity = 0.5 * (1 - breachProgress);
+        wormHazard.rippleRing.scale.setScalar(CONFIG.wormKillRadius * (0.8 + (breachProgress * 2.4)));
+        wormHazard.vortexOuter.material.opacity = 0.24 * (1 - (breachProgress * 0.2));
+        wormHazard.vortexOuter.scale.set(
+          holeRadius * (1.32 + (breachProgress * 0.06)),
+          1,
+          holeRadius * (0.98 + (breachProgress * 0.04))
+        );
+        wormHazard.vortexOuter.rotation.y = state.elapsed * 0.9;
+        wormHazard.vortexInner.material.opacity = 0.36 * (1 - (breachProgress * 0.16));
+        wormHazard.vortexInner.scale.set(
+          holeRadius * (1.05 + (breachProgress * 0.08)),
+          1,
+          holeRadius * (0.78 + (breachProgress * 0.05))
+        );
+        wormHazard.vortexInner.rotation.y = -state.elapsed * 1.45;
+        wormHazard.holeDisk.material.opacity = 0.56 - (breachProgress * 0.12);
+        wormHazard.holeDisk.scale.setScalar(holeRadius);
+        wormHazard.holeWell.material.opacity = 0.72 - (breachProgress * 0.08);
+        wormHazard.holeWell.scale.set(holeRadius * 0.98, 1, holeRadius * 0.98);
+        wormHazard.holeRing.material.opacity = 0.56 - (breachProgress * 0.12);
+        wormHazard.holeRing.scale.setScalar(holeRadius * 1.12);
+        wormHazard.holeRing.position.y = 0.58;
+        wormHazard.dust.material.opacity = 0.5 * (1 - breachProgress);
+        wormHazard.dust.scale.setScalar(0.82 + (breachProgress * 0.58));
+        wormHazard.dust.position.y = 19 + (breachProgress * 8.5);
         wormHazard.mouthRoot.visible = true;
-        wormHazard.mouthRoot.position.y = state.wormPhase === "warning" ? -2 : 4;
-        updateWormMawPose(delta, phaseOpen, phaseSpin, phaseTilt);
+        wormHazard.mouthRoot.position.y = -24 + (emerge * 30);
+        wormHazard.mouthRoot.scale.setScalar(1.01 + (emerge * 0.06));
+        updateWormMawPose(
+          delta,
+          0.34 + (emerge * 0.92),
+          0.95,
+          THREE.MathUtils.lerp(0.08, 0.4, smoothstep(THREE.MathUtils.clamp((breachProgress - 0.14) / 0.36, 0, 1)))
+        );
+
+        state.wormShake = THREE.MathUtils.damp(state.wormShake, CONFIG.wormShakeBreach, 9, delta);
+
+        if (strikeActive) {
+          if (thumper.active) {
+            const tdx = thumper.group.position.x - state.wormTarget.x;
+            const tdz = thumper.group.position.z - state.wormTarget.z;
+            if ((tdx * tdx) + (tdz * tdz) <= CONFIG.wormKillRadius * CONFIG.wormKillRadius) {
+              setThumperActive(false);
+              broadcastWormRadio("Worm consumed the thumper.");
+            }
+          }
+          const npcKillRadiusSq = CONFIG.wormKillRadius * CONFIG.wormKillRadius;
+          for (const npc of npcs) {
+            if (!npc || npc.dead) continue;
+            const ndx = npc.group.position.x - state.wormTarget.x;
+            const ndz = npc.group.position.z - state.wormTarget.z;
+            if ((ndx * ndx) + (ndz * ndz) <= npcKillRadiusSq) {
+              hitTarget(npc, 1.8, npc.health, { silent: true, bypassShield: true });
+            }
+	          }
+	        }
+		        return;
+        } catch (error) {
+          console.error("[worm] multiplayer presentation fallback", error);
+          state.wormNetVisualsEnabled = false;
+          if (!isLocalWormDeathPhase()) {
+            state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
+            wormHazard.group.visible = false;
+            return;
+          }
+        }
+	      } else if (mp.connected && !state.wormNetVisualsEnabled && !isLocalWormDeathPhase()) {
+        state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
+        wormHazard.group.visible = false;
         return;
-      }
+	      }
 
       if (state.wormPhase === "idle") {
         state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
@@ -9625,9 +9925,10 @@
       const thumperStrength = thumper.active
         ? THREE.MathUtils.lerp(CONFIG.thumperAmbientStrength, CONFIG.thumperPulseStrength, thumper.signal)
         : 0;
-      const wormMeter = state.wormPhase !== "idle"
-        ? 1
-        : Math.max(worm.noisePressure, thumperStrength, shieldMeter);
+      const wormPhase = getDisplayedWormPhase();
+	      const wormMeter = wormPhase !== "idle"
+	        ? 1
+	        : Math.max(worm.noisePressure, thumperStrength, shieldMeter);
 	      const harvestProgress = state.harvestNode
 	        ? Math.round(THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1) * 100)
 	        : 0;
@@ -9706,8 +10007,8 @@
       ui.signFill.style.backgroundColor = `hsl(${signHue}, 88%, 48%)`;
       ui.wormFill.style.width = `${(wormMeter * 100).toFixed(1)}%`;
       ui.wormFill.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
-      if (state.wormPhase === "warning" || state.wormPhase === "breach" || state.wormPhase === "devour") {
-        ui.hudStatus.textContent = "Worm incoming";
+	      if (wormPhase === "warning" || wormPhase === "breach" || wormPhase === "devour") {
+	        ui.hudStatus.textContent = "Worm incoming";
       } else if (state.harvestNode) {
         ui.hudStatus.textContent = "Harvesting spice";
       } else if (state.spiceCarry >= CONFIG.spiceMaxCarry) {
@@ -9759,12 +10060,13 @@
       ui.deathFlash.style.opacity = "0";
     }
 
-    function animate() {
-      requestAnimationFrame(animate);
-      const delta = Math.min(clock.getDelta(), 0.05);
-	      updateDayNight(delta);
-	      updateShieldSystem(delta);
-	      updateMovement(delta);
+	    function animate() {
+	      requestAnimationFrame(animate);
+	      const delta = Math.min(clock.getDelta(), 0.05);
+		      updateDayNight(delta);
+      updateWormUiTimers(delta);
+		      updateShieldSystem(delta);
+		      updateMovement(delta);
 	      updateKnifeCombat(delta);
 	      updateMaulaCombat(delta);
 	      updateMaulaProjectiles(delta);
@@ -9916,27 +10218,77 @@
       }
     }
 
-    function applyNetworkWormState(data) {
-      if (!data) return;
-      state.wormPhase = data.phase ?? state.wormPhase;
-      state.wormTimer = typeof data.timer === "number" ? data.timer : state.wormTimer;
-      state.wormCooldown = typeof data.cooldown === "number" ? data.cooldown : state.wormCooldown;
-      if (data.target) {
-        state.wormTarget.set(
-          data.target.x ?? state.wormTarget.x,
-          state.wormTarget.y,
-          data.target.z ?? state.wormTarget.z
+	    function applyNetworkWormState(data) {
+	      if (!data) return;
+      const prevNetPhase = state.wormNetPhase;
+      const prevNetState = state.wormNetState;
+      state.wormNetVisualsEnabled = true;
+      state.wormNetState = data.state ?? state.wormNetState;
+      state.wormNetPhase = data.phase ?? state.wormNetPhase;
+      state.wormNetTimer = typeof data.timer === "number" ? data.timer : state.wormNetTimer;
+      state.wormNetCooldown = typeof data.cooldown === "number" ? data.cooldown : state.wormNetCooldown;
+      if (isLocalWormDeathPhase() && (data.phase === "devour" || data.phase === "recover")) {
+        state.wormPhase = data.phase;
+        state.wormTimer = typeof data.timer === "number" ? data.timer : state.wormTimer;
+        state.wormCooldown = typeof data.cooldown === "number" ? data.cooldown : state.wormCooldown;
+      }
+	      if (data.target) {
+	        state.wormTarget.set(
+	          data.target.x ?? state.wormTarget.x,
+	          state.wormTarget.y,
+	          data.target.z ?? state.wormTarget.z
+	        );
+        state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
+	      }
+	      if (typeof data.noisePressure === "number") {
+	        worm.noisePressure = data.noisePressure;
+	      }
+	      if (data.position) {
+	        worm.position.set(
+	          data.position.x ?? worm.position.x,
+          worm.position.y,
+          data.position.z ?? worm.position.z
+        );
+        worm.position.y = sampleGroundHeight(worm.position.x, worm.position.z);
+      }
+      if (data.velocity) {
+        worm.velocity.set(
+          data.velocity.x ?? worm.velocity.x,
+          0,
+          data.velocity.z ?? worm.velocity.z
         );
       }
-      if (typeof data.noisePressure === "number") {
-        worm.noisePressure = data.noisePressure;
+      if (data.targetHotspot) {
+        if (!worm.targetHotspot) worm.targetHotspot = new THREE.Vector3();
+        worm.targetHotspot.set(
+          data.targetHotspot.x ?? worm.targetHotspot.x,
+          0,
+          data.targetHotspot.z ?? worm.targetHotspot.z
+        );
+        worm.targetHotspot.y = sampleGroundHeight(worm.targetHotspot.x, worm.targetHotspot.z);
+      } else {
+        worm.targetHotspot = null;
       }
-      if (data.state) worm.state = data.state;
-      if (typeof data.worldTime === "number") {
-        if (state.serverWorldTimeBase === null || data.worldTime >= (state.serverWorldTimeBase - 0.05)) {
-          state.serverWorldTimeBase = data.worldTime;
-          state.serverWorldTimeStamp = performance.now() * 0.001;
+      if (mp.connected && prevNetPhase !== state.wormNetPhase) {
+        if (state.wormNetPhase === "warning") {
+          sfx.wormWarning.play({ volumeMultiplier: 1 });
+        } else if (state.wormNetPhase === "breach") {
+          sfx.wormBreach.play({ volumeMultiplier: 1 });
+          emitNoiseImpulse(0.32);
         }
+      }
+      if (mp.connected && prevNetState !== state.wormNetState) {
+        if (prevNetState === "off_map" && state.wormNetState === "inbound") {
+          broadcastWormRadio("Radio: worm sign. Contact inbound.");
+        } else if (prevNetState !== "hunting" && state.wormNetState === "hunting") {
+          broadcastWormRadio("Radio: worm sign. It's under the dunes.");
+        }
+      }
+	      if (typeof data.worldTime === "number") {
+	        if (state.serverWorldTimeBase === null || data.worldTime >= (state.serverWorldTimeBase - 0.05)) {
+	          state.serverWorldTimeBase = data.worldTime;
+	          state.serverWorldTimeStamp = performance.now() * 0.001;
+	        }
       }
     }
 
@@ -9947,41 +10299,52 @@
       mpSendTimer += delta;
       if (mpSendTimer >= 0.05) {
         mpSendTimer = 0;
-        mp.emit("move", {
-          x: player.position.x,
-          y: player.position.y,
-          z: player.position.z,
-          rotY: player.rotation.y,
-          spiceCarry: state.spiceCarry,
-          equipped: state.equippedWeapon,
-          shieldActive: isShieldOperational(),
-          surfaceType: state.surfaceType,
-          noiseLevel: state.noiseLevel,
-          signLevel: state.signLevel,
-          thumperActive: thumper.active,
-          thumperX: thumper.group.position.x,
-          thumperZ: thumper.group.position.z,
-          thumperSignal: thumper.signal,
+	        mp.emit("move", {
+	          x: player.position.x,
+	          y: player.position.y,
+	          z: player.position.z,
+	          rotY: player.rotation.y,
+	          spiceCarry: state.spiceCarry,
+	          equipped: state.equippedWeapon,
+	          shieldActive: isShieldOperational(),
+	          surfaceType: state.surfaceType,
+	          noiseLevel: state.noiseLevel,
+	          signLevel: state.signLevel,
+          harvestActive: Boolean(state.harvestNode),
+	          thumperActive: thumper.active,
+	          thumperX: thumper.group.position.x,
+	          thumperZ: thumper.group.position.z,
+	          thumperSignal: thumper.signal,
         });
       }
     }
 
     function initMultiplayer() {
-      // SERVER_URL can be overridden by a global set before this script
-      const isLocal = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
-      const serverUrl = isLocal
-        ? "http://localhost:3001"
-        : (typeof SERVER_URL !== "undefined" ? SERVER_URL : null);
+      try {
+        // SERVER_URL can be overridden by a global set before this script
+        const isLocal = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+        const serverUrl = isLocal
+          ? "http://localhost:3001"
+          : (typeof SERVER_URL !== "undefined" ? SERVER_URL : null);
 
-      if (!serverUrl) {
-        console.log("[MP] No server URL — running offline");
-        return;
+        if (!serverUrl) {
+          console.log("[MP] No server URL — running offline");
+          return;
+        }
+
+        const probeOptions = { method: "GET" };
+        if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+          probeOptions.signal = AbortSignal.timeout(2000);
+        }
+
+        // Probe the server first — only connect if it's actually up.
+        // Keep this fully isolated from local rendering startup.
+        fetch(serverUrl, probeOptions)
+          .then(() => connectMultiplayer(serverUrl))
+          .catch(() => console.log("[MP] Server not reachable — running offline"));
+      } catch (error) {
+        console.warn("[MP] Multiplayer init failed — running offline", error);
       }
-
-      // Probe the server first — only connect if it's actually up
-      fetch(serverUrl, { method: "GET", signal: AbortSignal.timeout(2000) })
-        .then(() => connectMultiplayer(serverUrl))
-        .catch(() => console.log("[MP] Server not reachable — running offline"));
     }
 
     function connectMultiplayer(serverUrl) {
@@ -10059,12 +10422,23 @@
         console.log("[MP] Scores:", scores);
       });
 
-      socket.on("wormSync", (wormState) => {
-        applyNetworkWormState(wormState);
+	      socket.on("wormSync", (wormState) => {
+	        applyNetworkWormState(wormState);
+	      });
+
+      socket.on("wormDevourStart", (data) => {
+        if (!data || data.victimId !== socket.id) return;
+        startNetworkWormDevour(data);
       });
 
-      socket.on("holtzmanDetonation", ({ x, y, z, from }) => {
-        if (from === socket.id) return;
+      socket.on("wormConsumedThumper", () => {
+        if (!thumper.active) return;
+        setThumperActive(false);
+        broadcastWormRadio("Worm consumed the thumper.");
+      });
+
+	      socket.on("holtzmanDetonation", ({ x, y, z, from }) => {
+	        if (from === socket.id) return;
         const px = Number(x);
         const pz = Number(z);
         if (!Number.isFinite(px) || !Number.isFinite(pz)) return;
@@ -10105,11 +10479,15 @@
         }
       });
 
-      socket.on("playerKilled", ({ id, killerId }) => {
-        if (id === socket.id) {
-          if (state.spiceCarry > 0) {
-            spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
+	      socket.on("playerKilled", ({ id, killerId }) => {
+	        if (id === socket.id) {
+          if (killerId === "worm") {
+            broadcastWormRadio("The worm has you.");
+            return;
           }
+	          if (state.spiceCarry > 0) {
+	            spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
+	          }
           state.pvpDead = true;
           state.pvpDeathTimer = 3.0;
           state.pvpDeathPose = 0;
@@ -10146,9 +10524,9 @@
         else sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
       });
 
-      socket.on("playerRespawned", ({ id }) => {
-        const rp = remotePlayers.get(id);
-        if (rp) {
+	      socket.on("playerRespawned", ({ id }) => {
+	        const rp = remotePlayers.get(id);
+	        if (rp) {
           rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
           rp.mesh.rotation.x = 0; rp._lastEmissive = 0; rp._lasgunDmgAccum = 0;
           rp.mesh.traverse((obj) => {
@@ -10156,11 +10534,19 @@
               obj.material.emissive.setRGB(0, 0, 0); obj.material.emissiveIntensity = 0;
             }
           });
-        }
-        if (id === socket.id) {
-          state.pvpDead = false;
-          state.pvpDeathTimer = 0;
-          state.pvpDeathPose = 0;
+	        }
+	        if (id === socket.id) {
+          const wasWormDeath = isLocalWormDeathPhase();
+          if (wasWormDeath) {
+            state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
+          }
+          state.wormPhase = "idle";
+          state.wormTimer = 0;
+          state.wormCooldown = state.wormNetCooldown;
+          state.wormShake = 0;
+	          state.pvpDead = false;
+	          state.pvpDeathTimer = 0;
+	          state.pvpDeathPose = 0;
           player.rotation.x = 0;
           state.damageFlashTimer = 0;
           state.directHitNoticeTimer = 0;

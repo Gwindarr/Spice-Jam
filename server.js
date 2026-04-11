@@ -8,6 +8,11 @@ const SPICE_RESPAWN_SECONDS = 32;
 const SPICE_NODE_COUNT = 8;
 const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
+const WORLD_SIZE = 1500;
+const WORLD_HALF = WORLD_SIZE * 0.5;
+const PLAYER_SPEED = 16.5;
+const PLAYER_RUN_MULTIPLIER = 1.65;
+const PLAYER_MAX_RUN_SPEED = PLAYER_SPEED * PLAYER_RUN_MULTIPLIER;
 const POISON_DPS = 4;
 const POISON_DURATION = 6;
 const HOLTZMAN_LETHAL_RADIUS = 35;
@@ -20,16 +25,33 @@ const WORM_CFG = {
   noisePressureRise: 0.38,
   noisePressureDecay: 0.14,
   hotspotMinIntensity: 0.18,
-  inboundDuration: 8,
+  spawnMinDistance: 300,
+  spawnMaxDistance: 500,
+  inboundSpeed: 48,
+  huntingSpeed: 58,
+  retreatSpeed: 38,
+  steering: 3.4,
+  retreatSteering: 2.2,
+  attackTriggerDistance: 36,
+  offMapTravelDistance: 1900,
+  inboundDuration: 2.2,
   warningDuration: 2.8,
   breachDuration: 4.0,
   strikeDelay: 0.35,
   strikeWindow: 0.65,
+  devourDuration: 3.2,
   recoverDuration: 2.0,
   cooldownDuration: 14,
   killRadius: 28,
+  attackMinSign: 0.32,
+  warningSignFloor: 0.72,
+  warningRadius: 42,
+  leadDistance: 18,
   targetTrackSharpness: 4.6,
   targetLockProgress: 0.72,
+  pullRadius: 18.5,
+  pullWarningStrength: 10,
+  pullBreachStrength: 22,
   shieldHotspotBonus: 0.34,
   maxNoiseHotspots: 32,
 };
@@ -53,12 +75,18 @@ const MAP_SEED = Math.floor(Math.random() * 0xFFFFFF);
 const SERVER_START_MS = Date.now();
 const noiseHotspots = [];
 const worm = {
+  position: { x: 0, z: 0 },
+  velocity: { x: 0, z: 0 },
   state: "off_map",
   phase: "idle",
   timer: 0,
   cooldown: 0,
   noisePressure: 0,
   target: { x: 0, z: 0 },
+  targetHotspot: null,
+  targetSource: null,
+  targetOwnerId: null,
+  lastSpawnTime: -Infinity,
 };
 let lastHoltzmanDetonationMs = 0;
 
@@ -74,6 +102,10 @@ function assignTeam() {
   return countTeam("fremen") <= countTeam("harkonnen") ? "fremen" : "harkonnen";
 }
 
+function getWorldTimeSeconds() {
+  return (Date.now() - SERVER_START_MS) / 1000;
+}
+
 function getWorldSnapshot() {
   return {
     players: [...players.values()],
@@ -81,18 +113,21 @@ function getWorldSnapshot() {
     scores,
     seed: MAP_SEED,
     worm: {
+      position: { ...worm.position },
+      velocity: { ...worm.velocity },
       state: worm.state,
       phase: worm.phase,
       timer: worm.timer,
       cooldown: worm.cooldown,
       noisePressure: worm.noisePressure,
       target: { ...worm.target },
-      worldTime: (Date.now() - SERVER_START_MS) / 1000,
+      targetHotspot: worm.targetHotspot ? { ...worm.targetHotspot } : null,
+      worldTime: getWorldTimeSeconds(),
     },
   };
 }
 
-function emitDeathEvent(victimId, killerId, cause = "combat") {
+function emitDeathEvent(victimId, killerId, cause = "combat", respawnSeconds = 3) {
   const victim = players.get(victimId);
   const killer = players.get(killerId);
   const victimName = victim?.name || `Player-${String(victimId).slice(-4)}`;
@@ -110,7 +145,7 @@ function emitDeathEvent(victimId, killerId, cause = "combat") {
     victimName,
     killerName,
     message,
-    respawnSeconds: 3,
+    respawnSeconds,
   });
 }
 
@@ -126,6 +161,15 @@ function dist2(ax, az, bx, bz) {
   const dx = ax - bx;
   const dz = az - bz;
   return (dx * dx) + (dz * dz);
+}
+
+function isInsideWorldBounds(x, z, padding = 0) {
+  const halfWorld = WORLD_HALF - padding;
+  return x >= -halfWorld && x <= halfWorld && z >= -halfWorld && z <= halfWorld;
+}
+
+function clampToPlayableBounds(value) {
+  return clamp(value, -WORLD_HALF + 10, WORLD_HALF - 10);
 }
 
 function pushNoiseHotspot(kind, x, z, strength = 1, opts = {}) {
@@ -169,15 +213,204 @@ function getPlayerClusterCenter() {
   return n > 0 ? { x: sx / n, z: sz / n } : { x: 0, z: 0 };
 }
 
+function getNearestTrackedPlayerDistance(x, z) {
+  let best = Infinity;
+  for (const p of players.values()) {
+    if (p.health <= 0) continue;
+    const distance = Math.sqrt(dist2(x, z, p.x, p.z));
+    if (distance < best) best = distance;
+  }
+  return best;
+}
+
+function setWormTargetHotspot(target) {
+  if (!target) {
+    worm.targetHotspot = null;
+    worm.targetSource = null;
+    worm.targetOwnerId = null;
+    return;
+  }
+  worm.targetHotspot = {
+    x: Number(target.x) || 0,
+    z: Number(target.z) || 0,
+  };
+  worm.targetSource = target.source || null;
+  worm.targetOwnerId = target.ownerId || null;
+}
+
+function trackWormTargetHotspot(target, dt) {
+  if (!target) return;
+  if (!worm.targetHotspot) {
+    setWormTargetHotspot(target);
+    return;
+  }
+  worm.targetHotspot.x = damp(worm.targetHotspot.x, target.x, WORM_CFG.targetTrackSharpness, dt);
+  worm.targetHotspot.z = damp(worm.targetHotspot.z, target.z, WORM_CFG.targetTrackSharpness, dt);
+  worm.targetSource = target.source || worm.targetSource || null;
+  worm.targetOwnerId = target.ownerId || worm.targetOwnerId || null;
+}
+
+function getLockedThumperHotspot() {
+  if (worm.targetSource !== "thumper" || !worm.targetOwnerId) return null;
+  const owner = players.get(worm.targetOwnerId);
+  if (!owner?.thumperActive) return null;
+  const thStrength = clamp(0.52 + (0.48 * (owner.thumperSignal || 0)), 0, 1);
+  return {
+    x: owner.thumperX ?? owner.x,
+    z: owner.thumperZ ?? owner.z,
+    strength: clamp(thStrength * getNoiseKindWeight("thumper"), 0, 1),
+    signLevel: thStrength,
+    source: "thumper",
+    ownerId: owner.id,
+  };
+}
+
+function pickWormTargetForPlayer(p) {
+  const speed = Math.hypot(p.vx || 0, p.vz || 0);
+  let dirX = 0;
+  let dirZ = 0;
+  if (speed > 0.5) {
+    dirX = (p.vx || 0) / speed;
+    dirZ = (p.vz || 0) / speed;
+  }
+  const leadDistance = WORM_CFG.leadDistance
+    * clamp(speed / Math.max(0.001, PLAYER_MAX_RUN_SPEED), 0, 1);
+  return {
+    x: clampToPlayableBounds((p.x || 0) + (dirX * leadDistance)),
+    z: clampToPlayableBounds((p.z || 0) + (dirZ * leadDistance)),
+  };
+}
+
+function spawnWormOutsideCluster(target, worldTime) {
+  if (!target) return false;
+  const originX = Number.isFinite(target.x) ? target.x : 0;
+  const originZ = Number.isFinite(target.z) ? target.z : 0;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = WORM_CFG.spawnMinDistance
+      + (Math.random() * (WORM_CFG.spawnMaxDistance - WORM_CFG.spawnMinDistance));
+    const x = originX + (Math.cos(angle) * distance);
+    const z = originZ + (Math.sin(angle) * distance);
+    worm.position.x = x;
+    worm.position.z = z;
+    worm.velocity.x = 0;
+    worm.velocity.z = 0;
+    worm.state = "inbound";
+    worm.lastSpawnTime = worldTime;
+    setWormTargetHotspot(target);
+    return true;
+  }
+  return false;
+}
+
+function steerWormTowards(target, speed, steering, dt) {
+  if (!target) return Infinity;
+  const desiredX = target.x - worm.position.x;
+  const desiredZ = target.z - worm.position.z;
+  const distance = Math.hypot(desiredX, desiredZ);
+  if (distance > 0.001) {
+    const scale = speed / distance;
+    const vx = desiredX * scale;
+    const vz = desiredZ * scale;
+    const alpha = 1 - Math.exp(-steering * dt);
+    worm.velocity.x += (vx - worm.velocity.x) * alpha;
+    worm.velocity.z += (vz - worm.velocity.z) * alpha;
+  } else {
+    const decay = Math.exp(-steering * dt);
+    worm.velocity.x *= decay;
+    worm.velocity.z *= decay;
+  }
+  worm.position.x += worm.velocity.x * dt;
+  worm.position.z += worm.velocity.z * dt;
+  return distance;
+}
+
+function startWormRetreat() {
+  const clusterCenter = getPlayerClusterCenter();
+  let dirX = worm.position.x - clusterCenter.x;
+  let dirZ = worm.position.z - clusterCenter.z;
+  if ((dirX * dirX) + (dirZ * dirZ) < 0.001) {
+    const angle = Math.random() * Math.PI * 2;
+    dirX = Math.cos(angle);
+    dirZ = Math.sin(angle);
+  }
+  const length = Math.hypot(dirX, dirZ) || 1;
+  dirX = (dirX / length) * WORM_CFG.offMapTravelDistance;
+  dirZ = (dirZ / length) * WORM_CFG.offMapTravelDistance;
+  setWormTargetHotspot({
+    x: worm.position.x + dirX,
+    z: worm.position.z + dirZ,
+  });
+  worm.state = "retreat";
+  worm.noisePressure = Math.min(worm.noisePressure, 0.32);
+}
+
+function beginWormWarning() {
+  worm.target.x = worm.position.x;
+  worm.target.z = worm.position.z;
+  worm.velocity.x = 0;
+  worm.velocity.z = 0;
+  worm.phase = "warning";
+  worm.timer = WORM_CFG.warningDuration;
+  worm.noisePressure *= 0.72;
+}
+
+function anchorWormAtStrikeTarget() {
+  worm.position.x = worm.target.x;
+  worm.position.z = worm.target.z;
+  worm.velocity.x = 0;
+  worm.velocity.z = 0;
+}
+
+function schedulePlayerRespawn(targetId, delayMs = 3000) {
+  setTimeout(() => {
+    const target = players.get(targetId);
+    if (!target) return;
+    target.health = 100;
+    target.poisonTimer = 0;
+    target.poisonAttackerId = null;
+    io.emit("playerRespawned", { id: targetId });
+  }, delayMs);
+}
+
+function emitWormDevourStart(target) {
+  io.emit("wormDevourStart", {
+    victimId: target.id,
+    target: { x: worm.target.x, z: worm.target.z },
+    devourDuration: WORM_CFG.devourDuration,
+    recoverDuration: WORM_CFG.recoverDuration,
+    worldTime: getWorldTimeSeconds(),
+  });
+}
+
+function consumePlayerThumper(player) {
+  if (!player?.thumperActive) return false;
+  player.thumperActive = false;
+  player.thumperSignal = 0;
+  io.to(player.id).emit("wormConsumedThumper");
+  io.emit("deathEvent", {
+    victimId: null,
+    killerId: "worm",
+    cause: "thumper",
+    victimName: "Thumper",
+    killerName: "Worm",
+    message: "Worm consumed the thumper",
+    respawnSeconds: 0,
+  });
+  return true;
+}
+
 function sampleStrongestWormHotspot() {
-  const cluster = getPlayerClusterCenter();
+  if (worm.phase === "devour" || worm.phase === "recover") return null;
   let strongest = null;
 
-  const consider = (x, z, rawStrength, signLevel, source, radius = Infinity) => {
+  const consider = (x, z, rawStrength, signLevel, source, radius = Infinity, ownerId = null) => {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
     let falloff = 1;
     if (Number.isFinite(radius)) {
-      const d = Math.sqrt(dist2(x, z, cluster.x, cluster.z));
-      falloff = clamp(1 - (d / Math.max(1, radius)), 0, 1);
+      const nearestPlayerDistance = getNearestTrackedPlayerDistance(x, z);
+      if (!Number.isFinite(nearestPlayerDistance)) return;
+      falloff = clamp(1 - (nearestPlayerDistance / Math.max(1, radius)), 0, 1);
       if (falloff <= 0) return;
     }
     const strength = clamp(rawStrength * falloff, 0, 1);
@@ -188,6 +421,7 @@ function sampleStrongestWormHotspot() {
       strength,
       signLevel: clamp(signLevel * falloff, 0, 1),
       source,
+      ownerId,
     };
   };
 
@@ -201,7 +435,8 @@ function sampleStrongestWormHotspot() {
       thStrength * getNoiseKindWeight("thumper"),
       thStrength,
       "thumper",
-      260
+      260,
+      p.id
     );
   }
 
@@ -222,19 +457,22 @@ function sampleStrongestWormHotspot() {
   // Player actor noise/shield on sand
   for (const p of players.values()) {
     if (p.surfaceType !== "sand") continue;
+    const target = pickWormTargetForPlayer(p);
     const shieldStrength = p.shieldActive
       ? clamp(Math.max(p.signLevel, (p.noiseLevel * 0.65) + WORM_CFG.shieldHotspotBonus), 0, 1)
       : 0;
     const strength = clamp(
       Math.max(
         p.signLevel,
-        (p.noiseLevel * 0.65) + (p.spiceCarry > 0 ? 0.08 : 0),
+        (p.noiseLevel * 0.65)
+          + (p.spiceCarry > 0 ? 0.08 : 0)
+          + (p.harvestActive ? 0.12 : 0),
         shieldStrength
       ),
       0,
       1
     );
-    consider(p.x, p.z, strength, p.signLevel, "actor");
+    consider(target.x, target.z, strength, p.signLevel, "actor");
   }
 
   return strongest;
@@ -243,15 +481,22 @@ function sampleStrongestWormHotspot() {
 function killPlayerByWorm(target) {
   if (!target || target.health <= 0) return;
   target.health = 0;
+  target.poisonTimer = 0;
+  target.poisonAttackerId = null;
+  target.spiceCarry = 0;
   io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
   io.emit("playerKilled", { id: target.id, killerId: "worm" });
-  emitDeathEvent(target.id, "worm", "worm");
-  setTimeout(() => {
-    const p = players.get(target.id);
-    if (!p) return;
-    p.health = 100;
-    io.emit("playerRespawned", { id: target.id });
-  }, 3000);
+  emitDeathEvent(
+    target.id,
+    "worm",
+    "worm",
+    (WORM_CFG.devourDuration + WORM_CFG.recoverDuration)
+  );
+  emitWormDevourStart(target);
+  schedulePlayerRespawn(
+    target.id,
+    Math.round((WORM_CFG.devourDuration + WORM_CFG.recoverDuration) * 1000)
+  );
 }
 
 function tickWorm(dt) {
@@ -261,43 +506,139 @@ function tickWorm(dt) {
   }
 
   worm.cooldown = Math.max(0, worm.cooldown - dt);
-  const hotspot = sampleStrongestWormHotspot();
-  const hotspotStrength = hotspot ? hotspot.strength : 0;
+  const strongestHotspot = sampleStrongestWormHotspot();
+  const lockedHotspot = getLockedThumperHotspot();
+  const hotspot = lockedHotspot || strongestHotspot;
+  const hotspotStrength = strongestHotspot ? strongestHotspot.strength : 0;
   const response = hotspotStrength > worm.noisePressure
     ? WORM_CFG.noisePressureRise
     : WORM_CFG.noisePressureDecay;
   worm.noisePressure = damp(worm.noisePressure, hotspotStrength, response, dt);
 
   if (worm.phase === "idle") {
-    if (
-      worm.state === "off_map" &&
-      worm.cooldown <= 0 &&
-      hotspot &&
-      worm.noisePressure >= WORM_CFG.noisePressureSpawnThreshold
-    ) {
-      worm.state = "hunting";
-      worm.phase = "warning";
-      worm.timer = WORM_CFG.warningDuration;
-      worm.target.x = hotspot.x;
-      worm.target.z = hotspot.z;
+    const worldTime = getWorldTimeSeconds();
+    if (worm.state === "off_map") {
+      setWormTargetHotspot(null);
+      worm.velocity.x = 0;
+      worm.velocity.z = 0;
+      if (
+        worm.cooldown <= 0 &&
+        hotspot &&
+        hotspot.signLevel >= WORM_CFG.attackMinSign &&
+        (worldTime - worm.lastSpawnTime) >= WORM_CFG.cooldownDuration &&
+        worm.noisePressure >= WORM_CFG.noisePressureSpawnThreshold
+      ) {
+        spawnWormOutsideCluster(hotspot, worldTime);
+      }
+      return;
+    }
+
+    if (worm.state === "inbound") {
+      if (hotspot) {
+        trackWormTargetHotspot(hotspot, dt);
+      }
+      if (!worm.targetHotspot) {
+        startWormRetreat();
+        return;
+      }
+      const distance = steerWormTowards(
+        worm.targetHotspot,
+        WORM_CFG.inboundSpeed,
+        WORM_CFG.steering * 0.8,
+        dt
+      );
+      if (distance <= WORM_CFG.warningRadius * 1.35) {
+        worm.state = "hunting";
+      }
+      return;
+    }
+
+    if (worm.state === "hunting") {
+      if (hotspot) {
+        trackWormTargetHotspot(hotspot, dt);
+      } else {
+        startWormRetreat();
+        return;
+      }
+      if (!worm.targetHotspot) {
+        startWormRetreat();
+        return;
+      }
+      const distance = steerWormTowards(
+        worm.targetHotspot,
+        WORM_CFG.huntingSpeed,
+        WORM_CFG.steering,
+        dt
+      );
+      if (
+        worm.cooldown <= 0 &&
+        hotspot.signLevel >= WORM_CFG.attackMinSign &&
+        distance <= WORM_CFG.attackTriggerDistance
+      ) {
+        beginWormWarning();
+      }
+      return;
+    }
+
+    if (worm.state === "retreat") {
+      if (!worm.targetHotspot) {
+        startWormRetreat();
+      }
+      steerWormTowards(
+        worm.targetHotspot,
+        WORM_CFG.retreatSpeed,
+        WORM_CFG.retreatSteering,
+        dt
+      );
+      if (!isInsideWorldBounds(worm.position.x, worm.position.z, -40)) {
+        worm.state = "off_map";
+        worm.velocity.x = 0;
+        worm.velocity.z = 0;
+        setWormTargetHotspot(null);
+      }
     }
     return;
   }
 
-  if (hotspot) {
-    worm.target.x = damp(worm.target.x, hotspot.x, WORM_CFG.targetTrackSharpness, dt);
-    worm.target.z = damp(worm.target.z, hotspot.z, WORM_CFG.targetTrackSharpness, dt);
+  if (worm.phase === "warning") {
+    const warningProgress = 1 - (worm.timer / WORM_CFG.warningDuration);
+    if (hotspot && warningProgress < WORM_CFG.targetLockProgress) {
+      trackWormTargetHotspot(hotspot, dt);
+      if (worm.targetHotspot) {
+        worm.target.x = damp(worm.target.x, worm.targetHotspot.x, WORM_CFG.targetTrackSharpness, dt);
+        worm.target.z = damp(worm.target.z, worm.targetHotspot.z, WORM_CFG.targetTrackSharpness, dt);
+      }
+    }
   }
 
   if (worm.phase === "breach") {
-    const killR2 = WORM_CFG.killRadius * WORM_CFG.killRadius;
-    for (const p of players.values()) {
-      if (p.health <= 0) continue;
-      if (p.surfaceType !== "sand") continue;
-      if (dist2(p.x, p.z, worm.target.x, worm.target.z) <= killR2) {
-        killPlayerByWorm(p);
+    const breachElapsed = WORM_CFG.breachDuration - worm.timer;
+    const strikeActive = breachElapsed >= WORM_CFG.strikeDelay
+      && breachElapsed <= (WORM_CFG.strikeDelay + WORM_CFG.strikeWindow);
+    if (strikeActive) {
+      const victims = [];
+      const killR2 = WORM_CFG.killRadius * WORM_CFG.killRadius;
+      for (const p of players.values()) {
+        if (p.thumperActive && dist2(p.thumperX ?? p.x, p.thumperZ ?? p.z, worm.target.x, worm.target.z) <= killR2) {
+          consumePlayerThumper(p);
+        }
+        if (p.health <= 0 || p.surfaceType !== "sand") continue;
+        if (dist2(p.x, p.z, worm.target.x, worm.target.z) <= killR2) {
+          victims.push(p);
+        }
+      }
+      if (victims.length > 0) {
+        anchorWormAtStrikeTarget();
+        for (const victim of victims) killPlayerByWorm(victim);
+        worm.phase = "devour";
+        worm.timer = WORM_CFG.devourDuration;
+        return;
       }
     }
+  }
+
+  if (worm.phase === "devour" || worm.phase === "recover") {
+    anchorWormAtStrikeTarget();
   }
 
   worm.timer = Math.max(0, worm.timer - dt);
@@ -309,14 +650,23 @@ function tickWorm(dt) {
     return;
   }
   if (worm.phase === "breach") {
+    anchorWormAtStrikeTarget();
+    worm.phase = "idle";
+    worm.cooldown = WORM_CFG.cooldownDuration;
+    startWormRetreat();
+    return;
+  }
+  if (worm.phase === "devour") {
+    anchorWormAtStrikeTarget();
     worm.phase = "recover";
     worm.timer = WORM_CFG.recoverDuration;
     return;
   }
   if (worm.phase === "recover") {
+    anchorWormAtStrikeTarget();
     worm.phase = "idle";
-    worm.state = "off_map";
     worm.cooldown = WORM_CFG.cooldownDuration;
+    startWormRetreat();
   }
 }
 
@@ -341,13 +691,16 @@ setInterval(() => {
 setInterval(() => {
   tickWorm(WORM_TICK_MS / 1000);
   io.emit("wormSync", {
+    position: { x: worm.position.x, z: worm.position.z },
+    velocity: { x: worm.velocity.x, z: worm.velocity.z },
     state: worm.state,
     phase: worm.phase,
     timer: worm.timer,
     cooldown: worm.cooldown,
     noisePressure: worm.noisePressure,
     target: { x: worm.target.x, z: worm.target.z },
-    worldTime: (Date.now() - SERVER_START_MS) / 1000,
+    targetHotspot: worm.targetHotspot ? { ...worm.targetHotspot } : null,
+    worldTime: getWorldTimeSeconds(),
   });
 }, WORM_TICK_MS);
 
@@ -367,11 +720,7 @@ setInterval(() => {
       io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
       emitDeathEvent(p.id, p.poisonAttackerId, "poison");
       p.poisonTimer = 0;
-      setTimeout(() => {
-        if (!players.has(p.id)) return;
-        p.health = 100;
-        io.emit("playerRespawned", { id: p.id });
-      }, 3000);
+      schedulePlayerRespawn(p.id, 3000);
     }
   }
 }, POISON_TICK_MS);
@@ -434,10 +783,14 @@ io.on("connection", (socket) => {
     shieldActive: false,
     poisonTimer: 0,
     poisonAttackerId: null,
+    harvestActive: false,
     thumperActive: false,
     thumperX: 0,
     thumperZ: 0,
     thumperSignal: 0,
+    vx: 0,
+    vz: 0,
+    moveTime: 0,
   };
   players.set(socket.id, player);
 
@@ -466,13 +819,7 @@ io.on("connection", (socket) => {
     if (target.health <= 0) {
       io.emit("playerKilled", { id: targetId, killerId: attackerId });
       emitDeathEvent(targetId, attackerId, attackType);
-      setTimeout(() => {
-        if (!players.has(targetId)) return;
-        target.health = 100;
-        target.poisonTimer = 0;
-        target.poisonAttackerId = null;
-        io.emit("playerRespawned", { id: targetId });
-      }, 3000);
+      schedulePlayerRespawn(targetId, 3000);
     }
     return true;
   }
@@ -481,9 +828,21 @@ io.on("connection", (socket) => {
   socket.on("move", (data) => {
     const p = players.get(socket.id);
     if (!p) return;
-    p.x = data.x;
+    const x = Number(data.x) || 0;
+    const z = Number(data.z) || 0;
+    const nowSec = getWorldTimeSeconds();
+    const dt = p.moveTime > 0 ? Math.min(0.25, Math.max(0.016, nowSec - p.moveTime)) : 0;
+    if (dt > 0) {
+      p.vx = (x - p.x) / dt;
+      p.vz = (z - p.z) / dt;
+    } else {
+      p.vx = 0;
+      p.vz = 0;
+    }
+    p.moveTime = nowSec;
+    p.x = x;
     p.y = data.y;
-    p.z = data.z;
+    p.z = z;
     p.rotY = data.rotY;
     p.spiceCarry = data.spiceCarry;
     p.equipped = data.equipped;
@@ -491,9 +850,12 @@ io.on("connection", (socket) => {
     p.noiseLevel = clamp(Number(data.noiseLevel) || 0, 0, 1);
     p.signLevel = clamp(Number(data.signLevel) || 0, 0, 1);
     p.shieldActive = Boolean(data.shieldActive);
+    p.harvestActive = Boolean(data.harvestActive);
     p.thumperActive = Boolean(data.thumperActive);
-    p.thumperX = Number(data.thumperX) || p.x;
-    p.thumperZ = Number(data.thumperZ) || p.z;
+    const thumperX = Number(data.thumperX);
+    const thumperZ = Number(data.thumperZ);
+    p.thumperX = Number.isFinite(thumperX) ? thumperX : p.x;
+    p.thumperZ = Number.isFinite(thumperZ) ? thumperZ : p.z;
     p.thumperSignal = clamp(Number(data.thumperSignal) || 0, 0, 1);
     // Relay to everyone else — don't echo back to sender
     socket.broadcast.emit("playerMoved", {
@@ -508,17 +870,42 @@ io.on("connection", (socket) => {
 
   socket.on("noiseHotspot", (data) => {
     if (!data) return;
+    const p = players.get(socket.id);
+    const kind = String(data.kind || "generic");
+    const x = Number(data.x);
+    const z = Number(data.z);
+    const strength = clamp(Number(data.strength) || 0, 0, 1);
+    if (kind === "thumper" && p) {
+      p.thumperActive = true;
+      p.thumperX = Number.isFinite(x) ? x : p.x;
+      p.thumperZ = Number.isFinite(z) ? z : p.z;
+      p.thumperSignal = Math.max(p.thumperSignal || 0, strength);
+    }
     pushNoiseHotspot(
-      data.kind,
-      data.x,
-      data.z,
-      data.strength,
+      kind,
+      x,
+      z,
+      strength,
       {
         radius: data.radius,
         ttl: data.ttl,
         signLevel: data.signLevel,
       }
     );
+    if (kind === "thumper" && Number.isFinite(x) && Number.isFinite(z)) {
+      const thumperTarget = {
+        x,
+        z,
+        source: "thumper",
+        ownerId: socket.id,
+      };
+      if (worm.phase === "idle" && worm.state === "off_map" && worm.cooldown <= 0) {
+        worm.noisePressure = Math.max(worm.noisePressure, WORM_CFG.noisePressureSpawnThreshold);
+        spawnWormOutsideCluster(thumperTarget, getWorldTimeSeconds());
+      } else if (worm.phase === "idle" && (worm.state === "inbound" || worm.state === "hunting")) {
+        trackWormTargetHotspot(thumperTarget, WORM_TICK_MS / 1000);
+      }
+    }
   });
 
   socket.on("holtzmanDetonation", (data) => {
@@ -530,6 +917,21 @@ io.on("connection", (socket) => {
     const y = Number(data.y);
     const z = Number(data.z);
     if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+
+    // Server-side atomic hotspot fallback so worm reaction does not depend on
+    // client hotspot emit timing/connectivity.
+    pushNoiseHotspot("atomic_holtzman", x, z, 1.0, {
+      radius: 540,
+      ttl: 30,
+      signLevel: 1.0,
+    });
+    if (worm.phase === "idle" && worm.state === "off_map") {
+      worm.cooldown = 0;
+      worm.noisePressure = Math.max(worm.noisePressure, WORM_CFG.noisePressureSpawnThreshold);
+      spawnWormOutsideCluster({ x, z }, getWorldTimeSeconds());
+    } else if (worm.phase === "idle" && (worm.state === "inbound" || worm.state === "hunting")) {
+      trackWormTargetHotspot({ x, z }, WORM_TICK_MS / 1000);
+    }
 
     for (const p of players.values()) {
       if (!p || p.health <= 0) continue;
