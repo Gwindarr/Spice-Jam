@@ -344,8 +344,11 @@ io.on("connection", (socket) => {
   }
 
   const team = assignTeam();
+  const rawName = String(socket.handshake.auth?.name || "").trim().slice(0, 24);
+  const name = rawName || ("Pilgrim-" + socket.id.slice(-4).toUpperCase());
   const player = {
     id: socket.id,
+    name,
     team,
     x: 0, y: 0, z: 0,
     rotY: 0,
@@ -363,7 +366,7 @@ io.on("connection", (socket) => {
   };
   players.set(socket.id, player);
 
-  console.log(`[+] ${socket.id} joined as ${team} (${players.size} players)`);
+  console.log(`[+] ${socket.id} "${name}" joined as ${team} (${players.size} players)`);
 
   // Send new player the full world state
   socket.emit("welcome", { id: socket.id, team, snapshot: getWorldSnapshot() });
