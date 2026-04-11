@@ -334,6 +334,41 @@
       opacity: 1;
     }
 
+    #killFeed {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 23;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      pointer-events: none;
+      width: min(70vw, 760px);
+    }
+
+    .kill-feed-item {
+      padding: 5px 11px;
+      border-radius: 999px;
+      background: rgba(8, 6, 2, 0.45);
+      border: 1px solid rgba(255, 218, 166, 0.18);
+      color: rgba(255, 234, 202, 0.86);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.38);
+      opacity: 1;
+      transition: opacity 260ms linear;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .kill-feed-item.fade {
+      opacity: 0;
+    }
+
     #deathFlash {
       position: fixed;
       inset: 0;
@@ -603,6 +638,7 @@
   <div id="reticle"></div>
   <div id="hitMarker"></div>
   <div id="damageNumbers"></div>
+  <div id="killFeed" aria-live="polite"></div>
   <div id="portalPrompt">Press E to Enter Portal</div>
 
   <div id="resumeHint">CLICK TO RESUME</div>
@@ -956,6 +992,7 @@
       deathHint: document.getElementById("deathHint"),
       hitMarker: document.getElementById("hitMarker"),
       damageNumbers: document.getElementById("damageNumbers"),
+      killFeed: document.getElementById("killFeed"),
       portalPrompt: document.getElementById("portalPrompt"),
       hudDay: document.getElementById("hudDay"),
       hudPhase: document.getElementById("hudPhase"),
@@ -1126,6 +1163,8 @@
 	      holtzmanDeathTimer: -1,
 	      holtzmanRespawnPoint: new THREE.Vector3(),
 	      pvpDead: false,
+	      pvpDeathTimer: 0,
+	      pvpDeathPose: 0,
 	      lasgunBeamStart: new THREE.Vector3(),
 	      lasgunBeamEnd: new THREE.Vector3(),
 	      shieldActive: false,
@@ -4211,6 +4250,19 @@
       state.wormRadioTimer = CONFIG.wormRadioMessageDuration;
     }
 
+    function pushKillFeedMessage(message) {
+      if (!ui.killFeed || !message) return;
+      const row = document.createElement("div");
+      row.className = "kill-feed-item";
+      row.textContent = message;
+      ui.killFeed.appendChild(row);
+      while (ui.killFeed.children.length > 4) {
+        ui.killFeed.removeChild(ui.killFeed.firstElementChild);
+      }
+      setTimeout(() => row.classList.add("fade"), 3600);
+      setTimeout(() => row.remove(), 3920);
+    }
+
     function emitNoiseImpulse(amount) {
       state.noiseImpulse = THREE.MathUtils.clamp(state.noiseImpulse + amount, 0, 1);
     }
@@ -5951,16 +6003,18 @@
 	      if (!state.holtzmanExplosionDamageDealt) {
 	        state.holtzmanExplosionDamageDealt = true;
 	        const ePos = state.holtzmanExplosionPos;
-	        // Player
-	        const playerDist = ePos.distanceTo(player.position);
-	        if (playerDist < CONFIG.holtzmanExplosionLethalRadius) {
-	          state.playerHealth = 0;
-	          state.holtzmanDeathTimer = 2.0;
-	          player.userData.velocity.set(0, 0, 0);
-	        } else if (playerDist < CONFIG.holtzmanExplosionDamageRadius) {
-	          const f = 1 - (playerDist - CONFIG.holtzmanExplosionLethalRadius) /
-	            (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
-	          state.playerHealth = Math.max(0, state.playerHealth - CONFIG.holtzmanExplosionDamage * f);
+	        // Player damage is server-authoritative in multiplayer.
+	        if (!mp.connected) {
+	          const playerDist = ePos.distanceTo(player.position);
+	          if (playerDist < CONFIG.holtzmanExplosionLethalRadius) {
+	            state.playerHealth = 0;
+	            state.holtzmanDeathTimer = 2.0;
+	            player.userData.velocity.set(0, 0, 0);
+	          } else if (playerDist < CONFIG.holtzmanExplosionDamageRadius) {
+	            const f = 1 - (playerDist - CONFIG.holtzmanExplosionLethalRadius) /
+	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
+	            state.playerHealth = Math.max(0, state.playerHealth - CONFIG.holtzmanExplosionDamage * f);
+	          }
 	        }
 	        // Regular dummy
 	        if (trainingDummy && !trainingDummy.dead) {
@@ -9008,6 +9062,8 @@
       state.spiceCarry = 0;
       state.playerHealth = CONFIG.playerMaxHealth;
       state.surfaceType = getPlayerSurfaceType(player.position.y, 0);
+      player.rotation.x = 0;
+      state.pvpDeathPose = 0;
       camera.rotation.set(CONFIG.cameraPitchDown, 0, 0);
       updateCameraRig(1);
     }
@@ -9165,6 +9221,11 @@
       }
 
       if (state.wormPhase === "devour" || state.wormPhase === "recover" || state.holtzmanDeathTimer > 0 || state.pvpDead) {
+        if (state.pvpDead) {
+          state.pvpDeathPose = Math.min(1, state.pvpDeathPose + (delta / 0.55));
+          const fall = state.pvpDeathPose * state.pvpDeathPose;
+          player.rotation.x = -Math.min(Math.PI * 0.48, fall * (Math.PI * 0.5));
+        }
         velocity.set(0, 0, 0);
         player.userData.grounded = false;
         updateNoiseSystem(delta, { horizSpeed: 0, crouchActive: false, runActive: false });
@@ -10050,6 +10111,8 @@
             spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
           }
           state.pvpDead = true;
+          state.pvpDeathTimer = 3.0;
+          state.pvpDeathPose = 0;
           broadcastWormRadio("You were killed!");
         } else {
           const rp = remotePlayers.get(id);
@@ -10063,6 +10126,10 @@
             state.hitMarkerTimer = 0.4;
           }
         }
+      });
+
+      socket.on("deathEvent", ({ message }) => {
+        pushKillFeedMessage(message);
       });
 
       socket.on("playerPoisoned", ({ id, duration }) => {
@@ -10092,6 +10159,9 @@
         }
         if (id === socket.id) {
           state.pvpDead = false;
+          state.pvpDeathTimer = 0;
+          state.pvpDeathPose = 0;
+          player.rotation.x = 0;
           state.damageFlashTimer = 0;
           state.directHitNoticeTimer = 0;
           state.playerPoisonTimer = 0;

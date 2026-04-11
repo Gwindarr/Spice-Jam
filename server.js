@@ -10,18 +10,26 @@ const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
 const POISON_DPS = 4;
 const POISON_DURATION = 6;
+const HOLTZMAN_LETHAL_RADIUS = 35;
+const HOLTZMAN_DAMAGE_RADIUS = 70;
+const HOLTZMAN_DAMAGE = 80;
+const HOLTZMAN_EVENT_COOLDOWN_MS = 250;
 
 const WORM_CFG = {
   noisePressureSpawnThreshold: 0.68,
   noisePressureRise: 0.38,
   noisePressureDecay: 0.14,
   hotspotMinIntensity: 0.18,
+  inboundDuration: 8,
   warningDuration: 2.8,
   breachDuration: 4.0,
+  strikeDelay: 0.35,
+  strikeWindow: 0.65,
   recoverDuration: 2.0,
   cooldownDuration: 14,
   killRadius: 28,
   targetTrackSharpness: 4.6,
+  targetLockProgress: 0.72,
   shieldHotspotBonus: 0.34,
   maxNoiseHotspots: 32,
 };
@@ -52,6 +60,7 @@ const worm = {
   noisePressure: 0,
   target: { x: 0, z: 0 },
 };
+let lastHoltzmanDetonationMs = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -81,6 +90,28 @@ function getWorldSnapshot() {
       worldTime: (Date.now() - SERVER_START_MS) / 1000,
     },
   };
+}
+
+function emitDeathEvent(victimId, killerId, cause = "combat") {
+  const victim = players.get(victimId);
+  const killer = players.get(killerId);
+  const victimName = victim?.name || `Player-${String(victimId).slice(-4)}`;
+  const killerName = killerId === "worm"
+    ? "Worm"
+    : (killer?.name || `Player-${String(killerId).slice(-4)}`);
+  const message = killerId === "worm"
+    ? `${victimName} was devoured by the worm`
+    : `${victimName} was killed by ${killerName}`;
+  console.log(`[death] ${message} (${cause})`);
+  io.emit("deathEvent", {
+    victimId,
+    killerId,
+    cause,
+    victimName,
+    killerName,
+    message,
+    respawnSeconds: 3,
+  });
 }
 
 function clamp(v, min, max) {
@@ -214,6 +245,7 @@ function killPlayerByWorm(target) {
   target.health = 0;
   io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
   io.emit("playerKilled", { id: target.id, killerId: "worm" });
+  emitDeathEvent(target.id, "worm", "worm");
   setTimeout(() => {
     const p = players.get(target.id);
     if (!p) return;
@@ -333,6 +365,7 @@ setInterval(() => {
     io.emit("playerDamaged", { id: p.id, health: p.health, attackerId: p.poisonAttackerId });
     if (p.health <= 0) {
       io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
+      emitDeathEvent(p.id, p.poisonAttackerId, "poison");
       p.poisonTimer = 0;
       setTimeout(() => {
         if (!players.has(p.id)) return;
@@ -432,6 +465,7 @@ io.on("connection", (socket) => {
     io.emit("playerDamaged", { id: targetId, health: target.health, attackerId });
     if (target.health <= 0) {
       io.emit("playerKilled", { id: targetId, killerId: attackerId });
+      emitDeathEvent(targetId, attackerId, attackType);
       setTimeout(() => {
         if (!players.has(targetId)) return;
         target.health = 100;
@@ -489,10 +523,32 @@ io.on("connection", (socket) => {
 
   socket.on("holtzmanDetonation", (data) => {
     if (!data) return;
+    const now = Date.now();
+    if (now - lastHoltzmanDetonationMs < HOLTZMAN_EVENT_COOLDOWN_MS) return;
+    lastHoltzmanDetonationMs = now;
     const x = Number(data.x);
     const y = Number(data.y);
     const z = Number(data.z);
     if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+
+    for (const p of players.values()) {
+      if (!p || p.health <= 0) continue;
+      const dx = p.x - x;
+      const dz = p.z - z;
+      const dist = Math.hypot(dx, dz);
+      let damage = 0;
+      if (dist < HOLTZMAN_LETHAL_RADIUS) {
+        damage = 999;
+      } else if (dist < HOLTZMAN_DAMAGE_RADIUS) {
+        const f = 1 - ((dist - HOLTZMAN_LETHAL_RADIUS)
+          / Math.max(0.001, HOLTZMAN_DAMAGE_RADIUS - HOLTZMAN_LETHAL_RADIUS));
+        damage = HOLTZMAN_DAMAGE * f;
+      }
+      if (damage > 0) {
+        applyPlayerDamage(p.id, damage, socket.id, "atomic_holtzman");
+      }
+    }
+
     io.emit("holtzmanDetonation", {
       x,
       y: Number.isFinite(y) ? y : 0,
