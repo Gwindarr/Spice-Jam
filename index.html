@@ -203,9 +203,10 @@
       position: fixed;
       inset: 0;
       pointer-events: none;
-      background: rgba(200, 0, 0, 0);
+      background: radial-gradient(circle at center, rgba(255, 90, 90, 0.12) 0%, rgba(165, 0, 0, 0.38) 46%, rgba(88, 0, 0, 0.72) 100%);
+      opacity: 0;
       z-index: 50;
-      transition: background 0.08s ease;
+      transition: opacity 0.08s ease;
     }
 
     #vignette {
@@ -218,6 +219,27 @@
         rgba(4, 2, 0, 0.72) 100%);
       z-index: 4;
       display: none;
+    }
+
+    #combatStatus {
+      position: fixed;
+      left: 50%;
+      top: 56%;
+      transform: translate(-50%, -50%);
+      min-width: 140px;
+      text-align: center;
+      font-size: 19px;
+      font-weight: 900;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #ffc2c2;
+      text-shadow:
+        0 0 10px rgba(0, 0, 0, 0.78),
+        0 0 16px rgba(255, 70, 70, 0.55);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 55;
+      transition: opacity 0.08s linear;
     }
 
 
@@ -553,6 +575,7 @@
   <div id="depositToast" class="deposit-toast"></div>
   <div id="damageFlash"></div>
   <div id="vignette"></div>
+  <div id="combatStatus"></div>
 
 	  <div id="devHud" class="hud-panel">
 	    <div class="title">Dev Hud</div>
@@ -957,6 +980,7 @@
       hudContextFill: document.getElementById("hudContextFill"),
       depositToast: document.getElementById("depositToast"),
       damageFlash: document.getElementById("damageFlash"),
+      combatStatus: document.getElementById("combatStatus"),
       hudStatus: document.getElementById("hudStatus"),
       explosionFlash: document.getElementById("explosionFlash"),
       noiseFill: document.getElementById("noiseFill"),
@@ -1112,6 +1136,8 @@
       depositKeyConsumed: false,
       depositToastTimer: 0,
       damageFlashTimer: 0,
+      directHitNoticeTimer: 0,
+      playerPoisonTimer: 0,
       hitMarkerTimer: 0,
       serverWorldTimeBase: null,
       serverWorldTimeStamp: 0,
@@ -2537,7 +2563,6 @@
     function isShieldOperational() {
       return state.shieldActive
         && state.shieldCharge > 0.001
-        && !state.paused
         && state.wormPhase === "idle";
     }
 
@@ -2797,11 +2822,12 @@
 	      if (!hit) {
 	        for (const [, rp] of remotePlayers) {
 	          if (rp.data.shieldActive) continue;
-	          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-	          if (testKnifeHitTarget(tempProjectileCenter, 0.62)) {
+	          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.06, rp.mesh.position.z);
+	          if (testKnifeHitTarget(tempProjectileCenter, 1.4)) {
 	            const knifeResult = resolveImpactDamage(CONFIG.knifeDamage);
             mp.emit("hitPlayer", { targetId: rp.data.id, damage: knifeResult.damage });
 	            rp.hitFlash = 1.0;
+	            triggerDamageNumberAtPosition(tempProjectileCenter, knifeResult.damage, knifeResult.isCritical);
 	            triggerKnifeImpact(tempProjectileCenter, strikeDir);
 	            hit = true;
 	            break;
@@ -2991,6 +3017,24 @@
 	        checkNpcAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
 	        checkNpcAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
+        for (const [, rp] of remotePlayers) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+          const tB = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tB >= 0.5 && tB < aimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tB);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 1.4 + 0.3) {
+              aimDist = tB; tempLasgunAimPoint.copy(tempKnifeDir);
+            }
+          }
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+          const tH = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tH >= 0.5 && tH < aimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tH);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 0.55 + 0.3) {
+              aimDist = tH; tempLasgunAimPoint.copy(tempKnifeDir);
+            }
+          }
+        }
 	      tempKnifeDir.subVectors(tempLasgunAimPoint, tempMaulaOrigin).normalize();
 	      const strikeDir = tempKnifeDir;
 	      spawnMaulaProjectile(strikeDir);
@@ -3187,6 +3231,36 @@
 	          hit = true;
 	        }
 
+        // Remote players first (body y+2.56 r=1.4, head y+4.66 r=0.55 — NPC hitbox + ground lift)
+	        if (!hit) {
+	          for (const [, rp] of remotePlayers) {
+	            if (rp.data.shieldActive) continue;
+	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 1.4 + CONFIG.maulaProjectileRadius)) {
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
+	              mp.emit("poisonPlayer", { targetId: rp.data.id });
+	              rp.hitFlash = 1.0;
+	              triggerDamageNumberAtPosition(tempProjectileCenter, CONFIG.maulaImpactDamage);
+	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
+	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	              hit = true;
+	              break;
+	            }
+	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.55 + CONFIG.maulaProjectileRadius)) {
+	              const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: result.damage });
+	              mp.emit("poisonPlayer", { targetId: rp.data.id });
+	              rp.hitFlash = 1.0;
+	              triggerDamageNumberAtPosition(tempProjectileCenter, result.damage, true);
+	              sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
+	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	              hit = true;
+	              break;
+	            }
+	          }
+	        }
+
 	        if (!hit && trainingDummy) {
 	          trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
 	          if (segmentHitsSphere(
@@ -3238,22 +3312,6 @@
             }
           }
         }
-
-	        if (!hit) {
-	          for (const [, rp] of remotePlayers) {
-	            if (rp.data.shieldActive) continue;
-	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.5 + CONFIG.maulaProjectileRadius)) {
-	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
-	              rp.hitFlash = 1.0;
-	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
-	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
-	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
-	              hit = true;
-	              break;
-	            }
-	          }
-	        }
 
 	        // Rock impact wins if no entity claimed the dart this frame
 	        if (!hit && rockHit) {
@@ -3755,6 +3813,24 @@
 	        snapAim(sd.headDot, CONFIG.trainingDummyHeadRadius);
 	        snapAim(sd.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
+        for (const [, rp] of remotePlayers) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+          const tB = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tB >= 0.5 && tB < lasgunAimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tB);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 1.4 + 0.6) {
+              lasgunAimDist = tB; aimPoint.copy(tempProjectileCenter);
+            }
+          }
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+          const tH = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tH >= 0.5 && tH < lasgunAimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tH);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 0.55 + 0.6) {
+              lasgunAimDist = tH; aimPoint.copy(tempProjectileCenter);
+            }
+          }
+        }
 	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
         player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
 
@@ -3789,6 +3865,7 @@
 
 	      let bestShieldedDummy = null;
       let bestShieldedNpc = null;
+      let bestRemoteId = null;
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
 	        sd.headDot.getWorldPosition(tempProjectileCenter);
@@ -3829,6 +3906,21 @@
         }
       }
 
+      // Remote players (body y+2.56 r=1.4, head y+4.66 r=0.55)
+      for (const [, rp] of remotePlayers) {
+        if (rp.data.shieldActive) continue;
+        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 1.4 + 0.25)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "remote"; bestHeadshot = false; bestRemoteId = rp.data.id; }
+        }
+        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.55 + 0.25)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "remote"; bestHeadshot = true; bestRemoteId = rp.data.id; }
+        }
+      }
+
 	      const impactPoint = bestType
 	        ? tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance)
 	        : tempLasgunEnd;
@@ -3841,6 +3933,18 @@
 	      } else if (bestType && bestType.startsWith("npc:")) {
 	        const ni = parseInt(bestType.slice(4));
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
+	      } else if (bestType === "remote" && bestRemoteId) {
+          const dmg = CONFIG.lasgunDPS * delta;
+          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg });
+          const rp = remotePlayers.get(bestRemoteId);
+          if (rp) {
+            rp.hitFlash = Math.max(rp.hitFlash || 0, 0.55);
+            rp._lasgunDmgAccum = (rp._lasgunDmgAccum || 0) + dmg;
+            if (rp._lasgunDmgAccum >= 10) {
+              triggerDamageNumberAtPosition(rp.mesh.position, rp._lasgunDmgAccum);
+              rp._lasgunDmgAccum = 0;
+            }
+          }
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
@@ -4602,7 +4706,25 @@
 
       if (state.damageFlashTimer > 0) {
         state.damageFlashTimer = Math.max(0, state.damageFlashTimer - delta);
-        ui.damageFlash.style.background = `rgba(200,0,0,${(state.damageFlashTimer * 0.7).toFixed(2)})`;
+        const flashOpacity = THREE.MathUtils.clamp(state.damageFlashTimer * 1.9, 0, 0.5);
+        ui.damageFlash.style.opacity = flashOpacity.toFixed(3);
+      } else if (ui.damageFlash.style.opacity !== "0") {
+        ui.damageFlash.style.opacity = "0";
+      }
+
+      if (state.directHitNoticeTimer > 0) state.directHitNoticeTimer = Math.max(0, state.directHitNoticeTimer - delta);
+      if (state.playerPoisonTimer > 0) state.playerPoisonTimer = Math.max(0, state.playerPoisonTimer - delta);
+
+      if (state.playerPoisonTimer > 0) {
+        ui.combatStatus.textContent = "Poisoned";
+        ui.combatStatus.style.color = "#a7ff88";
+        ui.combatStatus.style.opacity = "0.58";
+      } else if (state.directHitNoticeTimer > 0) {
+        ui.combatStatus.textContent = "Hit";
+        ui.combatStatus.style.color = "#ffc2c2";
+        ui.combatStatus.style.opacity = `${Math.min(0.55, state.directHitNoticeTimer * 2.2)}`;
+      } else if (ui.combatStatus.style.opacity !== "0") {
+        ui.combatStatus.style.opacity = "0";
       }
 
       let nearbyHarvestNode = null;
@@ -6859,6 +6981,25 @@
 
     // ── Hit feedback: crosshair pulse + floating damage number at hit world pos ──
     const tempHitProject = new THREE.Vector3();
+    function triggerDamageNumberAtPosition(pos, damage, headshot = false, poison = false) {
+      if (!pos) return;
+      if (!poison) state.hitMarkerTimer = 0.18;
+      const rounded = Math.round(damage);
+      if (rounded < 1) return;
+      tempHitProject.set(pos.x, pos.y + 3.2, pos.z);
+      tempHitProject.project(camera);
+      if (tempHitProject.z > 1 || tempHitProject.z < -1) return;
+      const sx = (tempHitProject.x * 0.5 + 0.5) * window.innerWidth;
+      const sy = (-tempHitProject.y * 0.5 + 0.5) * window.innerHeight;
+      const el = document.createElement("div");
+      el.className = "damage-number" + (headshot ? " crit" : poison ? " poison" : "");
+      el.textContent = String(rounded);
+      el.style.left = (sx + (Math.random() - 0.5) * 24) + "px";
+      el.style.top = sy + "px";
+      ui.damageNumbers.appendChild(el);
+      setTimeout(() => el.remove(), 1000);
+    }
+
     function triggerHitFeedback(target, damage, headshot, poison = false) {
       if (!poison) state.hitMarkerTimer = 0.18;
       const rounded = Math.round(damage);
@@ -8896,7 +9037,7 @@
       });
 
       controls.addEventListener("unlock", () => {
-        state.paused = true;
+        if (!mp.connected) state.paused = true;
         clearMovementInput();
         ui.resumeHint.classList.add("visible");
       });
@@ -9596,6 +9737,30 @@
 
     function updateRemotePlayers(delta) {
       for (const [, rp] of remotePlayers) {
+        if (rp.dead) {
+          rp.deathTimer = (rp.deathTimer || 0) + delta;
+          rp.mesh.rotation.x = Math.min(rp.deathTimer * 3, Math.PI / 2);
+          rp.mesh.position.lerp(
+            tempWormTarget.set(rp.data.x, rp.data.y, rp.data.z), 1 - Math.exp(-18 * delta)
+          );
+          continue;
+        }
+        rp.mesh.rotation.x = 0;
+        // Remote shield visual
+        const rpShield = rp.mesh.userData.shieldVisual;
+        if (rpShield) {
+          const shieldOn = Boolean(rp.data.shieldActive);
+          rp._shieldAlpha = THREE.MathUtils.damp(rp._shieldAlpha || 0, shieldOn ? 1 : 0, 8, delta);
+          rpShield.group.visible = rp._shieldAlpha > 0.01;
+          if (rpShield.group.visible) {
+            const a = rp._shieldAlpha;
+            const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * 4);
+            rpShield.group.position.y = 2.78;
+            rpShield.group.scale.setScalar(1 + a * 0.015 + pulse * 0.012);
+            rpShield.core.material.opacity = a * (0.12 + pulse * 0.03);
+            rpShield.halo.material.opacity = a * 0.09;
+          }
+        }
         // Smooth interpolation toward last known position
         rp.mesh.position.lerp(
           tempWormTarget.set(rp.data.x, rp.data.y, rp.data.z), 1 - Math.exp(-18 * delta)
@@ -9604,19 +9769,24 @@
         const diff = ((targetRotY - rp.mesh.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         rp.mesh.rotation.y += diff * (1 - Math.exp(-14 * delta));
         updateRemotePlayerState(rp);
-        // Poison damage tick — emit server damage and show green glow
+        // Poison visual (damage is server-authoritative)
         if (rp.poisonTimer > 0) {
           rp.poisonTimer = Math.max(0, rp.poisonTimer - delta);
-          mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaPoisonDamagePerSecond * delta });
         }
         const poisonStrength = THREE.MathUtils.clamp(rp.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
-        const poisonPulse = poisonStrength > 0 ? (0.5 + Math.sin(state.elapsed * 6) * 0.5) * poisonStrength : 0;
-        if (rp.hitFlash > 0 || poisonPulse > 0) {
-          rp.hitFlash = Math.max(0, rp.hitFlash - delta * 3.5);
+        const poisonPulse = poisonStrength > 0 ? (0.5 + Math.sin(state.elapsed * 8) * 0.5) * poisonStrength : 0;
+        rp.hitFlash = Math.max(0, rp.hitFlash - delta * 3.5);
+        const emR = rp.hitFlash;
+        const emG = poisonPulse * 0.6;
+        const emB = poisonPulse * 0.1;
+        const emI = rp.hitFlash * 1.2 + poisonPulse * 0.5;
+        const needsUpdate = emR > 0.001 || emG > 0.001 || (rp._lastEmissive || 0) > 0.001;
+        if (needsUpdate) {
+          rp._lastEmissive = emR + emG + emB;
           rp.mesh.traverse((obj) => {
             if (obj.isMesh && obj.material && obj.material.emissive) {
-              obj.material.emissive.setRGB(rp.hitFlash + poisonStrength * 0.05, rp.hitFlash * 0.1 + poisonPulse * 0.5, poisonPulse * 0.12);
-              obj.material.emissiveIntensity = rp.hitFlash * 1.2 + poisonPulse * 0.5;
+              obj.material.emissive.setRGB(emR, emG, emB);
+              obj.material.emissiveIntensity = emI;
             }
           });
         }
@@ -9772,11 +9942,31 @@
 
       socket.on("playerDamaged", ({ id, health, attackerId }) => {
         if (id === socket.id) {
+          const prevHealth = state.playerHealth;
           state.playerHealth = health;
-          state.damageFlashTimer = 0.5;
+          const tookDamage = prevHealth - health;
+          if (tookDamage > 0) {
+            const poisonTickLikely = state.playerPoisonTimer > 0
+              && tookDamage <= Math.max(5, CONFIG.maulaPoisonDamagePerSecond * 1.5);
+            if (poisonTickLikely) {
+              state.damageFlashTimer = Math.max(state.damageFlashTimer, 0.14);
+            } else {
+              state.damageFlashTimer = Math.max(state.damageFlashTimer, 0.24);
+              state.directHitNoticeTimer = Math.max(state.directHitNoticeTimer, 0.24);
+            }
+          }
         } else {
           const rp = remotePlayers.get(id);
-          if (rp) rp.hitFlash = 1.0;
+          if (rp) {
+            const prevHealth = typeof rp.data.health === "number" ? rp.data.health : health;
+            const dealtDamage = Math.max(0, prevHealth - health);
+            rp.data.health = health;
+            rp.hitFlash = 1.0;
+            if (attackerId === socket.id && dealtDamage >= 1) {
+              const poisonTick = rp.poisonTimer > 0 && dealtDamage <= Math.max(8, CONFIG.maulaPoisonDamagePerSecond * 2.0);
+              triggerDamageNumberAtPosition(rp.mesh.position, dealtDamage, false, poisonTick);
+            }
+          }
         }
       });
 
@@ -9787,19 +9977,44 @@
           }
           state.pvpDead = true;
           broadcastWormRadio("You were killed!");
-          state.damageFlashTimer = 1.2;
         } else {
           const rp = remotePlayers.get(id);
-          if (rp) rp.hitFlash = 2.0;
+          if (rp) {
+            rp.hitFlash = 2.0;
+            rp.dead = true;
+            rp.deathTimer = 0;
+          }
+          if (killerId === socket.id) {
+            broadcastWormRadio("Target eliminated.");
+            state.hitMarkerTimer = 0.4;
+          }
         }
+      });
+
+      socket.on("playerPoisoned", ({ id, duration }) => {
+        if (id === socket.id) {
+          state.playerPoisonTimer = Math.max(state.playerPoisonTimer, Number(duration) || CONFIG.maulaPoisonDuration);
+        }
+        const rp = remotePlayers.get(id);
+        if (rp) rp.poisonTimer = duration;
       });
 
       socket.on("playerRespawned", ({ id }) => {
         const rp = remotePlayers.get(id);
-        if (rp) { rp.data.health = 100; rp.hitFlash = 0; }
+        if (rp) {
+          rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
+          rp.mesh.rotation.x = 0; rp._lastEmissive = 0; rp._lasgunDmgAccum = 0;
+          rp.mesh.traverse((obj) => {
+            if (obj.isMesh && obj.material && obj.material.emissive) {
+              obj.material.emissive.setRGB(0, 0, 0); obj.material.emissiveIntensity = 0;
+            }
+          });
+        }
         if (id === socket.id) {
           state.pvpDead = false;
           state.damageFlashTimer = 0;
+          state.directHitNoticeTimer = 0;
+          state.playerPoisonTimer = 0;
           respawnAtBase();
         }
       });
