@@ -790,6 +790,7 @@
       spiceCarryNoiseBonus: 0.1,
       spiceNodeMinSpacing: 95,
       spiceNodeMinSafeClearance: 46,
+      spiceNodeMesaProximity: 140,  // only 1 small node allowed within this range of a mesa; plumes never
       spiceNodeEdgePadding: 70,
       portalTriggerRadius: 4.2,
       portalVisualRadius: 3.2,
@@ -4579,7 +4580,7 @@
         wormWarning: createAudioEffect("assets/audio/kenney/worm/spaceEngineLow_001.ogg", { volume: 0.32, poolSize: 1, playbackRateMin: 0.9, playbackRateMax: 0.96 }),
         wormBreach: createAudioEffect("assets/audio/kenney/worm/lowFrequency_explosion_000.ogg", { volume: 0.52, poolSize: 1, playbackRateMin: 0.82, playbackRateMax: 0.9 }),
         wormDevour: createAudioEffect("assets/audio/kenney/worm/explosionCrunch_001.ogg", { volume: 0.58, poolSize: 1, playbackRateMin: 0.82, playbackRateMax: 0.92 }),
-        spiceBlow: createAudioEffect("assets/audio/kenney/worm/lowFrequency_explosion_000.ogg", { volume: 0.48, poolSize: 1, playbackRateMin: 0.52, playbackRateMax: 0.64 }),
+        spiceBlow: createAudioEffect("assets/audio/kenney/worm/lowFrequency_explosion_000.ogg", { volume: 0.85, poolSize: 1, playbackRateMin: 0.42, playbackRateMax: 0.55 }),
       };
     }
 
@@ -4783,12 +4784,16 @@
       if (!serverNode) return;
       const local = spiceObjective.nodes[serverNode.id];
       if (!local) return;
-      const wasActivePlume = local.active && local.type === "plume";
+      const wasActive = local.active;
+      const prevRespawnCount = local.respawnCount;
+      const nextRespawnCount = Math.max(0, Math.floor(Number(serverNode.respawnCount) || 0));
 
       const nextType = serverNode.type === "plume" ? "plume" : "small";
       const nextTotalYield = Math.max(0, Math.floor(Number(serverNode.totalYield) || 0));
       const nextRemaining = Math.max(0, Math.floor(Number(serverNode.remaining) || 0));
       const nextRespawnTimer = Math.max(0, Number(serverNode.respawnTimer) || 0);
+
+      local.respawnCount = nextRespawnCount;
 
       if (local.type !== nextType) {
         local.type = nextType;
@@ -4802,13 +4807,20 @@
       local.remaining = nextRemaining;
       local.decayTimer = -1;
 
+      // Relocate when respawnCount advances (node respawned at a new position)
+      if (serverNode.active && nextRespawnCount > prevRespawnCount) {
+        spiceObjective.relocateNodeSeeded(local, nextRespawnCount);
+      }
+
       if (serverNode.active) {
         setSpiceNodeActive(local, true, 0);
       } else {
         setSpiceNodeActive(local, false, nextRespawnTimer);
       }
 
-      if (mp.connected && serverNode.active && nextType === "plume" && (!wasActivePlume || state.elapsed < 1.5)) {
+      // Fire plume event when a node becomes an active plume that wasn't active before
+      // (skip the initial plume — handled by fireInitialPlumeEvent on first pointer lock)
+      if (mp.connected && serverNode.active && nextType === "plume" && !wasActive) {
         triggerSpicePlumeEvent(local);
       }
     }
@@ -4922,7 +4934,8 @@
             if (node.respawnTimer === 0) {
               // Depleted plumes revert to small on respawn (slot returns to pool)
               if (node.type === "plume") node.type = "small";
-              spiceObjective.relocateNode(node);
+              node.respawnCount += 1;
+              spiceObjective.relocateNodeSeeded(node, node.respawnCount);
               setSpiceNodeActive(node, true);
             }
           }
@@ -7312,7 +7325,7 @@
       const minSpacingSq = CONFIG.spiceNodeMinSpacing * CONFIG.spiceNodeMinSpacing;
       let reservedInitialPlumeSpawn = null;
 
-      function isValidSpiceNodeSpawn(x, z, excludeNode = null) {
+      function isValidSpiceNodeSpawn(x, z, excludeNode = null, spawnType = "small") {
         let blocked = false;
         for (const patch of ROCK_PATCHES) {
           const dx = x - patch.x;
@@ -7324,6 +7337,24 @@
           }
         }
         if (blocked || getSurfaceType(x, z) !== "sand") return false;
+
+        // At most one node near any given mesa; plumes never near a mesa
+        for (const patch of ROCK_PATCHES) {
+          const proxRadius = patch.radius + CONFIG.spiceNodeMesaProximity;
+          const proxSq = proxRadius * proxRadius;
+          const dx = x - patch.x;
+          const dz = z - patch.z;
+          if ((dx * dx) + (dz * dz) < proxSq) {
+            if (spawnType === "plume") return false;
+            // Check if another active node is already near this mesa
+            for (const node of nodes) {
+              if (node === excludeNode || !node.active) continue;
+              const ndx = node.x - patch.x;
+              const ndz = node.z - patch.z;
+              if ((ndx * ndx) + (ndz * ndz) < proxSq) return false;
+            }
+          }
+        }
 
         if (reservedInitialPlumeSpawn && excludeNode?.id !== (CONFIG.spiceNodeCount - 1)) {
           const dx = x - reservedInitialPlumeSpawn.x;
@@ -7345,14 +7376,14 @@
         return true;
       }
 
-      function findSpiceNodeSpawn(excludeNode = null) {
+      function findSpiceNodeSpawn(excludeNode = null, spawnType = "small") {
         let attempts = 0;
 
         while (attempts < CONFIG.spiceNodeCount * 160) {
           attempts += 1;
           const x = randomRange(-halfWorld, halfWorld, rng);
           const z = randomRange(-halfWorld, halfWorld, rng);
-          if (!isValidSpiceNodeSpawn(x, z, excludeNode)) continue;
+          if (!isValidSpiceNodeSpawn(x, z, excludeNode, spawnType)) continue;
 
           return { x, z };
         }
@@ -7360,7 +7391,21 @@
         return null;
       }
 
-      function findSpiceNodeSpawnNearStart(excludeNode = null) {
+      // Deterministic spawn position from a seed — all clients produce the same result
+      function findSpiceNodeSpawnSeeded(seed, excludeNode = null, spawnType = "small") {
+        const localRng = mulberry32(seed);
+        let attempts = 0;
+        while (attempts < CONFIG.spiceNodeCount * 160) {
+          attempts += 1;
+          const x = randomRange(-halfWorld, halfWorld, localRng);
+          const z = randomRange(-halfWorld, halfWorld, localRng);
+          if (!isValidSpiceNodeSpawn(x, z, excludeNode, spawnType)) continue;
+          return { x, z };
+        }
+        return null;
+      }
+
+      function findSpiceNodeSpawnNearStart(excludeNode = null, spawnType = "plume") {
         const originX = CONFIG.playerStart.x;
         const originZ = CONFIG.playerStart.z;
         const distances = [88, 96, 108, 120, 132];
@@ -7381,7 +7426,7 @@
           for (const angle of angles) {
             const x = originX + (Math.cos(angle) * distance);
             const z = originZ + (Math.sin(angle) * distance);
-            if (!isValidSpiceNodeSpawn(x, z, excludeNode)) continue;
+            if (!isValidSpiceNodeSpawn(x, z, excludeNode, spawnType)) continue;
             return { x, z };
           }
         }
@@ -7605,6 +7650,7 @@
           seed: randomRange(0, Math.PI * 2, rng),
           active: false,
           respawnTimer: 0,
+          respawnCount: 0,
           type,
           totalYield,
           remaining: totalYield,
@@ -7631,7 +7677,9 @@
         nodes.push(node);
       }
 
-      // If initial roll succeeded, spawn a plume as the last slot (with event)
+      // If initial roll succeeded, spawn a plume as the last slot
+      // Event is deferred — firing during init plays behind the overlay with no audio
+      let pendingInitialPlumeNode = null;
       if (initialPlume) {
         const spawn = reservedInitialPlumeSpawn || findSpiceNodeSpawn();
         if (spawn) {
@@ -7640,7 +7688,7 @@
           node.active = true;
           node.group.visible = true;
           nodes.push(node);
-          triggerSpicePlumeEvent(node);
+          pendingInitialPlumeNode = node;
         }
       }
 
@@ -7650,10 +7698,25 @@
           updateSpicePatchVisual(node);
         },
         relocateNode(node) {
-          const spawn = findSpiceNodeSpawn(node);
+          const spawn = findSpiceNodeSpawn(node, node.type);
           if (!spawn) return false;
           placeSpiceNode(node, spawn.x, spawn.z);
           return true;
+        },
+        // Deterministic relocation — all clients pick the same position for a given respawnCount
+        relocateNodeSeeded(node, respawnCount) {
+          const seed = ((MAP_SEED ^ (node.id * 0x9e3779b9) ^ (respawnCount * 0x517cc1b7)) >>> 0);
+          const spawn = findSpiceNodeSpawnSeeded(seed, node, node.type);
+          if (!spawn) return false;
+          placeSpiceNode(node, spawn.x, spawn.z);
+          return true;
+        },
+        // Fire the deferred initial plume event (call once after pointer lock)
+        fireInitialPlumeEvent() {
+          if (pendingInitialPlumeNode) {
+            triggerSpicePlumeEvent(pendingInitialPlumeNode);
+            pendingInitialPlumeNode = null;
+          }
         },
         // Find an inactive node, convert it to plume, place + activate
         spawnPlume() {
@@ -7663,7 +7726,7 @@
           const slot = nodes.find(n => !n.active);
           if (!slot) return false;
           slot.type = "plume";
-          const spawn = findSpiceNodeSpawn(slot);
+          const spawn = findSpiceNodeSpawn(slot, "plume");
           if (!spawn) { slot.type = "small"; return false; }
           placeSpiceNode(slot, spawn.x, spawn.z);
           slot.active = true;
@@ -7680,11 +7743,11 @@
       cleanupPlumeEvent();
       const baseY = sampleGroundHeight(node.x, node.z);
 
-      // A) Ground burst ring
-      const ringGeo = new THREE.RingGeometry(0.3, 1.0, 32);
+      // A) Ground burst ring — large expanding shockwave visible from far away
+      const ringGeo = new THREE.RingGeometry(0.5, 1.8, 32);
       ringGeo.rotateX(-Math.PI / 2);
       const ringMat = new THREE.MeshBasicMaterial({
-        color: 0xc89760, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide,
+        color: 0xc89760, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide,
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.position.set(node.x, baseY + 0.15, node.z);
@@ -7692,34 +7755,34 @@
       scene.add(ring);
       plumeEventState.burstRing = { mesh: ring, mat: ringMat };
 
-      // B) Dust cloud puffs
-      const dustGeo = new THREE.SphereGeometry(1, 6, 5);
+      // B) Dust cloud puffs — tall eruption column with wide spread
+      const dustGeo = new THREE.SphereGeometry(2, 6, 5);
       const puffs = [];
-      for (let i = 0; i < 8; i += 1) {
+      for (let i = 0; i < 16; i += 1) {
         const mat = new THREE.MeshBasicMaterial({
-          color: 0xb8864a, transparent: true, opacity: 0.45, depthWrite: false,
+          color: 0xb8864a, transparent: true, opacity: 0.55, depthWrite: false,
         });
         const puff = new THREE.Mesh(dustGeo, mat);
-        const angle = (i / 8) * Math.PI * 2 + Math.random() * 0.5;
-        const outSpeed = 1.5 + Math.random() * 2.5;
-        const upSpeed = 2.0 + Math.random() * 3.0;
-        puff.position.set(node.x, baseY + 0.5 + Math.random() * 0.5, node.z);
-        puff.scale.setScalar(0.3 + Math.random() * 0.3);
+        const angle = (i / 16) * Math.PI * 2 + Math.random() * 0.4;
+        const outSpeed = 4 + Math.random() * 8;
+        const upSpeed = 5 + Math.random() * 8;
+        puff.position.set(node.x, baseY + 0.5 + Math.random() * 1.0, node.z);
+        puff.scale.setScalar(0.8 + Math.random() * 0.6);
         puff.renderOrder = 11;
         scene.add(puff);
-        puffs.push({ mesh: puff, mat, vx: Math.cos(angle) * outSpeed, vz: Math.sin(angle) * outSpeed, vy: upSpeed, scaleRate: 0.8 + Math.random() * 0.6 });
+        puffs.push({ mesh: puff, mat, vx: Math.cos(angle) * outSpeed, vz: Math.sin(angle) * outSpeed, vy: upSpeed, scaleRate: 2.5 + Math.random() * 1.5 });
       }
       plumeEventState.dustPuffs = puffs;
 
-      // C) Core flash
+      // C) Core flash — intense flare
       plumeEventState.coreNode = node;
-      node.crystalCore.material.emissiveIntensity = 3.0;
+      node.crystalCore.material.emissiveIntensity = 6.0;
       if (node.crystalGlow) {
-        node.crystalGlow.material.opacity = 0.8;
-        node.crystalGlow.scale.setScalar(3.0);
+        node.crystalGlow.material.opacity = 1.0;
+        node.crystalGlow.scale.setScalar(5.0);
       }
 
-      sfx.spiceBlow.play({ volumeMultiplier: 1.0 });
+      sfx.spiceBlow.play({ volumeMultiplier: 1.4 });
       emitNoiseHotspot("spice_blow", node.group.position, 0.82, {
         radius: 230,
         ttl: 12,
@@ -7745,13 +7808,13 @@
       plumeEventState.elapsed += delta;
       const t = plumeEventState.elapsed;
 
-      // A) Burst ring: expand and fade over 0.7s
+      // A) Burst ring: expand and fade over 1.5s
       if (plumeEventState.burstRing) {
-        const bt = Math.min(t / 0.7, 1);
+        const bt = Math.min(t / 1.5, 1);
         const ring = plumeEventState.burstRing;
-        const scale = 1 + bt * 16;
+        const scale = 1 + bt * 55;
         ring.mesh.scale.set(scale, scale, scale);
-        ring.mat.opacity = 0.7 * (1 - bt);
+        ring.mat.opacity = 0.9 * (1 - bt);
         if (bt >= 1) {
           scene.remove(ring.mesh);
           ring.mesh.geometry.dispose();
@@ -7760,17 +7823,17 @@
         }
       }
 
-      // B) Dust puffs: rise, expand, fade over 4s
+      // B) Dust puffs: rise, expand, fade over 6s
       for (let i = plumeEventState.dustPuffs.length - 1; i >= 0; i -= 1) {
         const p = plumeEventState.dustPuffs[i];
-        const dt = Math.min(t / 4.0, 1);
+        const dt = Math.min(t / 6.0, 1);
         const drag = 1 - dt * 0.7;
         p.mesh.position.x += p.vx * delta * drag;
         p.mesh.position.y += p.vy * delta * drag;
         p.mesh.position.z += p.vz * delta * drag;
-        p.vy -= delta * 1.5;
+        p.vy -= delta * 1.2;
         p.mesh.scale.setScalar(p.mesh.scale.x + p.scaleRate * delta);
-        p.mat.opacity = 0.45 * (1 - dt);
+        p.mat.opacity = 0.55 * (1 - dt);
         if (dt >= 1) {
           scene.remove(p.mesh);
           p.mat.dispose();
@@ -7778,18 +7841,18 @@
         }
       }
 
-      // C) Core flash lerp back over 1.2s
-      if (plumeEventState.coreNode && t < 1.2) {
+      // C) Core flash lerp back over 2.0s
+      if (plumeEventState.coreNode && t < 2.0) {
         const node = plumeEventState.coreNode;
-        const ft = Math.min(t / 1.2, 1);
-        node.crystalCore.material.emissiveIntensity = 3.0 + (0.45 - 3.0) * ft;
+        const ft = Math.min(t / 2.0, 1);
+        node.crystalCore.material.emissiveIntensity = 6.0 + (0.45 - 6.0) * ft;
         if (node.crystalGlow) {
-          node.crystalGlow.material.opacity = 0.8 + (0.2 - 0.8) * ft;
-          node.crystalGlow.scale.setScalar(3.0 + (1.3 - 3.0) * ft);
+          node.crystalGlow.material.opacity = 1.0 + (0.2 - 1.0) * ft;
+          node.crystalGlow.scale.setScalar(5.0 + (1.3 - 5.0) * ft);
         }
       }
 
-      if (!plumeEventState.burstRing && plumeEventState.dustPuffs.length === 0 && t >= 1.2) {
+      if (!plumeEventState.burstRing && plumeEventState.dustPuffs.length === 0 && t >= 2.0) {
         plumeEventState.active = false;
         plumeEventState.coreNode = null;
       }
@@ -9539,6 +9602,8 @@
         state.paused = false;
         ui.overlay.classList.add("hidden");
         ui.resumeHint.classList.remove("visible");
+        // Fire deferred initial plume event on first entry
+        spiceObjective.fireInitialPlumeEvent();
       });
 
       controls.addEventListener("unlock", () => {

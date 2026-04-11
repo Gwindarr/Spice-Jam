@@ -11,6 +11,10 @@ const SPICE_SMALL_YIELD_MAX = 9;
 const SPICE_PLUME_YIELD_MIN = 16;
 const SPICE_PLUME_YIELD_MAX = 20;
 const SPICE_INITIAL_PLUME_CHANCE = 1;
+const SPICE_PLUME_SPAWN_INTERVAL = 60;   // seconds between plume spawn checks
+const SPICE_PLUME_SPAWN_CHANCE = 0.35;   // probability per check
+const SPICE_PLUME_COOLDOWN = 35;         // seconds after a plume is depleted
+const SPICE_DECAY_SECONDS = 45;          // seconds after first harvest before node auto-depletes
 const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
 const WORLD_SIZE = 1500;
@@ -102,12 +106,16 @@ const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => {
     id: i,
     active: true,
     respawnTimer: 0,
+    decayTimer: -1,
     type,
     totalYield,
     remaining: totalYield,
     respawnCount: 0,
   };
 });
+
+let spicePlumeCooldown = 0;
+let spicePlumeSpawnTimer = 0;
 
 const scores = { fremen: 0, harkonnen: 0 };
 const noiseHotspots = [];
@@ -744,14 +752,51 @@ setInterval(() => {
       if (node.respawnTimer <= 0) {
         node.active = true;
         node.respawnTimer = 0;
+        node.decayTimer = -1;
         node.type = "small";
         node.respawnCount += 1;
         node.totalYield = rollSpiceYield(node.type, node.id, node.respawnCount);
         node.remaining = node.totalYield;
         changed = true;
       }
+    } else if (node.decayTimer > 0) {
+      // Partially-harvested nodes decay after timeout
+      node.decayTimer -= TICK_MS / 1000;
+      if (node.decayTimer <= 0) {
+        node.active = false;
+        node.decayTimer = -1;
+        node.respawnTimer = SPICE_RESPAWN_SECONDS;
+        if (node.type === "plume") {
+          spicePlumeCooldown = SPICE_PLUME_COOLDOWN;
+        }
+        io.emit("nodeHarvested", node.id);
+        changed = true;
+      }
     }
   }
+
+  // Plume spawn check (mirrors single-player logic on server)
+  if (spicePlumeCooldown > 0) spicePlumeCooldown -= TICK_MS / 1000;
+  spicePlumeSpawnTimer += TICK_MS / 1000;
+  if (spicePlumeSpawnTimer >= SPICE_PLUME_SPAWN_INTERVAL) {
+    spicePlumeSpawnTimer -= SPICE_PLUME_SPAWN_INTERVAL;
+    const hasActivePlume = spiceNodes.some(n => n.type === "plume" && n.active);
+    if (!hasActivePlume && spicePlumeCooldown <= 0) {
+      if (Math.random() < SPICE_PLUME_SPAWN_CHANCE) {
+        const slot = spiceNodes.find(n => !n.active);
+        if (slot) {
+          slot.type = "plume";
+          slot.respawnCount += 1;
+          slot.totalYield = rollSpiceYield("plume", slot.id, slot.respawnCount);
+          slot.remaining = slot.totalYield;
+          slot.active = true;
+          slot.respawnTimer = 0;
+          changed = true;
+        }
+      }
+    }
+  }
+
   if (changed) io.emit("spiceSync", spiceNodes);
 }, TICK_MS);
 
@@ -1062,11 +1107,19 @@ io.on("connection", (socket) => {
 
     if (node.remaining <= 0) {
       node.active = false;
+      node.decayTimer = -1;
       node.respawnTimer = SPICE_RESPAWN_SECONDS;
+      if (node.type === "plume") {
+        spicePlumeCooldown = SPICE_PLUME_COOLDOWN;
+      }
       io.emit("nodeHarvested", nodeId);
     } else {
       node.active = true;
       node.respawnTimer = 0;
+      // Start decay timer on first partial harvest
+      if (node.decayTimer < 0) {
+        node.decayTimer = SPICE_DECAY_SECONDS;
+      }
     }
     io.emit("spiceNodeSync", node);
   });
