@@ -601,6 +601,8 @@
   </div>
 
   <div id="explosionFlash" style="position:fixed;inset:0;z-index:24;background:radial-gradient(circle,#ffffff,#ffe066 30%,#ff8800 65%,#cc2200 100%);pointer-events:none;opacity:0;transition:none;"></div>
+  <!-- Server -->
+  <script>window.SERVER_URL = "https://spice.bananatriangles.com";</script>
   <!-- Socket.io client — loaded before the module script so `io` is global -->
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
@@ -5670,7 +5672,7 @@
 	      return { group, flash, fireball, shockwave, outerWave, stem, cap, capRing, smoke };
 	    }
 
-	    function triggerHoltzmanDetonation(pos) {
+    function triggerHoltzmanDetonation(pos) {
 		      state.holtzmanFuse = 0;
 	      state.lasgunFiring = false;
 	      sfx.lasgunHum.stop();
@@ -5683,6 +5685,17 @@
         ttl: 30,
         signLevel: 1.0,
       });
+      if (mp.connected) {
+        mp.emit("noiseHotspot", {
+          kind: "atomic_holtzman",
+          x: pos.x,
+          z: pos.z,
+          strength: 1.0,
+          radius: 540,
+          ttl: 30,
+          signLevel: 1.0,
+        });
+      }
 	      emitNoiseImpulse(0.2);
 	    	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
 	    }
@@ -7328,6 +7341,17 @@
         ttl: 12,
         signLevel: 0.76,
       });
+      if (mp.connected) {
+        mp.emit("noiseHotspot", {
+          kind: "spice_blow",
+          x: node.group.position.x,
+          z: node.group.position.z,
+          strength: 0.82,
+          radius: 230,
+          ttl: 12,
+          signLevel: 0.76,
+        });
+      }
       plumeEventState.active = true;
       plumeEventState.elapsed = 0;
     }
@@ -8202,6 +8226,28 @@
     }
 
     function updateWormBreach(delta) {
+      if (mp.connected) {
+        // Online mode: worm phase/target are server-authoritative.
+        state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
+        if (state.wormPhase === "idle") {
+          state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
+          wormHazard.group.visible = false;
+          return;
+        }
+        wormHazard.group.visible = true;
+        wormHazard.group.position.copy(state.wormTarget);
+        const phaseOpen = state.wormPhase === "warning" ? 0.38 : state.wormPhase === "breach" ? 1.0 : 0.56;
+        const phaseSpin = state.wormPhase === "warning" ? 0.9 : state.wormPhase === "breach" ? 1.2 : 1.0;
+        const phaseTilt = state.wormPhase === "warning" ? 0.12 : 0.22;
+        wormHazard.warningShadow.material.opacity = state.wormPhase === "warning" ? 0.18 : 0.05;
+        wormHazard.warningRing.material.opacity = state.wormPhase === "warning" ? 0.4 : 0.08;
+        wormHazard.rippleRing.material.opacity = state.wormPhase === "warning" ? 0.28 : 0.16;
+        wormHazard.mouthRoot.visible = true;
+        wormHazard.mouthRoot.position.y = state.wormPhase === "warning" ? -2 : 4;
+        updateWormMawPose(delta, phaseOpen, phaseSpin, phaseTilt);
+        return;
+      }
+
       if (state.wormPhase === "idle") {
         state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
         wormHazard.group.visible = false;
@@ -9471,7 +9517,7 @@
 	      updateHoltzmanExplosion(delta);
 	      updateHoltzmanDeath(delta);
       updateNoiseHotspots(delta);
-	      updateWormActor(delta);
+      if (!mp.connected) updateWormActor(delta);
 	      updateWormBreach(delta);
       updateSpiceObjective(delta);
       portalSystem.update(delta);
@@ -9570,6 +9616,24 @@
       }
     }
 
+    function applyNetworkWormState(data) {
+      if (!data) return;
+      state.wormPhase = data.phase ?? state.wormPhase;
+      state.wormTimer = typeof data.timer === "number" ? data.timer : state.wormTimer;
+      state.wormCooldown = typeof data.cooldown === "number" ? data.cooldown : state.wormCooldown;
+      if (data.target) {
+        state.wormTarget.set(
+          data.target.x ?? state.wormTarget.x,
+          state.wormTarget.y,
+          data.target.z ?? state.wormTarget.z
+        );
+      }
+      if (typeof data.noisePressure === "number") {
+        worm.noisePressure = data.noisePressure;
+      }
+      if (data.state) worm.state = data.state;
+    }
+
     // Send position to server at ~20hz
     function tickMultiplayer(delta) {
       updateRemotePlayers(delta);
@@ -9585,6 +9649,13 @@
           spiceCarry: state.spiceCarry,
           equipped: state.equippedWeapon,
           shieldActive: state.shieldActive,
+          surfaceType: state.surfaceType,
+          noiseLevel: state.noiseLevel,
+          signLevel: state.signLevel,
+          thumperActive: thumper.active,
+          thumperX: thumper.group.position.x,
+          thumperZ: thumper.group.position.z,
+          thumperSignal: thumper.signal,
         });
       }
     }
@@ -9648,6 +9719,7 @@
         }
         // Sync scores
         state.spiceScore = snapshot.scores[team] ?? 0;
+        applyNetworkWormState(snapshot.worm);
       });
 
       socket.on("playerJoined", (data) => addRemotePlayer(data));
@@ -9678,6 +9750,10 @@
       socket.on("scoreUpdate", (scores) => {
         // Show updated scores — for now just log; HUD can be wired later
         console.log("[MP] Scores:", scores);
+      });
+
+      socket.on("wormSync", (wormState) => {
+        applyNetworkWormState(wormState);
       });
 
       socket.on("playerDamaged", ({ id, health, attackerId }) => {
