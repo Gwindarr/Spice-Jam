@@ -1,11 +1,15 @@
 const { createServer } = require("http");
 const { Server } = require("socket.io");
+const fs = require("fs");
+const path = require("path");
 
 const PORT = process.env.PORT || 3001;
 const SPICE_RESPAWN_SECONDS = 32;
 const SPICE_NODE_COUNT = 8;
 const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
+const POISON_DPS = 4;
+const POISON_DURATION = 6;
 
 const WORM_CFG = {
   noisePressureSpawnThreshold: 0.68,
@@ -315,6 +319,30 @@ setInterval(() => {
   });
 }, WORM_TICK_MS);
 
+// ── Poison tick ──────────────────────────────────────────────────────────────
+
+const POISON_TICK_MS = 200;
+setInterval(() => {
+  const dt = POISON_TICK_MS / 1000;
+  for (const p of players.values()) {
+    if (p.poisonTimer <= 0) continue;
+    p.poisonTimer = Math.max(0, p.poisonTimer - dt);
+    if (p.health <= 0) { p.poisonTimer = 0; continue; }
+    const dmg = POISON_DPS * dt;
+    p.health = Math.max(0, p.health - dmg);
+    io.emit("playerDamaged", { id: p.id, health: p.health, attackerId: p.poisonAttackerId });
+    if (p.health <= 0) {
+      io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
+      p.poisonTimer = 0;
+      setTimeout(() => {
+        if (!players.has(p.id)) return;
+        p.health = 100;
+        io.emit("playerRespawned", { id: p.id });
+      }, 3000);
+    }
+  }
+}, POISON_TICK_MS);
+
 // ── Socket.io ─────────────────────────────────────────────────────────────────
 
 const httpServer = createServer((req, res) => {
@@ -326,8 +354,20 @@ const httpServer = createServer((req, res) => {
     res.end();
     return;
   }
-  res.writeHead(200);
-  res.end("Spice Jam server running");
+  // Serve static files for local dev
+  const url = req.url.split("?")[0];
+  const filePath = url === "/" ? "/index.html" : url;
+  const fullPath = path.join(__dirname, filePath);
+  const ext = path.extname(fullPath).toLowerCase();
+  const mimeTypes = { ".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".png": "image/png", ".jpg": "image/jpeg", ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".svg": "image/svg+xml" };
+  try {
+    const data = fs.readFileSync(fullPath);
+    res.writeHead(200, { "Content-Type": mimeTypes[ext] || "application/octet-stream" });
+    res.end(data);
+  } catch {
+    res.writeHead(200);
+    res.end("Spice Jam server running");
+  }
 });
 
 const io = new Server(httpServer, {
@@ -359,6 +399,8 @@ io.on("connection", (socket) => {
     noiseLevel: 0,
     signLevel: 0,
     shieldActive: false,
+    poisonTimer: 0,
+    poisonAttackerId: null,
     thumperActive: false,
     thumperX: 0,
     thumperZ: 0,
@@ -373,6 +415,33 @@ io.on("connection", (socket) => {
 
   // Tell everyone else about the new player
   socket.broadcast.emit("playerJoined", player);
+
+  function isShieldBlockedAttack(attackType) {
+    return attackType === "knife" || attackType === "maula";
+  }
+
+  function applyPlayerDamage(targetId, damage, attackerId = socket.id, attackType = "generic") {
+    const target = players.get(targetId);
+    if (!target || target.health <= 0) return false;
+    if (target.shieldActive && isShieldBlockedAttack(attackType)) {
+      socket.emit("shieldBlocked", { targetId, attackType });
+      return false;
+    }
+    const clampedDamage = Math.max(0, Math.min(Number(damage) || 0, 100));
+    target.health = Math.max(0, target.health - clampedDamage);
+    io.emit("playerDamaged", { id: targetId, health: target.health, attackerId });
+    if (target.health <= 0) {
+      io.emit("playerKilled", { id: targetId, killerId: attackerId });
+      setTimeout(() => {
+        if (!players.has(targetId)) return;
+        target.health = 100;
+        target.poisonTimer = 0;
+        target.poisonAttackerId = null;
+        io.emit("playerRespawned", { id: targetId });
+      }, 3000);
+    }
+    return true;
+  }
 
   // ── Position updates (high frequency) ──
   socket.on("move", (data) => {
@@ -399,6 +468,7 @@ io.on("connection", (socket) => {
       rotY: p.rotY,
       spiceCarry: p.spiceCarry,
       equipped: p.equipped,
+      shieldActive: p.shieldActive,
     });
   });
 
@@ -434,22 +504,34 @@ io.on("connection", (socket) => {
     io.emit("scoreUpdate", scores);
   });
 
-  // ── Hit / damage ──
-  socket.on("hitPlayer", ({ targetId, damage }) => {
+  // ── Poison applied (maula dart) ──
+  socket.on("poisonPlayer", ({ targetId, attackType = "maula" }) => {
     const target = players.get(targetId);
     if (!target || target.health <= 0) return;
-    damage = Math.max(0, Math.min(damage, 100)); // sanity clamp
-    target.health = Math.max(0, target.health - damage);
-    io.emit("playerDamaged", { id: targetId, health: target.health, attackerId: socket.id });
-    if (target.health <= 0) {
-      io.emit("playerKilled", { id: targetId, killerId: socket.id });
-      // Respawn after 3 s
-      setTimeout(() => {
-        if (!players.has(targetId)) return; // left before respawn
-        target.health = 100;
-        io.emit("playerRespawned", { id: targetId });
-      }, 3000);
+    if (target.shieldActive && isShieldBlockedAttack(attackType)) {
+      socket.emit("shieldBlocked", { targetId, attackType });
+      return;
     }
+    target.poisonTimer = POISON_DURATION;
+    target.poisonAttackerId = socket.id;
+    io.emit("playerPoisoned", { id: targetId, duration: POISON_DURATION });
+  });
+
+  // ── Combined maula PvP hit (damage + poison) ──
+  socket.on("maulaHitPlayer", ({ targetId, damage, applyPoison = true }) => {
+    const applied = applyPlayerDamage(targetId, damage, socket.id, "maula");
+    if (!applied || !applyPoison) return;
+    const target = players.get(targetId);
+    if (!target || target.health <= 0) return;
+    if (target.shieldActive) return;
+    target.poisonTimer = POISON_DURATION;
+    target.poisonAttackerId = socket.id;
+    io.emit("playerPoisoned", { id: targetId, duration: POISON_DURATION });
+  });
+
+  // ── Hit / damage ──
+  socket.on("hitPlayer", ({ targetId, damage, attackType = "generic" }) => {
+    applyPlayerDamage(targetId, damage, socket.id, attackType);
   });
 
   // ── Disconnect ──

@@ -2567,12 +2567,14 @@
     }
 
     function getShieldRechargeFactor() {
-      return THREE.MathUtils.clamp(
+      const daylight = THREE.MathUtils.clamp(
         (sun.intensity - CONFIG.shieldRechargeSunFloor)
           / Math.max(0.001, MAX_SUN_INTENSITY - CONFIG.shieldRechargeSunFloor),
         0,
         1
       );
+      // Always recharge a little at night, but significantly faster in daylight.
+      return THREE.MathUtils.lerp(0.2, 1.0, daylight);
     }
 
     function getShieldHotspotStrength(surfaceType, noiseLevel, signLevel, shieldActive) {
@@ -2821,11 +2823,15 @@
 
 	      if (!hit) {
 	        for (const [, rp] of remotePlayers) {
-	          if (rp.data.shieldActive) continue;
 	          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.06, rp.mesh.position.z);
 	          if (testKnifeHitTarget(tempProjectileCenter, 1.4)) {
+	            if (rp.data.shieldActive) {
+	              triggerRemoteShieldBlockFeedback(rp, tempProjectileCenter);
+	              hit = true;
+	              break;
+	            }
 	            const knifeResult = resolveImpactDamage(CONFIG.knifeDamage);
-            mp.emit("hitPlayer", { targetId: rp.data.id, damage: knifeResult.damage });
+            mp.emit("hitPlayer", { targetId: rp.data.id, damage: knifeResult.damage, attackType: "knife" });
 	            rp.hitFlash = 1.0;
 	            triggerDamageNumberAtPosition(tempProjectileCenter, knifeResult.damage, knifeResult.isCritical);
 	            triggerKnifeImpact(tempProjectileCenter, strikeDir);
@@ -3231,14 +3237,18 @@
 	          hit = true;
 	        }
 
-        // Remote players first (body y+2.56 r=1.4, head y+4.66 r=0.55 — NPC hitbox + ground lift)
+	        // Remote players first (body y+2.56 r=1.4, head y+4.66 r=0.55 — NPC hitbox + ground lift)
 	        if (!hit) {
 	          for (const [, rp] of remotePlayers) {
-	            if (rp.data.shieldActive) continue;
 	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
 	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 1.4 + CONFIG.maulaProjectileRadius)) {
-	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
-	              mp.emit("poisonPlayer", { targetId: rp.data.id });
+	              if (rp.data.shieldActive) {
+	                triggerRemoteShieldBlockFeedback(rp, tempProjectileCenter);
+	                hit = true;
+	                break;
+	              }
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage, attackType: "maula" });
+	              mp.emit("poisonPlayer", { targetId: rp.data.id, attackType: "maula" });
 	              rp.hitFlash = 1.0;
 	              triggerDamageNumberAtPosition(tempProjectileCenter, CONFIG.maulaImpactDamage);
 	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
@@ -3248,9 +3258,14 @@
 	            }
 	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
 	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.55 + CONFIG.maulaProjectileRadius)) {
+	              if (rp.data.shieldActive) {
+	                triggerRemoteShieldBlockFeedback(rp, tempProjectileCenter);
+	                hit = true;
+	                break;
+	              }
 	              const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
-	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: result.damage });
-	              mp.emit("poisonPlayer", { targetId: rp.data.id });
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: result.damage, attackType: "maula" });
+	              mp.emit("poisonPlayer", { targetId: rp.data.id, attackType: "maula" });
 	              rp.hitFlash = 1.0;
 	              triggerDamageNumberAtPosition(tempProjectileCenter, result.damage, true);
 	              sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
@@ -3935,7 +3950,7 @@
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
 	      } else if (bestType === "remote" && bestRemoteId) {
           const dmg = CONFIG.lasgunDPS * delta;
-          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg });
+          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg, attackType: "lasgun" });
           const rp = remotePlayers.get(bestRemoteId);
           if (rp) {
             rp.hitFlash = Math.max(rp.hitFlash || 0, 0.55);
@@ -7000,6 +7015,16 @@
       setTimeout(() => el.remove(), 1000);
     }
 
+    function triggerRemoteShieldBlockFeedback(rp, impactPos = null) {
+      if (!rp) return;
+      rp.hitFlash = Math.max(rp.hitFlash || 0, 0.35);
+      rp._shieldBlockFlash = Math.max(rp._shieldBlockFlash || 0, 1.0);
+      sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
+      if (impactPos) {
+        triggerKnifeImpact(impactPos, tempKnifeDir.set(0, 1, 0));
+      }
+    }
+
     function triggerHitFeedback(target, damage, headshot, poison = false) {
       if (!poison) state.hitMarkerTimer = 0.18;
       const rounded = Math.round(damage);
@@ -9757,14 +9782,16 @@
             const pulse = 0.5 + 0.5 * Math.sin((state.elapsed * 4.8) + ((rp._shieldPulseOffset ??= Math.random() * Math.PI * 2)));
             rpShield.group.position.y = 2.78;
             rpShield.group.scale.setScalar(1 + a * 0.035 + pulse * 0.02);
+            rp._shieldBlockFlash = Math.max(0, (rp._shieldBlockFlash || 0) - delta * 4.2);
+            const blockFlash = rp._shieldBlockFlash || 0;
             rpShield.core.material.opacity = a * (0.2 + pulse * 0.08);
             rpShield.halo.material.opacity = a * (0.16 + pulse * 0.04);
             rpShield.lattice.material.opacity = a * (0.16 + pulse * 0.05);
-            rpShield.ringA.material.opacity = a * (0.24 + pulse * 0.06);
-            rpShield.ringB.material.opacity = a * (0.2 + pulse * 0.06);
+            rpShield.ringA.material.opacity = a * (0.24 + pulse * 0.06) + blockFlash * 0.35;
+            rpShield.ringB.material.opacity = a * (0.2 + pulse * 0.06) + blockFlash * 0.28;
             rpShield.ringA.rotation.z += delta * (0.9 + a * 0.9);
             rpShield.ringB.rotation.y -= delta * (0.75 + a * 0.8);
-            rpShield.flashShell.material.opacity = a * (0.06 + pulse * 0.03);
+            rpShield.flashShell.material.opacity = a * (0.06 + pulse * 0.03) + blockFlash * 0.42;
           }
         }
         // Smooth interpolation toward last known position
@@ -9837,7 +9864,7 @@
           rotY: player.rotation.y,
           spiceCarry: state.spiceCarry,
           equipped: state.equippedWeapon,
-          shieldActive: state.shieldActive,
+          shieldActive: isShieldOperational(),
           surfaceType: state.surfaceType,
           noiseLevel: state.noiseLevel,
           signLevel: state.signLevel,
@@ -10003,6 +10030,12 @@
         }
         const rp = remotePlayers.get(id);
         if (rp) rp.poisonTimer = duration;
+      });
+
+      socket.on("shieldBlocked", ({ targetId }) => {
+        const rp = remotePlayers.get(targetId);
+        if (rp) triggerRemoteShieldBlockFeedback(rp, rp.mesh.position);
+        else sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
       });
 
       socket.on("playerRespawned", ({ id }) => {
