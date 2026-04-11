@@ -203,9 +203,7 @@
       position: fixed;
       inset: 0;
       pointer-events: none;
-      background: rgba(200, 0, 0, 0);
       z-index: 50;
-      transition: background 0.08s ease;
     }
 
     #vignette {
@@ -523,7 +521,7 @@
     </div>
     <div class="compact-meter-stack">
       <div class="compact-meter">
-        <span class="compact-label">HP</span>
+        <span id="hudHpLabel" class="compact-label">HP</span>
         <span class="compact-track"><span id="healthFill" class="noise-fill" style="background:#44cc44;width:100%;"></span></span>
         <span id="hudHealthValue" class="compact-value">100%</span>
       </div>
@@ -942,6 +940,7 @@
 	      hudCargo: document.getElementById("hudCargo"),
 	      hudWeapon: document.getElementById("hudWeapon"),
 	      hudScore: document.getElementById("hudScore"),
+      hudHpLabel: document.getElementById("hudHpLabel"),
       hudHealthValue: document.getElementById("hudHealthValue"),
       healthFill: document.getElementById("healthFill"),
       hudShieldValue: document.getElementById("hudShieldValue"),
@@ -1068,6 +1067,7 @@
       plumeCooldownTimer: 0,
       interactHint: "Find a spice patch in the open sand.",
       wormPhase: "idle",
+      serverWormPhase: "idle",
       wormTimer: 0,
       wormCooldown: 0,
       wormRecoveryTimer: 0,
@@ -1099,6 +1099,7 @@
 	      holtzmanDeathTimer: -1,
 	      holtzmanRespawnPoint: new THREE.Vector3(),
 	      pvpDead: false,
+	      pvpHitTimer: 0,
 	      lasgunBeamStart: new THREE.Vector3(),
 	      lasgunBeamEnd: new THREE.Vector3(),
 	      shieldActive: false,
@@ -2797,7 +2798,7 @@
 	      if (!hit) {
 	        for (const [, rp] of remotePlayers) {
 	          if (rp.data.shieldActive) continue;
-	          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+	          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.566, rp.mesh.position.z);
 	          if (testKnifeHitTarget(tempProjectileCenter, 0.62)) {
 	            const knifeResult = resolveImpactDamage(CONFIG.knifeDamage);
             mp.emit("hitPlayer", { targetId: rp.data.id, damage: knifeResult.damage });
@@ -2992,6 +2993,24 @@
 	        checkNpcAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
 	        checkNpcAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
+        for (const [, rp] of remotePlayers) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+          const tB = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tB >= 0.5 && tB < aimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tB);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 1.4 + 0.3) {
+              aimDist = tB; tempLasgunAimPoint.copy(tempKnifeDir);
+            }
+          }
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+          const tH = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tH >= 0.5 && tH < aimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tH);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 0.55 + 0.3) {
+              aimDist = tH; tempLasgunAimPoint.copy(tempKnifeDir);
+            }
+          }
+        }
 	      tempKnifeDir.subVectors(tempLasgunAimPoint, tempMaulaOrigin).normalize();
 	      const strikeDir = tempKnifeDir;
 	      spawnMaulaProjectile(strikeDir);
@@ -3188,6 +3207,39 @@
 	          hit = true;
 	        }
 
+        // Remote players — checked first so they aren't occluded by NPCs/dummies
+        // Uses same hitbox geometry as NPCs: body at y+2.0 r=1.4, head at y+4.1 r=0.55
+	        if (!hit) {
+	          for (const [, rp] of remotePlayers) {
+	            if (rp.data.shieldActive) continue;
+	            // Body first — prevents upper-chest hits registering as headshots
+	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 1.4 + CONFIG.maulaProjectileRadius)) {
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
+	              rp.hitFlash = 1.0;
+	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
+	              triggerDamageNumberAtPosition(tempProjectileCenter, CONFIG.maulaImpactDamage);
+	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
+	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	              hit = true;
+	              break;
+	            }
+	            // Head — only if body missed (dart above shoulders)
+	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.55 + CONFIG.maulaProjectileRadius)) {
+	              const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
+	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: result.damage });
+	              rp.hitFlash = 1.0;
+	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
+	              triggerDamageNumberAtPosition(tempProjectileCenter, result.damage, true);
+	              sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
+	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
+	              hit = true;
+	              break;
+	            }
+	          }
+	        }
+
 	        if (!hit && trainingDummy) {
 	          trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
 	          if (segmentHitsSphere(
@@ -3239,23 +3291,6 @@
             }
           }
         }
-
-	        if (!hit) {
-	          for (const [, rp] of remotePlayers) {
-	            if (rp.data.shieldActive) continue;
-	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.5 + CONFIG.maulaProjectileRadius)) {
-	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
-	              rp.hitFlash = 1.0;
-	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
-	              triggerDamageNumberAtPosition(tempProjectileCenter, CONFIG.maulaImpactDamage);
-	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
-	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
-	              hit = true;
-	              break;
-	            }
-	          }
-	        }
 
 	        // Rock impact wins if no entity claimed the dart this frame
 	        if (!hit && rockHit) {
@@ -3757,6 +3792,24 @@
 	        snapAim(sd.headDot, CONFIG.trainingDummyHeadRadius);
 	        snapAim(sd.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
+        for (const [, rp] of remotePlayers) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+          const tH = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tH >= 0.5 && tH < lasgunAimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tH);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 0.55 + 0.6) {
+              lasgunAimDist = tH; aimPoint.copy(tempProjectileCenter);
+            }
+          }
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+          const tB = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (tB >= 0.5 && tB < lasgunAimDist) {
+            tempKnifeDir.copy(camera.position).addScaledVector(tempForward, tB);
+            if (tempKnifeDir.distanceTo(tempProjectileCenter) < 1.4 + 0.6) {
+              lasgunAimDist = tB; aimPoint.copy(tempProjectileCenter);
+            }
+          }
+        }
 	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
         player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
 
@@ -3791,6 +3844,7 @@
 
 	      let bestShieldedDummy = null;
       let bestShieldedNpc = null;
+      let bestRemoteId = null;
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
 	        sd.headDot.getWorldPosition(tempProjectileCenter);
@@ -3831,6 +3885,23 @@
         }
       }
 
+      // Remote players — same hitbox as NPCs (body y+2.56 r=1.4, head y+4.66 r=0.55)
+      for (const [, rp] of remotePlayers) {
+        if (rp.data.shieldActive) continue;
+        // Body
+        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 1.4 + 0.25)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "remote"; bestHeadshot = false; bestRemoteId = rp.data.id; }
+        }
+        // Head
+        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.55 + 0.25)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "remote"; bestHeadshot = true; bestRemoteId = rp.data.id; }
+        }
+      }
+
 	      const impactPoint = bestType
 	        ? tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance)
 	        : tempLasgunEnd;
@@ -3843,6 +3914,18 @@
 	      } else if (bestType && bestType.startsWith("npc:")) {
 	        const ni = parseInt(bestType.slice(4));
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
+	      } else if (bestType === "remote" && bestRemoteId) {
+          const dmg = CONFIG.lasgunDPS * delta;
+          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg });
+          const rp = remotePlayers.get(bestRemoteId);
+          if (rp) {
+            rp.hitFlash = Math.max(rp.hitFlash || 0, 0.55);
+            rp._lasgunDmgAccum = (rp._lasgunDmgAccum || 0) + dmg;
+            if (rp._lasgunDmgAccum >= 10) {
+              triggerDamageNumberAtPosition(rp.mesh.position, rp._lasgunDmgAccum);
+              rp._lasgunDmgAccum = 0;
+            }
+          }
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
@@ -4605,6 +4688,13 @@
       if (state.damageFlashTimer > 0) {
         state.damageFlashTimer = Math.max(0, state.damageFlashTimer - delta);
         ui.damageFlash.style.background = `rgba(200,0,0,${(state.damageFlashTimer * 0.7).toFixed(2)})`;
+      }
+      if (state.pvpHitTimer > 0) {
+        state.pvpHitTimer = Math.max(0, state.pvpHitTimer - delta);
+        const a = (state.pvpHitTimer / 0.6) * 0.45;
+        ui.damageFlash.style.background = `radial-gradient(ellipse at center, transparent 50%, rgba(180,20,0,${a.toFixed(2)}) 100%)`;
+      } else if (state.damageFlashTimer <= 0) {
+        ui.damageFlash.style.background = "none";
       }
 
       let nearbyHarvestNode = null;
@@ -8250,25 +8340,31 @@
 
     function updateWormBreach(delta) {
       if (mp.connected) {
-        // Online mode: worm phase/target are server-authoritative.
         state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
-        if (state.wormPhase === "idle") {
-          state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
-          wormHazard.group.visible = false;
+        // Local player devour/recover — fall through to offline animation code below
+        if (state.wormPhase === "devour" || state.wormPhase === "recover") {
+          // falls through
+        } else {
+          // Online visual rendering driven by server phase
+          const serverPhase = state.serverWormPhase || "idle";
+          if (serverPhase === "idle") {
+            state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
+            wormHazard.group.visible = false;
+            return;
+          }
+          wormHazard.group.visible = true;
+          wormHazard.group.position.copy(state.wormTarget);
+          const phaseOpen = serverPhase === "warning" ? 0.38 : serverPhase === "breach" ? 1.0 : 0.56;
+          const phaseSpin = serverPhase === "warning" ? 0.9 : serverPhase === "breach" ? 1.2 : 1.0;
+          const phaseTilt = serverPhase === "warning" ? 0.12 : 0.22;
+          wormHazard.warningShadow.material.opacity = serverPhase === "warning" ? 0.18 : 0.05;
+          wormHazard.warningRing.material.opacity = serverPhase === "warning" ? 0.4 : 0.08;
+          wormHazard.rippleRing.material.opacity = serverPhase === "warning" ? 0.28 : 0.16;
+          wormHazard.mouthRoot.visible = true;
+          wormHazard.mouthRoot.position.y = serverPhase === "warning" ? -2 : 4;
+          updateWormMawPose(delta, phaseOpen, phaseSpin, phaseTilt);
           return;
         }
-        wormHazard.group.visible = true;
-        wormHazard.group.position.copy(state.wormTarget);
-        const phaseOpen = state.wormPhase === "warning" ? 0.38 : state.wormPhase === "breach" ? 1.0 : 0.56;
-        const phaseSpin = state.wormPhase === "warning" ? 0.9 : state.wormPhase === "breach" ? 1.2 : 1.0;
-        const phaseTilt = state.wormPhase === "warning" ? 0.12 : 0.22;
-        wormHazard.warningShadow.material.opacity = state.wormPhase === "warning" ? 0.18 : 0.05;
-        wormHazard.warningRing.material.opacity = state.wormPhase === "warning" ? 0.4 : 0.08;
-        wormHazard.rippleRing.material.opacity = state.wormPhase === "warning" ? 0.28 : 0.16;
-        wormHazard.mouthRoot.visible = true;
-        wormHazard.mouthRoot.position.y = state.wormPhase === "warning" ? -2 : 4;
-        updateWormMawPose(delta, phaseOpen, phaseSpin, phaseTilt);
-        return;
       }
 
       if (state.wormPhase === "idle") {
@@ -9434,7 +9530,12 @@
       const hpHue = Math.round(hpFraction * 120);
       ui.hudHealthValue.textContent = `${Math.round(hpFraction * 100)}%`;
       ui.healthFill.style.width = `${(hpFraction * 100).toFixed(1)}%`;
-      ui.healthFill.style.backgroundColor = `hsl(${hpHue}, 85%, 42%)`;
+      const hpHit = state.pvpHitTimer > 0;
+      ui.healthFill.style.backgroundColor = hpHit ? "#ff2222" : `hsl(${hpHue}, 85%, 42%)`;
+      ui.hudHpLabel.style.color = hpHit ? "#ff4444" : "#f6e7ca";
+      ui.hudHpLabel.style.textShadow = hpHit ? "0 0 8px #ff0000" : "none";
+      ui.hudHealthValue.style.color = hpHit ? "#ff4444" : "#f2e7d3";
+      ui.hudHealthValue.style.textShadow = hpHit ? "0 0 8px #ff0000" : "none";
       ui.hudShieldValue.textContent = `${shieldChargePercent}%`;
       ui.shieldFill.style.width = `${shieldChargePercent}%`;
       ui.shieldFill.style.backgroundColor = `hsl(${Math.round(182 + (shieldChargePercent * 0.28))}, 82%, 60%)`;
@@ -9518,6 +9619,13 @@
         ui.deathFlash.style.opacity = `${0.26 * fade}`;
         ui.deathText.textContent = "Respawned";
         ui.deathHint.textContent = "Recovered on rock";
+        return;
+      }
+
+      if (state.pvpDead) {
+        ui.deathFlash.style.opacity = "0.65";
+        ui.deathText.textContent = "Killed";
+        ui.deathHint.textContent = "Respawning...";
         return;
       }
 
@@ -9617,7 +9725,18 @@
 
     function updateRemotePlayers(delta) {
       for (const [, rp] of remotePlayers) {
+        // Death animation — tilt model forward
+        if (rp.dead) {
+          rp.deathTimer = (rp.deathTimer || 0) + delta;
+          const tilt = Math.min(rp.deathTimer * 3, Math.PI / 2);
+          rp.mesh.rotation.x = tilt;
+          rp.mesh.position.lerp(
+            tempWormTarget.set(rp.data.x, rp.data.y, rp.data.z), 1 - Math.exp(-18 * delta)
+          );
+          continue;
+        }
         // Smooth interpolation toward last known position
+        rp.mesh.rotation.x = 0;
         rp.mesh.position.lerp(
           tempWormTarget.set(rp.data.x, rp.data.y, rp.data.z), 1 - Math.exp(-18 * delta)
         );
@@ -9632,12 +9751,18 @@
         }
         const poisonStrength = THREE.MathUtils.clamp(rp.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
         const poisonPulse = poisonStrength > 0 ? (0.5 + Math.sin(state.elapsed * 6) * 0.5) * poisonStrength : 0;
-        if (rp.hitFlash > 0 || poisonPulse > 0) {
-          rp.hitFlash = Math.max(0, rp.hitFlash - delta * 3.5);
+        rp.hitFlash = Math.max(0, rp.hitFlash - delta * 3.5);
+        const needsEmissiveUpdate = rp.hitFlash > 0 || poisonPulse > 0 || rp._lastEmissive > 0;
+        if (needsEmissiveUpdate) {
+          const emR = rp.hitFlash + poisonStrength * 0.05;
+          const emG = rp.hitFlash * 0.1 + poisonPulse * 0.5;
+          const emB = poisonPulse * 0.12;
+          const emI = rp.hitFlash * 1.2 + poisonPulse * 0.5;
+          rp._lastEmissive = emR + emG + emB;
           rp.mesh.traverse((obj) => {
             if (obj.isMesh && obj.material && obj.material.emissive) {
-              obj.material.emissive.setRGB(rp.hitFlash + poisonStrength * 0.05, rp.hitFlash * 0.1 + poisonPulse * 0.5, poisonPulse * 0.12);
-              obj.material.emissiveIntensity = rp.hitFlash * 1.2 + poisonPulse * 0.5;
+              obj.material.emissive.setRGB(emR, emG, emB);
+              obj.material.emissiveIntensity = emI;
             }
           });
         }
@@ -9646,9 +9771,7 @@
 
     function applyNetworkWormState(data) {
       if (!data) return;
-      state.wormPhase = data.phase ?? state.wormPhase;
-      state.wormTimer = typeof data.timer === "number" ? data.timer : state.wormTimer;
-      state.wormCooldown = typeof data.cooldown === "number" ? data.cooldown : state.wormCooldown;
+      state.serverWormPhase = data.phase ?? state.serverWormPhase;
       if (data.target) {
         state.wormTarget.set(
           data.target.x ?? state.wormTarget.x,
@@ -9656,10 +9779,6 @@
           data.target.z ?? state.wormTarget.z
         );
       }
-      if (typeof data.noisePressure === "number") {
-        worm.noisePressure = data.noisePressure;
-      }
-      if (data.state) worm.state = data.state;
       if (typeof data.worldTime === "number") {
         if (state.serverWorldTimeBase === null || data.worldTime >= (state.serverWorldTimeBase - 0.05)) {
           state.serverWorldTimeBase = data.worldTime;
@@ -9793,32 +9912,63 @@
       socket.on("playerDamaged", ({ id, health, attackerId }) => {
         if (id === socket.id) {
           state.playerHealth = health;
-          state.damageFlashTimer = 0.5;
+          state.pvpHitTimer = 0.6;
         } else {
           const rp = remotePlayers.get(id);
           if (rp) rp.hitFlash = 1.0;
         }
       });
 
-      socket.on("playerKilled", ({ id, killerId }) => {
+      socket.on("playerKilled", ({ id, killerId, victimName, killerName }) => {
+        // Kill feed — visible to everyone
+        const vName = id === socket.id ? "You" : (victimName || "???");
+        const kName = killerId === socket.id ? "You" : (killerName || "???");
+        broadcastWormRadio(`${kName} killed ${vName}`);
+
         if (id === socket.id) {
+          if (killerId === "worm") {
+            if (state.wormPhase !== "devour" && state.wormPhase !== "recover") {
+              beginDevour();
+            }
+            return;
+          }
           if (state.spiceCarry > 0) {
             spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
           }
           state.pvpDead = true;
-          broadcastWormRadio("You were killed!");
-          state.damageFlashTimer = 1.2;
         } else {
+          // Remote player death visual — tilt model over
           const rp = remotePlayers.get(id);
-          if (rp) rp.hitFlash = 2.0;
+          if (rp) {
+            rp.hitFlash = 2.0;
+            rp.dead = true;
+            rp.deathTimer = 0;
+          }
+          if (killerId === socket.id) {
+            state.hitMarkerTimer = 0.4;
+          }
         }
       });
 
       socket.on("playerRespawned", ({ id }) => {
         const rp = remotePlayers.get(id);
-        if (rp) { rp.data.health = 100; rp.hitFlash = 0; }
+        if (rp) {
+          rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
+          rp.mesh.rotation.x = 0; rp._lastEmissive = 0; rp._lasgunDmgAccum = 0;
+          rp.mesh.traverse((obj) => {
+            if (obj.isMesh && obj.material && obj.material.emissive) {
+              obj.material.emissive.setRGB(0, 0, 0);
+              obj.material.emissiveIntensity = 0;
+            }
+          });
+        }
         if (id === socket.id) {
+          if (state.wormPhase === "devour" || state.wormPhase === "recover") {
+            state.playerHealth = 100;
+            return;
+          }
           state.pvpDead = false;
+          state.playerHealth = 100;
           state.damageFlashTimer = 0;
           respawnAtBase();
         }
