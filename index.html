@@ -9754,11 +9754,17 @@
           rpShield.group.visible = rp._shieldAlpha > 0.01;
           if (rpShield.group.visible) {
             const a = rp._shieldAlpha;
-            const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * 4);
+            const pulse = 0.5 + 0.5 * Math.sin((state.elapsed * 4.8) + ((rp._shieldPulseOffset ??= Math.random() * Math.PI * 2)));
             rpShield.group.position.y = 2.78;
-            rpShield.group.scale.setScalar(1 + a * 0.015 + pulse * 0.012);
-            rpShield.core.material.opacity = a * (0.12 + pulse * 0.03);
-            rpShield.halo.material.opacity = a * 0.09;
+            rpShield.group.scale.setScalar(1 + a * 0.035 + pulse * 0.02);
+            rpShield.core.material.opacity = a * (0.2 + pulse * 0.08);
+            rpShield.halo.material.opacity = a * (0.16 + pulse * 0.04);
+            rpShield.lattice.material.opacity = a * (0.16 + pulse * 0.05);
+            rpShield.ringA.material.opacity = a * (0.24 + pulse * 0.06);
+            rpShield.ringB.material.opacity = a * (0.2 + pulse * 0.06);
+            rpShield.ringA.rotation.z += delta * (0.9 + a * 0.9);
+            rpShield.ringB.rotation.y -= delta * (0.75 + a * 0.8);
+            rpShield.flashShell.material.opacity = a * (0.06 + pulse * 0.03);
           }
         }
         // Smooth interpolation toward last known position
