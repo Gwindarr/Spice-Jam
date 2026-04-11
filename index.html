@@ -2802,6 +2802,7 @@
 	            const knifeResult = resolveImpactDamage(CONFIG.knifeDamage);
             mp.emit("hitPlayer", { targetId: rp.data.id, damage: knifeResult.damage });
 	            rp.hitFlash = 1.0;
+	            triggerDamageNumberAtPosition(tempProjectileCenter, knifeResult.damage, knifeResult.isCritical);
 	            triggerKnifeImpact(tempProjectileCenter, strikeDir);
 	            hit = true;
 	            break;
@@ -3247,6 +3248,7 @@
 	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
 	              rp.hitFlash = 1.0;
 	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
+	              triggerDamageNumberAtPosition(tempProjectileCenter, CONFIG.maulaImpactDamage);
 	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
 	              emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
 	              hit = true;
@@ -6877,6 +6879,25 @@
       el.textContent = String(rounded);
       el.style.left = (sx + (Math.random() - 0.5) * 24) + "px";
       el.style.top  = sy + "px";
+      ui.damageNumbers.appendChild(el);
+      setTimeout(() => el.remove(), 1000);
+    }
+
+    function triggerDamageNumberAtPosition(pos, damage, headshot = false) {
+      if (!pos) return;
+      state.hitMarkerTimer = 0.18;
+      const rounded = Math.round(damage);
+      if (rounded < 1) return;
+      tempHitProject.set(pos.x, pos.y + 3.2, pos.z);
+      tempHitProject.project(camera);
+      if (tempHitProject.z > 1 || tempHitProject.z < -1) return;
+      const sx = (tempHitProject.x * 0.5 + 0.5) * window.innerWidth;
+      const sy = (-tempHitProject.y * 0.5 + 0.5) * window.innerHeight;
+      const el = document.createElement("div");
+      el.className = "damage-number" + (headshot ? " crit" : "");
+      el.textContent = String(rounded);
+      el.style.left = (sx + (Math.random() - 0.5) * 24) + "px";
+      el.style.top = sy + "px";
       ui.damageNumbers.appendChild(el);
       setTimeout(() => el.remove(), 1000);
     }
