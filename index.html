@@ -1113,6 +1113,8 @@
       depositToastTimer: 0,
       damageFlashTimer: 0,
       hitMarkerTimer: 0,
+      serverWorldTimeBase: null,
+      serverWorldTimeStamp: 0,
       portalRedirecting: false,
     };
 
@@ -2989,6 +2991,16 @@
 	        checkNpcAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
 	        checkNpcAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
+        for (const [, rp] of remotePlayers) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+          const t = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (t < 0.5 || t >= aimDist) continue;
+          tempKnifeDir.copy(camera.position).addScaledVector(tempForward, t);
+          if (tempKnifeDir.distanceTo(tempProjectileCenter) < 0.95) {
+            aimDist = t;
+            tempLasgunAimPoint.copy(tempKnifeDir);
+          }
+        }
 	      tempKnifeDir.subVectors(tempLasgunAimPoint, tempMaulaOrigin).normalize();
 	      const strikeDir = tempKnifeDir;
 	      spawnMaulaProjectile(strikeDir);
@@ -3241,7 +3253,7 @@
 	          for (const [, rp] of remotePlayers) {
 	            if (rp.data.shieldActive) continue;
 	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.5 + CONFIG.maulaProjectileRadius)) {
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.72 + CONFIG.maulaProjectileRadius)) {
 	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
 	              rp.hitFlash = 1.0;
 	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
@@ -3753,6 +3765,16 @@
 	        snapAim(sd.headDot, CONFIG.trainingDummyHeadRadius);
 	        snapAim(sd.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
+        for (const [, rp] of remotePlayers) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+          const t = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
+          if (t < 0.5 || t >= lasgunAimDist) continue;
+          tempKnifeDir.copy(camera.position).addScaledVector(tempForward, t);
+          if (tempKnifeDir.distanceTo(tempProjectileCenter) < 1.1) {
+            lasgunAimDist = t;
+            aimPoint.copy(tempProjectileCenter);
+          }
+        }
 	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
         player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
 
@@ -3787,6 +3809,7 @@
 
 	      let bestShieldedDummy = null;
       let bestShieldedNpc = null;
+      let bestRemoteId = null;
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
 	        sd.headDot.getWorldPosition(tempProjectileCenter);
@@ -3826,6 +3849,19 @@
           }
         }
       }
+      for (const [, rp] of remotePlayers) {
+        if (rp.data.shieldActive) continue;
+        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.85)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) {
+            bestDistance = d;
+            bestType = "remote";
+            bestHeadshot = false;
+            bestRemoteId = rp.data.id;
+          }
+        }
+      }
 
 	      const impactPoint = bestType
 	        ? tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance)
@@ -3839,6 +3875,10 @@
 	      } else if (bestType && bestType.startsWith("npc:")) {
 	        const ni = parseInt(bestType.slice(4));
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
+	      } else if (bestType === "remote" && bestRemoteId) {
+          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: CONFIG.lasgunDPS * delta });
+          const rp = remotePlayers.get(bestRemoteId);
+          if (rp) rp.hitFlash = Math.max(rp.hitFlash || 0, 0.55);
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
@@ -6857,13 +6897,11 @@
 
     // ── Hit feedback: crosshair pulse + floating damage number at hit world pos ──
     const tempHitProject = new THREE.Vector3();
-    function triggerHitFeedback(target, damage, headshot, poison = false) {
+    function triggerDamageNumberAtPosition(pos, damage, headshot = false, poison = false) {
+      if (!pos) return;
       if (!poison) state.hitMarkerTimer = 0.18;
       const rounded = Math.round(damage);
       if (rounded < 1) return; // never show "0"
-
-      const pos = target.group ? target.group.position : target.position;
-      if (!pos) return;
       tempHitProject.set(pos.x, pos.y + 3.2, pos.z);
       tempHitProject.project(camera);
       if (tempHitProject.z > 1 || tempHitProject.z < -1) return;
@@ -6877,6 +6915,10 @@
       el.style.top  = sy + "px";
       ui.damageNumbers.appendChild(el);
       setTimeout(() => el.remove(), 1000);
+    }
+    function triggerHitFeedback(target, damage, headshot, poison = false) {
+      const pos = target.group ? target.group.position : target.position;
+      triggerDamageNumberAtPosition(pos, damage, headshot, poison);
     }
 
     // For continuous-damage weapons (lasgun beam, poison): damage already applied
@@ -9258,7 +9300,12 @@
     }
 
     function updateDayNight(delta) {
-      state.elapsed += delta;
+      if (mp.connected && state.serverWorldTimeBase !== null) {
+        const nowSec = performance.now() * 0.001;
+        state.elapsed = state.serverWorldTimeBase + Math.max(0, nowSec - state.serverWorldTimeStamp);
+      } else {
+        state.elapsed += delta;
+      }
       state.dayTime = ((state.elapsed + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
 
       const current = getCycleKeyPair(state.dayTime);
@@ -9632,6 +9679,13 @@
         worm.noisePressure = data.noisePressure;
       }
       if (data.state) worm.state = data.state;
+      if (typeof data.worldTime === "number") {
+        // Authoritative multiplayer world clock from server.
+        if (state.serverWorldTimeBase === null || data.worldTime >= (state.serverWorldTimeBase - 0.05)) {
+          state.serverWorldTimeBase = data.worldTime;
+          state.serverWorldTimeStamp = performance.now() * 0.001;
+        }
+      }
     }
 
     // Send position to server at ~20hz

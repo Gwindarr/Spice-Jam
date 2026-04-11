@@ -38,6 +38,7 @@ const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => ({
 const scores = { fremen: 0, harkonnen: 0 };
 // Canonical map seed — all clients must match this
 const MAP_SEED = Math.floor(Math.random() * 0xFFFFFF);
+const SERVER_START_MS = Date.now();
 const noiseHotspots = [];
 const worm = {
   state: "off_map",
@@ -73,6 +74,7 @@ function getWorldSnapshot() {
       cooldown: worm.cooldown,
       noisePressure: worm.noisePressure,
       target: { ...worm.target },
+      worldTime: (Date.now() - SERVER_START_MS) / 1000,
     },
   };
 }
@@ -309,6 +311,7 @@ setInterval(() => {
     cooldown: worm.cooldown,
     noisePressure: worm.noisePressure,
     target: { x: worm.target.x, z: worm.target.z },
+    worldTime: (Date.now() - SERVER_START_MS) / 1000,
   });
 }, WORM_TICK_MS);
 
