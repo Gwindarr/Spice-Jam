@@ -209,7 +209,7 @@ function killPlayerByWorm(target) {
   if (!target || target.health <= 0) return;
   target.health = 0;
   io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
-  io.emit("playerKilled", { id: target.id, killerId: "worm", victimName: target.name, killerName: "Shai-Hulud" });
+  io.emit("playerKilled", { id: target.id, killerId: "worm" });
   setTimeout(() => {
     const p = players.get(target.id);
     if (!p) return;
@@ -442,11 +442,7 @@ io.on("connection", (socket) => {
     target.health = Math.max(0, target.health - damage);
     io.emit("playerDamaged", { id: targetId, health: target.health, attackerId: socket.id });
     if (target.health <= 0) {
-      const attacker = players.get(socket.id);
-      io.emit("playerKilled", {
-        id: targetId, killerId: socket.id,
-        victimName: target.name, killerName: attacker ? attacker.name : "???",
-      });
+      io.emit("playerKilled", { id: targetId, killerId: socket.id });
       // Respawn after 3 s
       setTimeout(() => {
         if (!players.has(targetId)) return; // left before respawn
