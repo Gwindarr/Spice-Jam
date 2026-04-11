@@ -1018,6 +1018,9 @@
 
     const hemiLight = new THREE.HemisphereLight(0xa0d8f8, 0xc49060, 0.6);
     scene.add(hemiLight);
+    // Low-frequency fill so silhouettes don't collapse to black during dusk/night.
+    const fillLight = new THREE.AmbientLight(0x8aa0c8, 0.1);
+    scene.add(fillLight);
 
     const sun = new THREE.DirectionalLight(0xfff4cc, 1.4);
     sun.position.set(130, 120, 40);
@@ -3880,6 +3883,7 @@
 
 	      let bestShieldedDummy = null;
       let bestShieldedNpc = null;
+      let bestShieldedRemote = null;
       let bestRemoteId = null;
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
@@ -3923,7 +3927,19 @@
 
       // Remote players (body y+2.56 r=1.4, head y+4.66 r=0.55)
       for (const [, rp] of remotePlayers) {
-        if (rp.data.shieldActive) continue;
+        if (rp.data.shieldActive) {
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
+          if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 1.4 + 0.25)) {
+            const d = origin.distanceTo(tempProjectileCenter);
+            if (d < bestDistance) { bestDistance = d; bestType = "shielded_remote"; bestHeadshot = false; bestShieldedRemote = rp; }
+          }
+          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 4.66, rp.mesh.position.z);
+          if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.55 + 0.25)) {
+            const d = origin.distanceTo(tempProjectileCenter);
+            if (d < bestDistance) { bestDistance = d; bestType = "shielded_remote"; bestHeadshot = true; bestShieldedRemote = rp; }
+          }
+          continue;
+        }
         tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
         if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 1.4 + 0.25)) {
           const d = origin.distanceTo(tempProjectileCenter);
@@ -3970,9 +3986,9 @@
 	          broadcastWormRadio(`WARNING — HOLTZMAN RESONANCE ${fusePercent}% — RELEASE BEAM!`);
 	          bestShieldedDummy.shieldMessageTimer = 0.12;
 	        }
-	        if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
-	          triggerHoltzmanDetonation(bestShieldedDummy.group.position.clone());
-	        }
+        if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
+          triggerHoltzmanDetonation(bestShieldedDummy.group.position.clone(), { emitNetwork: true });
+        }
 	      } else if (bestType === "shielded_npc" && bestShieldedNpc) {
         state.holtzmanFuse += delta;
         bestShieldedNpc.shieldHitFlash = Math.sin(state.elapsed * 45) > 0 ? 1.0 : 0.05;
@@ -3983,10 +3999,16 @@
           bestShieldedNpc.shieldMessageTimer = 0.12;
         }
         if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
-          triggerHoltzmanDetonation(bestShieldedNpc.group.position.clone());
+          triggerHoltzmanDetonation(bestShieldedNpc.group.position.clone(), { emitNetwork: true });
+        }
+	      } else if (bestType === "shielded_remote" && bestShieldedRemote) {
+        state.holtzmanFuse += delta;
+        triggerRemoteShieldBlockFeedback(bestShieldedRemote, bestShieldedRemote.mesh.position);
+        if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
+          triggerHoltzmanDetonation(bestShieldedRemote.mesh.position.clone(), { emitNetwork: true });
         }
 	      }
-	      if (bestType !== "shielded" && bestType !== "shielded_npc") state.holtzmanFuse = 0;
+	      if (bestType !== "shielded" && bestType !== "shielded_npc" && bestType !== "shielded_remote") state.holtzmanFuse = 0;
 
 	      // Rock impact FX
 	      if (bestType === null && rockHit) {
@@ -5811,33 +5833,38 @@
 	      return { group, flash, fireball, shockwave, outerWave, stem, cap, capRing, smoke };
 	    }
 
-    function triggerHoltzmanDetonation(pos) {
-		      state.holtzmanFuse = 0;
-	      state.lasgunFiring = false;
-	      sfx.lasgunHum.stop();
-	      state.holtzmanExplosionTimer = 0;
-	      state.holtzmanExplosionDamageDealt = false;
-	      state.holtzmanExplosionPos.copy(pos);
-	      state.wormShake = CONFIG.wormShakeBreach * 1.4;
-      emitNoiseHotspot("atomic_holtzman", pos, 1.0, {
-        radius: 540,
-        ttl: 30,
-        signLevel: 1.0,
-      });
-      if (mp.connected) {
-        mp.emit("noiseHotspot", {
-          kind: "atomic_holtzman",
-          x: pos.x,
-          z: pos.z,
-          strength: 1.0,
+    function triggerHoltzmanDetonation(pos, { emitWormHotspot = true, emitNetwork = false } = {}) {
+			      state.holtzmanFuse = 0;
+		      state.lasgunFiring = false;
+		      sfx.lasgunHum.stop();
+		      state.holtzmanExplosionTimer = 0;
+		      state.holtzmanExplosionDamageDealt = false;
+		      state.holtzmanExplosionPos.copy(pos);
+		      state.wormShake = CONFIG.wormShakeBreach * 1.4;
+      if (emitWormHotspot) {
+        emitNoiseHotspot("atomic_holtzman", pos, 1.0, {
           radius: 540,
           ttl: 30,
           signLevel: 1.0,
         });
+        if (mp.connected) {
+          mp.emit("noiseHotspot", {
+            kind: "atomic_holtzman",
+            x: pos.x,
+            z: pos.z,
+            strength: 1.0,
+            radius: 540,
+            ttl: 30,
+            signLevel: 1.0,
+          });
+        }
       }
-	      emitNoiseImpulse(0.2);
-	    	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
-	    }
+      if (emitNetwork && mp.connected) {
+        mp.emit("holtzmanDetonation", { x: pos.x, y: pos.y, z: pos.z });
+      }
+		      emitNoiseImpulse(0.2);
+		    	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
+		    }
 
 	    function updateHoltzmanExplosion(delta) {
 	      if (state.holtzmanExplosionTimer < 0) return;
@@ -9448,7 +9475,9 @@
       sun.intensity = THREE.MathUtils.lerp(current.a.sunIntensity, current.b.sunIntensity, amount);
       const nightFactor = THREE.MathUtils.clamp((0.62 - sun.intensity) / 0.62, 0, 1);
       hemiLight.intensity = 0.6 + (nightFactor * 0.38);
-      rockMaterial.emissiveIntensity = 0.02 + (nightFactor * 0.3);
+      fillLight.intensity = THREE.MathUtils.lerp(0.08, 0.28, nightFactor);
+      renderer.toneMappingExposure = THREE.MathUtils.lerp(1.05, 1.22, nightFactor);
+      rockMaterial.emissiveIntensity = 0.08 + (nightFactor * 0.26);
       stars.material.opacity = THREE.MathUtils.clamp((0.72 - sun.intensity) / 0.54, 0, 0.95);
       stars.position.set(player.position.x, 0, player.position.z);
 
@@ -9973,6 +10002,16 @@
         applyNetworkWormState(wormState);
       });
 
+      socket.on("holtzmanDetonation", ({ x, y, z, from }) => {
+        if (from === socket.id) return;
+        const px = Number(x);
+        const pz = Number(z);
+        if (!Number.isFinite(px) || !Number.isFinite(pz)) return;
+        const py = Number.isFinite(Number(y)) ? Number(y) : sampleGroundHeight(px, pz);
+        const pos = tempProjectileCenter.set(px, py, pz);
+        triggerHoltzmanDetonation(pos, { emitWormHotspot: false, emitNetwork: false });
+      });
+
       socket.on("playerDamaged", ({ id, health, attackerId }) => {
         if (id === socket.id) {
           const prevHealth = state.playerHealth;
@@ -9997,7 +10036,9 @@
             rp.hitFlash = 1.0;
             if (attackerId === socket.id && dealtDamage >= 1) {
               const poisonTick = rp.poisonTimer > 0 && dealtDamage <= Math.max(8, CONFIG.maulaPoisonDamagePerSecond * 2.0);
-              triggerDamageNumberAtPosition(rp.mesh.position, dealtDamage, false, poisonTick);
+              if (poisonTick) {
+                triggerDamageNumberAtPosition(rp.mesh.position, dealtDamage, false, true);
+              }
             }
           }
         }

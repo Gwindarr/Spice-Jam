@@ -487,6 +487,20 @@ io.on("connection", (socket) => {
     );
   });
 
+  socket.on("holtzmanDetonation", (data) => {
+    if (!data) return;
+    const x = Number(data.x);
+    const y = Number(data.y);
+    const z = Number(data.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    io.emit("holtzmanDetonation", {
+      x,
+      y: Number.isFinite(y) ? y : 0,
+      z,
+      from: socket.id,
+    });
+  });
+
   // ── Spice harvested ──
   socket.on("harvestNode", (nodeId) => {
     const node = spiceNodes[nodeId];
