@@ -1034,13 +1034,6 @@
     const rng = mulberry32(MAP_SEED);
     const portalInboundParams = new URLSearchParams(window.location.search);
 
-    // ── Player name resolution: URL param → localStorage → auto-generate ──
-    const _urlName = portalInboundParams.get("username");
-    const _storedName = localStorage.getItem("spicejam_username");
-    const _autoName = "Pilgrim-" + Math.random().toString(36).slice(2, 6).toUpperCase();
-    const PLAYER_NAME = _urlName || _storedName || _autoName;
-    try { localStorage.setItem("spicejam_username", PLAYER_NAME); } catch (_) {}
-
     // Each dune layer: random ridge direction and phase offset, fixed amplitude and frequency magnitude.
     const DUNE_LAYERS = [
       { amp: 30,  mag: 0.016 },
@@ -1075,7 +1068,6 @@
       plumeCooldownTimer: 0,
       interactHint: "Find a spice patch in the open sand.",
       wormPhase: "idle",
-      serverWormPhase: "idle",
       wormTimer: 0,
       wormCooldown: 0,
       wormRecoveryTimer: 0,
@@ -1121,8 +1113,6 @@
       depositToastTimer: 0,
       damageFlashTimer: 0,
       hitMarkerTimer: 0,
-      serverWorldTimeBase: null,
-      serverWorldTimeStamp: 0,
       portalRedirecting: false,
     };
 
@@ -2999,16 +2989,6 @@
 	        checkNpcAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
 	        checkNpcAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
-        for (const [, rp] of remotePlayers) {
-          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-          const t = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
-          if (t < 0.5 || t >= aimDist) continue;
-          tempKnifeDir.copy(camera.position).addScaledVector(tempForward, t);
-          if (tempKnifeDir.distanceTo(tempProjectileCenter) < 0.95) {
-            aimDist = t;
-            tempLasgunAimPoint.copy(tempKnifeDir);
-          }
-        }
 	      tempKnifeDir.subVectors(tempLasgunAimPoint, tempMaulaOrigin).normalize();
 	      const strikeDir = tempKnifeDir;
 	      spawnMaulaProjectile(strikeDir);
@@ -3261,7 +3241,7 @@
 	          for (const [, rp] of remotePlayers) {
 	            if (rp.data.shieldActive) continue;
 	            tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.72 + CONFIG.maulaProjectileRadius)) {
+	            if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, 0.5 + CONFIG.maulaProjectileRadius)) {
 	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage });
 	              rp.hitFlash = 1.0;
 	              rp.poisonTimer = CONFIG.maulaPoisonDuration;
@@ -3773,16 +3753,6 @@
 	        snapAim(sd.headDot, CONFIG.trainingDummyHeadRadius);
 	        snapAim(sd.targetPivot, CONFIG.trainingDummyHitRadius);
 	      }
-        for (const [, rp] of remotePlayers) {
-          tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-          const t = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
-          if (t < 0.5 || t >= lasgunAimDist) continue;
-          tempKnifeDir.copy(camera.position).addScaledVector(tempForward, t);
-          if (tempKnifeDir.distanceTo(tempProjectileCenter) < 1.1) {
-            lasgunAimDist = t;
-            aimPoint.copy(tempProjectileCenter);
-          }
-        }
 	      const strikeDir = tempKnifeDir.subVectors(aimPoint, origin).normalize();
         player.rotation.y = Math.atan2(tempForward.x, tempForward.z);
 
@@ -3817,7 +3787,6 @@
 
 	      let bestShieldedDummy = null;
       let bestShieldedNpc = null;
-      let bestRemoteId = null;
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
 	        sd.headDot.getWorldPosition(tempProjectileCenter);
@@ -3857,19 +3826,6 @@
           }
         }
       }
-      for (const [, rp] of remotePlayers) {
-        if (rp.data.shieldActive) continue;
-        tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 1.5, rp.mesh.position.z);
-        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, 0.85)) {
-          const d = origin.distanceTo(tempProjectileCenter);
-          if (d < bestDistance) {
-            bestDistance = d;
-            bestType = "remote";
-            bestHeadshot = false;
-            bestRemoteId = rp.data.id;
-          }
-        }
-      }
 
 	      const impactPoint = bestType
 	        ? tempLasgunImpact.copy(origin).addScaledVector(strikeDir, bestDistance)
@@ -3883,10 +3839,6 @@
 	      } else if (bestType && bestType.startsWith("npc:")) {
 	        const ni = parseInt(bestType.slice(4));
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
-	      } else if (bestType === "remote" && bestRemoteId) {
-          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: CONFIG.lasgunDPS * delta });
-          const rp = remotePlayers.get(bestRemoteId);
-          if (rp) rp.hitFlash = Math.max(rp.hitFlash || 0, 0.55);
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
@@ -4465,14 +4417,13 @@
       if (state.wormPhase === "recover") {
         return "Shai-Hulud rises from the dunes.";
       }
-      const noiseWormPhase = mp.connected ? state.serverWormPhase : state.wormPhase;
-      if (noiseWormPhase === "warning") {
+      if (state.wormPhase === "warning") {
         if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
           return "Worm sign detected. Move off the marker.";
         }
         return "Worm warning marked in the distance.";
       }
-      if (noiseWormPhase === "breach") {
+      if (state.wormPhase === "breach") {
         if (getWormThreatFactor(CONFIG.wormWarningRadius) > 0.16) {
           return "Breach imminent. Clear the impact zone.";
         }
@@ -6906,11 +6857,13 @@
 
     // ── Hit feedback: crosshair pulse + floating damage number at hit world pos ──
     const tempHitProject = new THREE.Vector3();
-    function triggerDamageNumberAtPosition(pos, damage, headshot = false, poison = false) {
-      if (!pos) return;
+    function triggerHitFeedback(target, damage, headshot, poison = false) {
       if (!poison) state.hitMarkerTimer = 0.18;
       const rounded = Math.round(damage);
       if (rounded < 1) return; // never show "0"
+
+      const pos = target.group ? target.group.position : target.position;
+      if (!pos) return;
       tempHitProject.set(pos.x, pos.y + 3.2, pos.z);
       tempHitProject.project(camera);
       if (tempHitProject.z > 1 || tempHitProject.z < -1) return;
@@ -6924,10 +6877,6 @@
       el.style.top  = sy + "px";
       ui.damageNumbers.appendChild(el);
       setTimeout(() => el.remove(), 1000);
-    }
-    function triggerHitFeedback(target, damage, headshot, poison = false) {
-      const pos = target.group ? target.group.position : target.position;
-      triggerDamageNumberAtPosition(pos, damage, headshot, poison);
     }
 
     // For continuous-damage weapons (lasgun beam, poison): damage already applied
@@ -7649,7 +7598,6 @@
         const params = new URLSearchParams(window.location.search);
         params.delete("portal");
         params.set("ref", currentGameRef);
-        params.set("username", PLAYER_NAME);
         const vel = player.userData.velocity;
         const speed = Math.hypot(vel.x, vel.z);
         params.set("speed", speed.toFixed(2));
@@ -8279,31 +8227,25 @@
 
     function updateWormBreach(delta) {
       if (mp.connected) {
+        // Online mode: worm phase/target are server-authoritative.
         state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
-        // Local player devour/recover — fall through to offline animation code below
-        if (state.wormPhase === "devour" || state.wormPhase === "recover") {
-          // falls through
-        } else {
-          // Online visual rendering driven by server phase
-          const serverPhase = state.serverWormPhase || "idle";
-          if (serverPhase === "idle") {
-            state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
-            wormHazard.group.visible = false;
-            return;
-          }
-          wormHazard.group.visible = true;
-          wormHazard.group.position.copy(state.wormTarget);
-          const phaseOpen = serverPhase === "warning" ? 0.38 : serverPhase === "breach" ? 1.0 : 0.56;
-          const phaseSpin = serverPhase === "warning" ? 0.9 : serverPhase === "breach" ? 1.2 : 1.0;
-          const phaseTilt = serverPhase === "warning" ? 0.12 : 0.22;
-          wormHazard.warningShadow.material.opacity = serverPhase === "warning" ? 0.18 : 0.05;
-          wormHazard.warningRing.material.opacity = serverPhase === "warning" ? 0.4 : 0.08;
-          wormHazard.rippleRing.material.opacity = serverPhase === "warning" ? 0.28 : 0.16;
-          wormHazard.mouthRoot.visible = true;
-          wormHazard.mouthRoot.position.y = serverPhase === "warning" ? -2 : 4;
-          updateWormMawPose(delta, phaseOpen, phaseSpin, phaseTilt);
+        if (state.wormPhase === "idle") {
+          state.wormShake = THREE.MathUtils.damp(state.wormShake, 0, 7, delta);
+          wormHazard.group.visible = false;
           return;
         }
+        wormHazard.group.visible = true;
+        wormHazard.group.position.copy(state.wormTarget);
+        const phaseOpen = state.wormPhase === "warning" ? 0.38 : state.wormPhase === "breach" ? 1.0 : 0.56;
+        const phaseSpin = state.wormPhase === "warning" ? 0.9 : state.wormPhase === "breach" ? 1.2 : 1.0;
+        const phaseTilt = state.wormPhase === "warning" ? 0.12 : 0.22;
+        wormHazard.warningShadow.material.opacity = state.wormPhase === "warning" ? 0.18 : 0.05;
+        wormHazard.warningRing.material.opacity = state.wormPhase === "warning" ? 0.4 : 0.08;
+        wormHazard.rippleRing.material.opacity = state.wormPhase === "warning" ? 0.28 : 0.16;
+        wormHazard.mouthRoot.visible = true;
+        wormHazard.mouthRoot.position.y = state.wormPhase === "warning" ? -2 : 4;
+        updateWormMawPose(delta, phaseOpen, phaseSpin, phaseTilt);
+        return;
       }
 
       if (state.wormPhase === "idle") {
@@ -9316,12 +9258,7 @@
     }
 
     function updateDayNight(delta) {
-      if (mp.connected && state.serverWorldTimeBase !== null) {
-        const nowSec = performance.now() * 0.001;
-        state.elapsed = state.serverWorldTimeBase + Math.max(0, nowSec - state.serverWorldTimeStamp);
-      } else {
-        state.elapsed += delta;
-      }
+      state.elapsed += delta;
       state.dayTime = ((state.elapsed + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
 
       const current = getCycleKeyPair(state.dayTime);
@@ -9425,9 +9362,7 @@
       const thumperStrength = thumper.active
         ? THREE.MathUtils.lerp(CONFIG.thumperAmbientStrength, CONFIG.thumperPulseStrength, thumper.signal)
         : 0;
-      const wormActive = state.wormPhase !== "idle"
-        || (mp.connected && state.serverWormPhase !== "idle");
-      const wormMeter = wormActive
+      const wormMeter = state.wormPhase !== "idle"
         ? 1
         : Math.max(worm.noisePressure, thumperStrength, shieldMeter);
 	      const harvestProgress = state.harvestNode
@@ -9508,11 +9443,7 @@
       ui.signFill.style.backgroundColor = `hsl(${signHue}, 88%, 48%)`;
       ui.wormFill.style.width = `${(wormMeter * 100).toFixed(1)}%`;
       ui.wormFill.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
-      const hudWormActive = state.wormPhase === "devour"
-        || (mp.connected
-          ? (state.serverWormPhase === "warning" || state.serverWormPhase === "breach")
-          : (state.wormPhase === "warning" || state.wormPhase === "breach"));
-      if (hudWormActive) {
+      if (state.wormPhase === "warning" || state.wormPhase === "breach" || state.wormPhase === "devour") {
         ui.hudStatus.textContent = "Worm incoming";
       } else if (state.harvestNode) {
         ui.hudStatus.textContent = "Harvesting spice";
@@ -9609,29 +9540,7 @@
     }
 
     // ── Multiplayer ────────────────────────────────────────────────────────────
-    function createNameplate(name) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 256;
-      canvas.height = 64;
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.font = "700 28px Arial";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-      ctx.fillText(name, canvas.width * 0.5 + 1, canvas.height * 0.5 + 1);
-      ctx.fillStyle = "#ffe6c0";
-      ctx.fillText(name, canvas.width * 0.5, canvas.height * 0.5);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
-      const sprite = new THREE.Sprite(material);
-      sprite.scale.set(4, 1, 1);
-      sprite.center.set(0.5, 0);
-      return sprite;
-    }
-
-    function createRemotePlayerMesh(team, name) {
+    function createRemotePlayerMesh(team) {
       // Reuse the full player model — already has weapon + cargo userData refs
       const root = createPlayer();
       root.position.set(0, 0, 0);
@@ -9644,12 +9553,6 @@
       indicator.position.y = 3.8;
       root.add(indicator);
       root.userData.teamIndicator = indicator;
-
-      // Nameplate
-      const nameplate = createNameplate(name || "Pilgrim");
-      nameplate.position.y = 4.3;
-      root.add(nameplate);
-      root.userData.nameplate = nameplate;
 
       return root;
     }
@@ -9670,7 +9573,7 @@
 
     function addRemotePlayer(data) {
       if (remotePlayers.has(data.id)) return;
-      const mesh = createRemotePlayerMesh(data.team, data.name);
+      const mesh = createRemotePlayerMesh(data.team);
       mesh.position.set(data.x, data.y, data.z);
       mesh.rotation.y = data.rotY ?? 0;
       scene.add(mesh);
@@ -9715,10 +9618,9 @@
 
     function applyNetworkWormState(data) {
       if (!data) return;
-      // Server worm visual phase — kept separate from local player death phase
-      // (state.wormPhase stays local: idle/devour/recover driven by playerKilled)
-      state.serverWormPhase = data.phase ?? state.serverWormPhase;
-      // Worm target position — needed for both visuals and devour animation
+      state.wormPhase = data.phase ?? state.wormPhase;
+      state.wormTimer = typeof data.timer === "number" ? data.timer : state.wormTimer;
+      state.wormCooldown = typeof data.cooldown === "number" ? data.cooldown : state.wormCooldown;
       if (data.target) {
         state.wormTarget.set(
           data.target.x ?? state.wormTarget.x,
@@ -9726,13 +9628,10 @@
           data.target.z ?? state.wormTarget.z
         );
       }
-      if (typeof data.worldTime === "number") {
-        // Authoritative multiplayer world clock from server.
-        if (state.serverWorldTimeBase === null || data.worldTime >= (state.serverWorldTimeBase - 0.05)) {
-          state.serverWorldTimeBase = data.worldTime;
-          state.serverWorldTimeStamp = performance.now() * 0.001;
-        }
+      if (typeof data.noisePressure === "number") {
+        worm.noisePressure = data.noisePressure;
       }
+      if (data.state) worm.state = data.state;
     }
 
     // Send position to server at ~20hz
@@ -9783,7 +9682,6 @@
         transports: ["websocket", "polling"],
         reconnectionAttempts: 3,
         reconnectionDelay: 5000,
-        auth: { name: PLAYER_NAME },
       });
       mp.socket = socket;
 
@@ -9870,13 +9768,6 @@
 
       socket.on("playerKilled", ({ id, killerId }) => {
         if (id === socket.id) {
-          if (killerId === "worm") {
-            // Worm kill — run the full devour cinematic (handles spice loss, respawn)
-            if (state.wormPhase !== "devour" && state.wormPhase !== "recover") {
-              beginDevour();
-            }
-            return;
-          }
           if (state.spiceCarry > 0) {
             spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
           }
@@ -9893,13 +9784,7 @@
         const rp = remotePlayers.get(id);
         if (rp) { rp.data.health = 100; rp.hitFlash = 0; }
         if (id === socket.id) {
-          // Don't interrupt worm devour cinematic — it handles its own respawn
-          if (state.wormPhase === "devour" || state.wormPhase === "recover") {
-            state.playerHealth = 100;
-            return;
-          }
           state.pvpDead = false;
-          state.playerHealth = 100;
           state.damageFlashTimer = 0;
           respawnAtBase();
         }
