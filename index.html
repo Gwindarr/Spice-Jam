@@ -775,7 +775,7 @@
       spicePlumeSpawnChance: 0.35,
       spicePlumeMaxActive: 1,
       spicePlumeCooldown: 35,
-      spicePlumeInitialChance: 0.15,
+      spicePlumeInitialChance: 1,
       spiceSmallDecayDuration: 45,
       spicePlumeDecayDuration: 45,
       spiceHarvestRadius: 8,
@@ -1275,7 +1275,18 @@
       targetHotspot: null,
       noisePressure: 0,
       lastSpawnTime: -Infinity,
+	    };
+
+    // Multiplayer state — must exist before createSpiceObjective because
+    // initial plume events may query connection state during world setup.
+    const mp = {
+      connected: false,
+      team: null,
+      socket: null,
+      emit(...args) { if (this.socket) this.socket.emit(...args); },
     };
+    const remotePlayers = new Map(); // id → { mesh, data }
+    let mpSendTimer = 0;
 
     ui.hudSeed.textContent = `Seed: ${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")}`;
     createTerrain();
@@ -1326,15 +1337,6 @@
         )
       );
     }
-    // Multiplayer state — must be initialized before updateDayNight/animate
-    const mp = {
-      connected: false,
-      socket: null,
-      emit(...args) { if (this.socket) this.socket.emit(...args); },
-    };
-    const remotePlayers = new Map(); // id → { mesh, data }
-    let mpSendTimer = 0;
-
 	    bindEvents();
     updateDayNight(0);
     refreshHud();
@@ -4755,12 +4757,16 @@
       state.surfaceType = surfaceType;
     }
 
-    function setSpiceNodeActive(node, active) {
+    function setSpiceNodeActive(node, active, respawnTimer = null) {
       node.active = active;
       node.group.visible = active;
       if (!active) {
         node.decayTimer = -1;
-        node.respawnTimer = CONFIG.spiceRespawnDuration;
+        node.respawnTimer = Number.isFinite(respawnTimer)
+          ? Math.max(0, respawnTimer)
+          : CONFIG.spiceRespawnDuration;
+      } else {
+        node.respawnTimer = 0;
       }
       if (!active && state.harvestNode === node) {
         state.harvestNode = null;
@@ -4771,6 +4777,40 @@
     function cancelHarvest() {
       state.harvestNode = null;
       state.harvestTimer = 0;
+    }
+
+    function applyNetworkSpiceNodeState(serverNode) {
+      if (!serverNode) return;
+      const local = spiceObjective.nodes[serverNode.id];
+      if (!local) return;
+      const wasActivePlume = local.active && local.type === "plume";
+
+      const nextType = serverNode.type === "plume" ? "plume" : "small";
+      const nextTotalYield = Math.max(0, Math.floor(Number(serverNode.totalYield) || 0));
+      const nextRemaining = Math.max(0, Math.floor(Number(serverNode.remaining) || 0));
+      const nextRespawnTimer = Math.max(0, Number(serverNode.respawnTimer) || 0);
+
+      if (local.type !== nextType) {
+        local.type = nextType;
+        if (typeof spiceObjective.refreshNodeVisual === "function") {
+          spiceObjective.refreshNodeVisual(local);
+        }
+      }
+      if (nextTotalYield > 0) {
+        local.totalYield = nextTotalYield;
+      }
+      local.remaining = nextRemaining;
+      local.decayTimer = -1;
+
+      if (serverNode.active) {
+        setSpiceNodeActive(local, true, 0);
+      } else {
+        setSpiceNodeActive(local, false, nextRespawnTimer);
+      }
+
+      if (mp.connected && serverNode.active && nextType === "plume" && (!wasActivePlume || state.elapsed < 1.5)) {
+        triggerSpicePlumeEvent(local);
+      }
     }
 
 	    function getSpicePrompt(canHarvest, nearDepot = false) {
@@ -4800,12 +4840,13 @@
       const nearDepot = (_dpDx * _dpDx) + (_dpDz * _dpDz) <= spiceDepot.depositRadius * spiceDepot.depositRadius;
       const ePressed = keyState.KeyE && !state.paused && controls.isLocked;
       if (nearDepot && state.spiceCarry > 0 && state.wormPhase !== "devour" && ePressed && !state.depositKeyConsumed) {
-        state.spiceScore += state.spiceCarry;
+        const depositAmount = state.spiceCarry;
+        state.spiceScore += depositAmount;
         state.spiceCarry = 0;
         state.depositKeyConsumed = true;
         state.depositToastTimer = 2.8;
         spiceDepot.triggerDeposit();
-        mp.emit("spiceDeposited");
+        mp.emit("spiceDeposited", { amount: depositAmount });
       }
       if (!keyState.KeyE) state.depositKeyConsumed = false;
 
@@ -4859,33 +4900,37 @@
       let nearbyHarvestNode = null;
       let nearestHarvestDistSq = Infinity;
 
-      // Plume spawn timer
-      if (state.plumeCooldownTimer > 0) state.plumeCooldownTimer -= delta;
-      state.plumeSpawnTimer += delta;
-      if (state.plumeSpawnTimer >= CONFIG.spicePlumeSpawnCheckInterval) {
-        state.plumeSpawnTimer -= CONFIG.spicePlumeSpawnCheckInterval;
-        const hasActivePlume = spiceObjective.nodes.some(n => n.type === "plume" && n.active);
-        if (!hasActivePlume && state.plumeCooldownTimer <= 0) {
-          if (Math.random() < CONFIG.spicePlumeSpawnChance) {
-            spiceObjective.spawnPlume();
+      // Plume spawning is local-only. In multiplayer the server snapshot controls patch type/state.
+      if (!mp.connected) {
+        if (state.plumeCooldownTimer > 0) state.plumeCooldownTimer -= delta;
+        state.plumeSpawnTimer += delta;
+        if (state.plumeSpawnTimer >= CONFIG.spicePlumeSpawnCheckInterval) {
+          state.plumeSpawnTimer -= CONFIG.spicePlumeSpawnCheckInterval;
+          const hasActivePlume = spiceObjective.nodes.some(n => n.type === "plume" && n.active);
+          if (!hasActivePlume && state.plumeCooldownTimer <= 0) {
+            if (Math.random() < CONFIG.spicePlumeSpawnChance) {
+              spiceObjective.spawnPlume();
+            }
           }
         }
       }
 
       for (const node of spiceObjective.nodes) {
         if (!node.active) {
-          node.respawnTimer = Math.max(0, node.respawnTimer - delta);
-          if (node.respawnTimer === 0) {
-            // Depleted plumes revert to small on respawn (slot returns to pool)
-            if (node.type === "plume") node.type = "small";
-            spiceObjective.relocateNode(node);
-            setSpiceNodeActive(node, true);
+          if (!mp.connected) {
+            node.respawnTimer = Math.max(0, node.respawnTimer - delta);
+            if (node.respawnTimer === 0) {
+              // Depleted plumes revert to small on respawn (slot returns to pool)
+              if (node.type === "plume") node.type = "small";
+              spiceObjective.relocateNode(node);
+              setSpiceNodeActive(node, true);
+            }
           }
           continue;
         }
 
         // Decay timer: ticks down after first successful harvest
-        if (node.decayTimer > 0) {
+        if (!mp.connected && node.decayTimer > 0) {
           node.decayTimer -= delta;
           if (node.decayTimer <= 0) {
             setSpiceNodeActive(node, false);
@@ -4962,20 +5007,25 @@
               state.spiceCarry += take;
               activeNode.remaining -= take;
               // Start decay timer on first successful harvest (>= 1 unit taken)
-              if (take > 0 && activeNode.decayTimer < 0) {
+              if (!mp.connected && take > 0 && activeNode.decayTimer < 0) {
                 activeNode.decayTimer = activeNode.type === "plume"
                   ? CONFIG.spicePlumeDecayDuration
                   : CONFIG.spiceSmallDecayDuration;
               }
               if (activeNode.remaining <= 0) {
                 setSpiceNodeActive(activeNode, false);
-                if (activeNode.type === "plume") {
+                if (!mp.connected && activeNode.type === "plume") {
                   state.plumeCooldownTimer = CONFIG.spicePlumeCooldown;
                 }
               }
               cancelHarvest();
               emitNoiseImpulse(0.2);
-              mp.emit("harvestNode", activeNode.id);
+              mp.emit("harvestNode", {
+                id: activeNode.id,
+                type: activeNode.type,
+                totalYield: activeNode.totalYield,
+                takenAmount: take,
+              });
             }
           }
         }
@@ -7260,6 +7310,40 @@
 	      const nodes = [];
       const halfWorld = (CONFIG.worldSize * 0.5) - CONFIG.spiceNodeEdgePadding;
       const minSpacingSq = CONFIG.spiceNodeMinSpacing * CONFIG.spiceNodeMinSpacing;
+      let reservedInitialPlumeSpawn = null;
+
+      function isValidSpiceNodeSpawn(x, z, excludeNode = null) {
+        let blocked = false;
+        for (const patch of ROCK_PATCHES) {
+          const dx = x - patch.x;
+          const dz = z - patch.z;
+          const clearance = patch.radius + CONFIG.spiceNodeMinSafeClearance;
+          if ((dx * dx) + (dz * dz) < clearance * clearance) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked || getSurfaceType(x, z) !== "sand") return false;
+
+        if (reservedInitialPlumeSpawn && excludeNode?.id !== (CONFIG.spiceNodeCount - 1)) {
+          const dx = x - reservedInitialPlumeSpawn.x;
+          const dz = z - reservedInitialPlumeSpawn.z;
+          if ((dx * dx) + (dz * dz) < minSpacingSq) return false;
+        }
+
+        for (const node of nodes) {
+          if (node === excludeNode) continue;
+          if (!node.active && node !== excludeNode) continue;
+
+          const dx = x - node.x;
+          const dz = z - node.z;
+          if ((dx * dx) + (dz * dz) < minSpacingSq) {
+            return false;
+          }
+        }
+
+        return true;
+      }
 
       function findSpiceNodeSpawn(excludeNode = null) {
         let attempts = 0;
@@ -7268,33 +7352,38 @@
           attempts += 1;
           const x = randomRange(-halfWorld, halfWorld, rng);
           const z = randomRange(-halfWorld, halfWorld, rng);
-
-          let blocked = false;
-          for (const patch of ROCK_PATCHES) {
-            const dx = x - patch.x;
-            const dz = z - patch.z;
-            const clearance = patch.radius + CONFIG.spiceNodeMinSafeClearance;
-            if ((dx * dx) + (dz * dz) < clearance * clearance) {
-              blocked = true;
-              break;
-            }
-          }
-          if (blocked || getSurfaceType(x, z) !== "sand") continue;
-
-          for (const node of nodes) {
-            if (node === excludeNode) continue;
-            if (!node.active && node !== excludeNode) continue;
-
-            const dx = x - node.x;
-            const dz = z - node.z;
-            if ((dx * dx) + (dz * dz) < minSpacingSq) {
-              blocked = true;
-              break;
-            }
-          }
-          if (blocked) continue;
+          if (!isValidSpiceNodeSpawn(x, z, excludeNode)) continue;
 
           return { x, z };
+        }
+
+        return null;
+      }
+
+      function findSpiceNodeSpawnNearStart(excludeNode = null) {
+        const originX = CONFIG.playerStart.x;
+        const originZ = CONFIG.playerStart.z;
+        const distances = [88, 96, 108, 120, 132];
+        const angles = [
+          -0.18 * Math.PI,
+          0.18 * Math.PI,
+          -0.36 * Math.PI,
+          0.36 * Math.PI,
+          -0.54 * Math.PI,
+          0.54 * Math.PI,
+          -0.72 * Math.PI,
+          0.72 * Math.PI,
+          Math.PI,
+          0,
+        ];
+
+        for (const distance of distances) {
+          for (const angle of angles) {
+            const x = originX + (Math.cos(angle) * distance);
+            const z = originZ + (Math.sin(angle) * distance);
+            if (!isValidSpiceNodeSpawn(x, z, excludeNode)) continue;
+            return { x, z };
+          }
         }
 
         return null;
@@ -7526,6 +7615,9 @@
 
       // Roll for initial plume (15% chance, uses world seed)
       const initialPlume = rng() < CONFIG.spicePlumeInitialChance;
+      if (initialPlume) {
+        reservedInitialPlumeSpawn = findSpiceNodeSpawnNearStart();
+      }
       const smallCount = initialPlume ? CONFIG.spiceNodeCount - 1 : CONFIG.spiceNodeCount;
 
       // Create small patches
@@ -7541,7 +7633,7 @@
 
       // If initial roll succeeded, spawn a plume as the last slot (with event)
       if (initialPlume) {
-        const spawn = findSpiceNodeSpawn();
+        const spawn = reservedInitialPlumeSpawn || findSpiceNodeSpawn();
         if (spawn) {
           const node = makeNode("plume", nodes.length);
           placeSpiceNode(node, spawn.x, spawn.z);
@@ -7554,6 +7646,9 @@
 
       return {
         nodes,
+        refreshNodeVisual(node) {
+          updateSpicePatchVisual(node);
+        },
         relocateNode(node) {
           const spawn = findSpiceNodeSpawn(node);
           if (!spawn) return false;
@@ -8489,6 +8584,7 @@
       player.userData.jumpBuffer = 0;
       state.spiceCarry = 0;
       cancelHarvest();
+      state.shieldActive = false;
       state.noiseLevel = 0;
       state.signLevel = 0;
       state.noiseImpulse = 0;
@@ -8536,6 +8632,7 @@
       state.noiseLevel = 0;
       state.signLevel = 0;
       state.noiseImpulse = 0;
+      state.shieldActive = false;
       state.playerPoisonTimer = 0;
       state.pvpDead = false;
       state.pvpDeathTimer = 0;
@@ -10362,6 +10459,7 @@
 
       socket.on("disconnect", () => {
         mp.connected = false;
+        mp.team = null;
         console.log("[MP] Disconnected");
       });
 
@@ -10371,6 +10469,7 @@
 
       socket.on("welcome", ({ id, team, snapshot }) => {
         console.log(`[MP] Joined as ${team}`);
+        mp.team = team;
         // If server has a canonical seed and ours differs, reload with correct seed
         if (snapshot.seed && snapshot.seed !== MAP_SEED) {
           const params = new URLSearchParams(window.location.search);
@@ -10384,8 +10483,7 @@
         }
         // Sync spice node states
         for (const node of snapshot.spiceNodes) {
-          const local = spiceObjective.nodes[node.id];
-          if (local && !node.active) setSpiceNodeActive(local, false);
+          applyNetworkSpiceNodeState(node);
         }
         // Sync scores
         state.spiceScore = snapshot.scores[team] ?? 0;
@@ -10406,19 +10504,20 @@
         if (node?.active) setSpiceNodeActive(node, false);
       });
 
+      socket.on("spiceNodeSync", (node) => {
+        applyNetworkSpiceNodeState(node);
+      });
+
       socket.on("spiceSync", (nodes) => {
         for (const node of nodes) {
-          const local = spiceObjective.nodes[node.id];
-          if (!local) continue;
-          if (node.active && !local.active) {
-            spiceObjective.relocateNode(local);
-            setSpiceNodeActive(local, true);
-          }
+          applyNetworkSpiceNodeState(node);
         }
       });
 
       socket.on("scoreUpdate", (scores) => {
-        // Show updated scores — for now just log; HUD can be wired later
+        if (mp.team && typeof scores?.[mp.team] === "number") {
+          state.spiceScore = scores[mp.team];
+        }
         console.log("[MP] Scores:", scores);
       });
 
@@ -10488,6 +10587,9 @@
 	          if (state.spiceCarry > 0) {
 	            spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
 	          }
+          cancelHarvest();
+          state.shieldActive = false;
+          state.playerPoisonTimer = 0;
           state.pvpDead = true;
           state.pvpDeathTimer = 3.0;
           state.pvpDeathPose = 0;
@@ -10540,6 +10642,8 @@
           if (wasWormDeath) {
             state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
           }
+          cancelHarvest();
+          state.shieldActive = false;
           state.wormPhase = "idle";
           state.wormTimer = 0;
           state.wormCooldown = state.wormNetCooldown;

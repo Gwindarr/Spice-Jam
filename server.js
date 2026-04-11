@@ -6,6 +6,11 @@ const path = require("path");
 const PORT = process.env.PORT || 3001;
 const SPICE_RESPAWN_SECONDS = 32;
 const SPICE_NODE_COUNT = 8;
+const SPICE_SMALL_YIELD_MIN = 6;
+const SPICE_SMALL_YIELD_MAX = 9;
+const SPICE_PLUME_YIELD_MIN = 16;
+const SPICE_PLUME_YIELD_MAX = 20;
+const SPICE_INITIAL_PLUME_CHANCE = 1;
 const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
 const WORLD_SIZE = 1500;
@@ -19,6 +24,34 @@ const HOLTZMAN_LETHAL_RADIUS = 35;
 const HOLTZMAN_DAMAGE_RADIUS = 70;
 const HOLTZMAN_DAMAGE = 80;
 const HOLTZMAN_EVENT_COOLDOWN_MS = 250;
+const MAP_SEED = Math.floor(Math.random() * 0xFFFFFF);
+const SERVER_START_MS = Date.now();
+
+function mulberry32(seed) {
+  return function next() {
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomRange(min, max, rand = Math.random) {
+  return min + ((max - min) * rand());
+}
+
+function rollSpiceYield(type, nodeId, cycle = 0) {
+  const seed = (
+    (MAP_SEED ^ 0x53a9b1df)
+    + ((nodeId + 1) * 0x9e3779b9)
+    + (cycle * 0x85ebca6b)
+  ) >>> 0;
+  const rand = mulberry32(seed);
+  const min = type === "plume" ? SPICE_PLUME_YIELD_MIN : SPICE_SMALL_YIELD_MIN;
+  const max = type === "plume" ? SPICE_PLUME_YIELD_MAX : SPICE_SMALL_YIELD_MAX;
+  return Math.floor(randomRange(min, max + 1, rand));
+}
+
+const hasInitialSpicePlume = mulberry32((MAP_SEED ^ 0x1f4e2c73) >>> 0)() < SPICE_INITIAL_PLUME_CHANCE;
 
 const WORM_CFG = {
   noisePressureSpawnThreshold: 0.68,
@@ -60,19 +93,23 @@ const WORM_CFG = {
 
 const players = new Map(); // socketId → playerState
 
-// Spice nodes: server owns active/inactive state and respawn timers.
-// Positions are determined client-side from MAP_SEED — server just tracks
-// node index + active state so all clients stay in sync.
-const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => ({
-  id: i,
-  active: true,
-  respawnTimer: 0,
-}));
+// Spice nodes: server owns active state, remaining yield, type, and respawn timers.
+// Positions are still determined client-side from MAP_SEED for now.
+const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => {
+  const type = hasInitialSpicePlume && i === (SPICE_NODE_COUNT - 1) ? "plume" : "small";
+  const totalYield = rollSpiceYield(type, i, 0);
+  return {
+    id: i,
+    active: true,
+    respawnTimer: 0,
+    type,
+    totalYield,
+    remaining: totalYield,
+    respawnCount: 0,
+  };
+});
 
 const scores = { fremen: 0, harkonnen: 0 };
-// Canonical map seed — all clients must match this
-const MAP_SEED = Math.floor(Math.random() * 0xFFFFFF);
-const SERVER_START_MS = Date.now();
 const noiseHotspots = [];
 const worm = {
   position: { x: 0, z: 0 },
@@ -265,6 +302,18 @@ function getLockedThumperHotspot() {
   };
 }
 
+function getLockedAtomicHotspot() {
+  if (worm.targetSource !== "atomic_holtzman" || !worm.targetHotspot) return null;
+  if (worm.state === "retreat" || worm.state === "off_map") return null;
+  return {
+    x: worm.targetHotspot.x,
+    z: worm.targetHotspot.z,
+    strength: 1,
+    signLevel: 1,
+    source: "atomic_holtzman",
+  };
+}
+
 function pickWormTargetForPlayer(p) {
   const speed = Math.hypot(p.vx || 0, p.vz || 0);
   let dirX = 0;
@@ -367,8 +416,7 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
     const target = players.get(targetId);
     if (!target) return;
     target.health = 100;
-    target.poisonTimer = 0;
-    target.poisonAttackerId = null;
+    clearPlayerTransientState(target, { clearCarry: true });
     io.emit("playerRespawned", { id: targetId });
   }, delayMs);
 }
@@ -398,6 +446,22 @@ function consumePlayerThumper(player) {
     respawnSeconds: 0,
   });
   return true;
+}
+
+function clearPlayerTransientState(player, { clearCarry = true } = {}) {
+  if (!player) return;
+  player.poisonTimer = 0;
+  player.poisonAttackerId = null;
+  player.shieldActive = false;
+  player.harvestActive = false;
+  player.noiseLevel = 0;
+  player.signLevel = 0;
+  player.vx = 0;
+  player.vz = 0;
+  player.moveTime = 0;
+  if (clearCarry) {
+    player.spiceCarry = 0;
+  }
 }
 
 function sampleStrongestWormHotspot() {
@@ -456,6 +520,7 @@ function sampleStrongestWormHotspot() {
 
   // Player actor noise/shield on sand
   for (const p of players.values()) {
+    if (p.health <= 0) continue;
     if (p.surfaceType !== "sand") continue;
     const target = pickWormTargetForPlayer(p);
     const shieldStrength = p.shieldActive
@@ -481,9 +546,7 @@ function sampleStrongestWormHotspot() {
 function killPlayerByWorm(target) {
   if (!target || target.health <= 0) return;
   target.health = 0;
-  target.poisonTimer = 0;
-  target.poisonAttackerId = null;
-  target.spiceCarry = 0;
+  clearPlayerTransientState(target, { clearCarry: true });
   io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
   io.emit("playerKilled", { id: target.id, killerId: "worm" });
   emitDeathEvent(
@@ -507,7 +570,7 @@ function tickWorm(dt) {
 
   worm.cooldown = Math.max(0, worm.cooldown - dt);
   const strongestHotspot = sampleStrongestWormHotspot();
-  const lockedHotspot = getLockedThumperHotspot();
+  const lockedHotspot = getLockedThumperHotspot() || getLockedAtomicHotspot();
   const hotspot = lockedHotspot || strongestHotspot;
   const hotspotStrength = strongestHotspot ? strongestHotspot.strength : 0;
   const response = hotspotStrength > worm.noisePressure
@@ -681,6 +744,10 @@ setInterval(() => {
       if (node.respawnTimer <= 0) {
         node.active = true;
         node.respawnTimer = 0;
+        node.type = "small";
+        node.respawnCount += 1;
+        node.totalYield = rollSpiceYield(node.type, node.id, node.respawnCount);
+        node.remaining = node.totalYield;
         changed = true;
       }
     }
@@ -717,9 +784,9 @@ setInterval(() => {
     p.health = Math.max(0, p.health - dmg);
     io.emit("playerDamaged", { id: p.id, health: p.health, attackerId: p.poisonAttackerId });
     if (p.health <= 0) {
+      clearPlayerTransientState(p, { clearCarry: true });
       io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
       emitDeathEvent(p.id, p.poisonAttackerId, "poison");
-      p.poisonTimer = 0;
       schedulePlayerRespawn(p.id, 3000);
     }
   }
@@ -817,6 +884,7 @@ io.on("connection", (socket) => {
     target.health = Math.max(0, target.health - clampedDamage);
     io.emit("playerDamaged", { id: targetId, health: target.health, attackerId });
     if (target.health <= 0) {
+      clearPlayerTransientState(target, { clearCarry: true });
       io.emit("playerKilled", { id: targetId, killerId: attackerId });
       emitDeathEvent(targetId, attackerId, attackType);
       schedulePlayerRespawn(targetId, 3000);
@@ -928,9 +996,13 @@ io.on("connection", (socket) => {
     if (worm.phase === "idle" && worm.state === "off_map") {
       worm.cooldown = 0;
       worm.noisePressure = Math.max(worm.noisePressure, WORM_CFG.noisePressureSpawnThreshold);
-      spawnWormOutsideCluster({ x, z }, getWorldTimeSeconds());
-    } else if (worm.phase === "idle" && (worm.state === "inbound" || worm.state === "hunting")) {
-      trackWormTargetHotspot({ x, z }, WORM_TICK_MS / 1000);
+      spawnWormOutsideCluster({ x, z, source: "atomic_holtzman" }, getWorldTimeSeconds());
+    } else if (
+      worm.phase === "idle"
+      && (worm.state === "inbound" || worm.state === "hunting")
+      && worm.targetSource !== "atomic_holtzman"
+    ) {
+      trackWormTargetHotspot({ x, z, source: "atomic_holtzman" }, WORM_TICK_MS / 1000);
     }
 
     for (const p of players.values()) {
@@ -960,19 +1032,56 @@ io.on("connection", (socket) => {
   });
 
   // ── Spice harvested ──
-  socket.on("harvestNode", (nodeId) => {
+  socket.on("harvestNode", (data) => {
+    const nodeId = typeof data === "object" && data !== null ? data.id : data;
     const node = spiceNodes[nodeId];
     if (!node || !node.active) return;
-    node.active = false;
-    node.respawnTimer = SPICE_RESPAWN_SECONDS;
-    io.emit("nodeHarvested", nodeId);
+    const nextType = data?.type === "plume" ? "plume" : "small";
+    const reportedTotalYield = Math.max(0, Math.floor(Number(data?.totalYield) || 0));
+    const takenAmount = Math.max(0, Math.floor(Number(data?.takenAmount) || 0));
+    const wasPristine = node.remaining === node.totalYield;
+
+    if (node.remaining === node.totalYield || node.type !== "plume") {
+      node.type = nextType;
+    }
+    if (reportedTotalYield > 0) {
+      if (wasPristine) {
+        node.totalYield = reportedTotalYield;
+        node.remaining = reportedTotalYield;
+      } else {
+        node.totalYield = Math.max(node.totalYield, reportedTotalYield);
+        node.remaining = Math.min(node.remaining, node.totalYield);
+      }
+    }
+
+    if (takenAmount > 0) {
+      node.remaining = Math.max(0, node.remaining - takenAmount);
+    } else {
+      node.remaining = 0;
+    }
+
+    if (node.remaining <= 0) {
+      node.active = false;
+      node.respawnTimer = SPICE_RESPAWN_SECONDS;
+      io.emit("nodeHarvested", nodeId);
+    } else {
+      node.active = true;
+      node.respawnTimer = 0;
+    }
+    io.emit("spiceNodeSync", node);
   });
 
   // ── Spice deposited ──
-  socket.on("spiceDeposited", () => {
+  socket.on("spiceDeposited", (data) => {
     const p = players.get(socket.id);
     if (!p) return;
-    scores[p.team] += 1;
+    const requestedAmount = Math.max(0, Math.floor(Number(data?.amount) || 0));
+    const depositedAmount = requestedAmount > 0
+      ? requestedAmount
+      : Math.max(0, Math.floor(Number(p.spiceCarry) || 0));
+    if (depositedAmount <= 0) return;
+    scores[p.team] += depositedAmount;
+    p.spiceCarry = Math.max(0, (Number(p.spiceCarry) || 0) - depositedAmount);
     io.emit("scoreUpdate", scores);
   });
 
