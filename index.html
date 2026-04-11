@@ -1113,6 +1113,8 @@
       depositToastTimer: 0,
       damageFlashTimer: 0,
       hitMarkerTimer: 0,
+      serverWorldTimeBase: null,
+      serverWorldTimeStamp: 0,
       portalRedirecting: false,
     };
 
@@ -1251,10 +1253,7 @@
         )
       );
     }
-	    bindEvents();
-    updateDayNight(0);
-    refreshHud();
-    // Multiplayer state — must be initialized before animate() runs
+    // Multiplayer state — must be initialized before updateDayNight/animate
     const mp = {
       connected: false,
       socket: null,
@@ -1263,6 +1262,9 @@
     const remotePlayers = new Map(); // id → { mesh, data }
     let mpSendTimer = 0;
 
+	    bindEvents();
+    updateDayNight(0);
+    refreshHud();
     initMultiplayer();
     animate();
 
@@ -9258,7 +9260,12 @@
     }
 
     function updateDayNight(delta) {
-      state.elapsed += delta;
+      if (mp.connected && state.serverWorldTimeBase !== null) {
+        const nowSec = performance.now() * 0.001;
+        state.elapsed = state.serverWorldTimeBase + Math.max(0, nowSec - state.serverWorldTimeStamp);
+      } else {
+        state.elapsed += delta;
+      }
       state.dayTime = ((state.elapsed + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
 
       const current = getCycleKeyPair(state.dayTime);
@@ -9632,6 +9639,12 @@
         worm.noisePressure = data.noisePressure;
       }
       if (data.state) worm.state = data.state;
+      if (typeof data.worldTime === "number") {
+        if (state.serverWorldTimeBase === null || data.worldTime >= (state.serverWorldTimeBase - 0.05)) {
+          state.serverWorldTimeBase = data.worldTime;
+          state.serverWorldTimeStamp = performance.now() * 0.001;
+        }
+      }
     }
 
     // Send position to server at ~20hz
