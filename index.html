@@ -774,6 +774,9 @@
 
       spiceNodeCount: 8,
       spiceMaxCarry: 10,
+      spiceTutorialNodeId: 0,
+      spiceTutorialYieldMin: 1,
+      spiceTutorialYieldMax: 3,
       spiceSmallYieldMin: 6,
       spiceSmallYieldMax: 9,
       spicePlumeYieldMin: 16,
@@ -825,7 +828,8 @@
 	      trainingDummyOffsetX: 5.4,
 	      trainingDummyOffsetZ: -6.2,
 	      dummyMaxHealth: 100,
-	      dummyRespawnDelay: 3.0,
+	      dummyRespawnDelay: 5.0,
+	      npcRespawnDelay: 5.0,
 	      playerMaxHealth: 100,
 
 	      critChance: 0.12,
@@ -834,7 +838,7 @@
 	      maulaImpactDamage: 20,
 	      maulaPoisonDamagePerSecond: 4,
 	      maulaPoisonDuration: 6,
-	      maulaMaxDarts: 3,
+	      maulaMaxDarts: 4,
 	      maulaCooldown: 0.72,
 	      maulaFireDuration: 0.42,
 	      maulaReloadDuration: 2.1,
@@ -1377,6 +1381,39 @@
       createTrainingDummy({ offsetX: 200, offsetZ: 0, hasShield: true }),
       createTrainingDummy({ offsetX: 250, offsetZ: 0, hasShield: true }),
     ];
+
+    function createMesaWeaponSign() {
+      const sign = createHintLabel(["WEAPONS", "1 KNIFE   2 MAULA   3 LASGUN"], "#ffe2a8", 7.2, 2.1);
+      sign.position.set(CONFIG.playerStart.x + 24, sampleGroundHeight(CONFIG.playerStart.x + 24, CONFIG.playerStart.z + 10) + 6.2, CONFIG.playerStart.z + 10);
+      scene.add(sign);
+      return sign;
+    }
+
+    function createHoltzmanWarningSign() {
+      const sign = createHintLabel(["LASGUN + SHIELD", "= BOOM"], "#ffd0a0", 6.8, 2.0);
+      sign.position.set(CONFIG.playerStart.x + 14, sampleGroundHeight(CONFIG.playerStart.x + 14, CONFIG.playerStart.z - 14) + 5.7, CONFIG.playerStart.z - 14);
+      scene.add(sign);
+      return sign;
+    }
+
+    function createWormWarningSign() {
+      const sign = createHintLabel(["TOO MUCH NOISE", "BRINGS THE WORM"], "#ffd58e", 7.2, 2.0);
+      sign.position.set(CONFIG.playerStart.x - 18, sampleGroundHeight(CONFIG.playerStart.x - 18, CONFIG.playerStart.z + 18) + 5.9, CONFIG.playerStart.z + 18);
+      scene.add(sign);
+      return sign;
+    }
+
+    function createSpiceCarrySign() {
+      const sign = createHintLabel(["YELLOW BACK CUBE", "= CARRYING SPICE"], "#ffe59a", 7.4, 2.0);
+      sign.position.set(CONFIG.playerStart.x - 10, sampleGroundHeight(CONFIG.playerStart.x - 10, CONFIG.playerStart.z - 22) + 5.6, CONFIG.playerStart.z - 22);
+      scene.add(sign);
+      return sign;
+    }
+
+    const mesaWeaponSign = createMesaWeaponSign();
+    const holtzmanWarningSign = createHoltzmanWarningSign();
+    const wormWarningSign = createWormWarningSign();
+    const spiceCarrySign = createSpiceCarrySign();
 	    const lasgunBeam = createLasgunBeam();
     const holtzmanExplosion = createHoltzmanExplosion();
     const lasgunRockFX = createLasgunRockFX();
@@ -1508,9 +1545,9 @@
 	      pushPatch(
 	        CONFIG.playerStart.x,
 	        CONFIG.playerStart.z,
-	        36,
-	        19,
-	        11.5,
+	        39,
+	        21,
+	        12,
 	        true,
 	        rng() * Math.PI * 2,
 	        0
@@ -2637,6 +2674,13 @@
       const dx = worldX - CONFIG.playerStart.x;
       const dz = worldZ - CONFIG.playerStart.z;
       const radius = 12;
+      return (dx * dx) + (dz * dz) <= radius * radius;
+    }
+
+    function isInsideStartMesaSafeZone(worldX, worldZ) {
+      const dx = worldX - CONFIG.playerStart.x;
+      const dz = worldZ - CONFIG.playerStart.z;
+      const radius = 41;
       return (dx * dx) + (dz * dz) <= radius * radius;
     }
 
@@ -6111,26 +6155,24 @@
 		      state.holtzmanExplosionDamageDealt = false;
 		      state.holtzmanExplosionPos.copy(pos);
 		      state.wormShake = CONFIG.wormShakeBreach * 1.4;
-      if (emitWormHotspot) {
+      const detonationSurface = getSurfaceType(pos.x, pos.z);
+      const wormEligible = emitWormHotspot
+        && detonationSurface === "sand"
+        && !isInsideStartMesaSafeZone(pos.x, pos.z);
+      if (wormEligible) {
         emitNoiseHotspot("atomic_holtzman", pos, 1.0, {
           radius: 540,
           ttl: 30,
           signLevel: 1.0,
         });
-        if (mp.connected) {
-          mp.emit("noiseHotspot", {
-            kind: "atomic_holtzman",
-            x: pos.x,
-            z: pos.z,
-            strength: 1.0,
-            radius: 540,
-            ttl: 30,
-            signLevel: 1.0,
-          });
-        }
       }
       if (emitNetwork && mp.connected) {
-        mp.emit("holtzmanDetonation", { x: pos.x, y: pos.y, z: pos.z });
+        mp.emit("holtzmanDetonation", {
+          x: pos.x,
+          y: pos.y,
+          z: pos.z,
+          surfaceType: detonationSurface,
+        });
       }
 		      emitNoiseImpulse(0.2);
 		    	      broadcastWormRadio("ATOMIC DETONATION — HOLTZMAN INTERACTION!");
@@ -6234,46 +6276,33 @@
 	            state.playerHealth = Math.max(0, state.playerHealth - CONFIG.holtzmanExplosionDamage * f);
 	          }
 	        }
-	        // Regular dummy
+	        // Practice targets and NPCs
 	        if (trainingDummy && !trainingDummy.dead) {
 	          const dDist = ePos.distanceTo(trainingDummy.group.position);
 	          if (dDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            hitTarget(trainingDummy, 2, trainingDummy.health);
+	            killHazardTarget(trainingDummy, 2.0);
 	          } else if (dDist < CONFIG.holtzmanExplosionDamageRadius) {
 	            const f = 1 - (dDist - CONFIG.holtzmanExplosionLethalRadius) /
 	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
-	            hitTarget(trainingDummy, 1.5, CONFIG.holtzmanExplosionDamage * f);
+	            hitTarget(trainingDummy, 1.5, CONFIG.holtzmanExplosionDamage * f, { silent: true });
 	          }
 	        }
-	        // Shielded dummies
 	        for (const sd of shieldedDummies) {
 	          if (!sd || sd.dead) continue;
 	          const sDist = ePos.distanceTo(sd.group.position);
 	          if (sDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            sd.dead = true;
-	            sd.deadFallTimer = 0;
-	            sd.respawnTimer = 10.0;
-	            sd.healthBarGroup.visible = false;
-	            if (sd.shieldSphere) sd.shieldSphere.visible = false;
+	            killHazardTarget(sd, 2.0);
 	          } else if (sDist < CONFIG.holtzmanExplosionDamageRadius) {
 	            const f = 1 - (sDist - CONFIG.holtzmanExplosionLethalRadius) /
 	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
-	            sd.health = Math.max(0, sd.health - CONFIG.holtzmanExplosionDamage * f);
-	            if (sd.health <= 0) {
-	              sd.dead = true;
-	              sd.deadFallTimer = 0;
-	              sd.respawnTimer = 10.0;
-	              sd.healthBarGroup.visible = false;
-	              if (sd.shieldSphere) sd.shieldSphere.visible = false;
-	            }
+	            hitTarget(sd, 1.5, CONFIG.holtzmanExplosionDamage * f, { silent: true, bypassShield: true });
 	          }
 	        }
-	        // NPCs (including shielded NPCs) take blast damage
 	        for (const npc of npcs) {
 	          if (!npc || npc.dead) continue;
 	          const nDist = ePos.distanceTo(npc.group.position);
 	          if (nDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            hitTarget(npc, 2.0, npc.health, { silent: true, bypassShield: true });
+	            killHazardTarget(npc, 2.0);
 	          } else if (nDist < CONFIG.holtzmanExplosionDamageRadius) {
 	            const f = 1 - (nDist - CONFIG.holtzmanExplosionLethalRadius) /
 	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
@@ -7408,6 +7437,35 @@
       if (target.onKill) target.onKill();
     }
 
+    function killHazardTarget(target, intensity = 1.8) {
+      if (!target || target.dead) return;
+      hitTarget(target, intensity, target.health, { silent: true, bypassShield: true });
+    }
+
+    function killTargetsInRadius(center, radius) {
+      const radiusSq = radius * radius;
+
+      if (trainingDummy && !trainingDummy.dead) {
+        const dx = trainingDummy.group.position.x - center.x;
+        const dz = trainingDummy.group.position.z - center.z;
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(trainingDummy, 1.8);
+      }
+
+      for (const sd of shieldedDummies) {
+        if (!sd || sd.dead) continue;
+        const dx = sd.group.position.x - center.x;
+        const dz = sd.group.position.z - center.z;
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(sd, 1.8);
+      }
+
+      for (const npc of npcs) {
+        if (!npc || npc.dead) continue;
+        const dx = npc.group.position.x - center.x;
+        const dz = npc.group.position.z - center.z;
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(npc, 1.8);
+      }
+    }
+
 	    function respawnTrainingDummy() {
 	      trainingDummy.health = CONFIG.dummyMaxHealth;
 	      trainingDummy.dead = false;
@@ -7476,6 +7534,16 @@
       const halfWorld = (CONFIG.worldSize * 0.5) - CONFIG.spiceNodeEdgePadding;
       const minSpacingSq = CONFIG.spiceNodeMinSpacing * CONFIG.spiceNodeMinSpacing;
       let reservedInitialPlumeSpawn = null;
+
+      function rollNodeYield(type, nodeId, cycle = 0, tutorial = false) {
+        if (tutorial || nodeId === CONFIG.spiceTutorialNodeId) {
+          const localRng = mulberry32(((MAP_SEED ^ 0x2b7e6a11) + (cycle * 0x85ebca6b)) >>> 0);
+          return Math.floor(randomRange(CONFIG.spiceTutorialYieldMin, CONFIG.spiceTutorialYieldMax + 1, localRng));
+        }
+        const yMin = type === "plume" ? CONFIG.spicePlumeYieldMin : CONFIG.spiceSmallYieldMin;
+        const yMax = type === "plume" ? CONFIG.spicePlumeYieldMax : CONFIG.spiceSmallYieldMax;
+        return Math.floor(randomRange(yMin, yMax + 1, rng));
+      }
 
       function isValidSpiceNodeSpawn(x, z, excludeNode = null, spawnType = "small") {
         let blocked = false;
@@ -7586,15 +7654,38 @@
         return null;
       }
 
+      function findTutorialSpiceSpawn(excludeNode = null) {
+        const originX = CONFIG.playerStart.x;
+        const originZ = CONFIG.playerStart.z;
+        const distances = [92, 104, 116];
+        const angles = [
+          -0.16 * Math.PI,
+          0.16 * Math.PI,
+          -0.3 * Math.PI,
+          0.3 * Math.PI,
+          -0.42 * Math.PI,
+          0.42 * Math.PI,
+          0,
+        ];
+
+        for (const distance of distances) {
+          for (const angle of angles) {
+            const x = originX + (Math.cos(angle) * distance);
+            const z = originZ + (Math.sin(angle) * distance);
+            if (!isValidSpiceNodeSpawn(x, z, excludeNode, "small")) continue;
+            return { x, z };
+          }
+        }
+
+        return findSpiceNodeSpawnNearStart(excludeNode, "small") || findSpiceNodeSpawn(excludeNode, "small");
+      }
+
       function placeSpiceNode(node, x, z) {
         node.x = x;
         node.z = z;
         node.phase = randomRange(0, Math.PI * 2, rng);
         node.seed = randomRange(0, Math.PI * 2, rng);
-        // Roll fresh yield based on patch type
-        const yMin = node.type === "plume" ? CONFIG.spicePlumeYieldMin : CONFIG.spiceSmallYieldMin;
-        const yMax = node.type === "plume" ? CONFIG.spicePlumeYieldMax : CONFIG.spiceSmallYieldMax;
-        node.totalYield = Math.floor(randomRange(yMin, yMax + 1, rng));
+        node.totalYield = rollNodeYield(node.type, node.id, node.respawnCount, node.tutorial);
         node.remaining = node.totalYield;
         node.group.position.set(x, sampleGroundHeight(x, z), z);
         updateSpicePatchVisual(node);
@@ -7791,9 +7882,15 @@
 
       function makeNode(type, id, active) {
         const meshes = buildNodeMeshes();
-        const yMin = type === "plume" ? CONFIG.spicePlumeYieldMin : CONFIG.spiceSmallYieldMin;
-        const yMax = type === "plume" ? CONFIG.spicePlumeYieldMax : CONFIG.spiceSmallYieldMax;
-        const totalYield = Math.floor(randomRange(yMin, yMax + 1, rng));
+        const tutorial = id === CONFIG.spiceTutorialNodeId;
+        const totalYield = rollNodeYield(type, id, 0, tutorial);
+        const tutorialLabel = tutorial
+          ? createHintLabel(["SPICE", "v"], "#ffe4a4", 4.8, 1.7)
+          : null;
+        if (tutorialLabel) {
+          tutorialLabel.position.set(0, 6.3, 0);
+          meshes.group.add(tutorialLabel);
+        }
         return {
           x: 0, z: 0,
           ...meshes,
@@ -7803,12 +7900,23 @@
           active: false,
           respawnTimer: 0,
           respawnCount: 0,
+          tutorial,
+          tutorialLabel,
           type,
           totalYield,
           remaining: totalYield,
           decayTimer: -1,
           id,
         };
+      }
+
+      const tutorialSpawn = findTutorialSpiceSpawn();
+      if (tutorialSpawn) {
+        const tutorialNode = makeNode("small", nodes.length);
+        placeSpiceNode(tutorialNode, tutorialSpawn.x, tutorialSpawn.z);
+        tutorialNode.active = true;
+        tutorialNode.group.visible = true;
+        nodes.push(tutorialNode);
       }
 
       // Roll for initial plume (15% chance, uses world seed)
@@ -7850,6 +7958,10 @@
           updateSpicePatchVisual(node);
         },
         relocateNode(node) {
+          if (node.tutorial) {
+            placeSpiceNode(node, node.x, node.z);
+            return true;
+          }
           const spawn = findSpiceNodeSpawn(node, node.type);
           if (!spawn) return false;
           placeSpiceNode(node, spawn.x, spawn.z);
@@ -7857,6 +7969,10 @@
         },
         // Deterministic relocation — all clients pick the same position for a given respawnCount
         relocateNodeSeeded(node, respawnCount) {
+          if (node.tutorial) {
+            placeSpiceNode(node, node.x, node.z);
+            return true;
+          }
           const seed = ((MAP_SEED ^ (node.id * 0x9e3779b9) ^ (respawnCount * 0x517cc1b7)) >>> 0);
           const spawn = findSpiceNodeSpawnSeeded(seed, node, node.type);
           if (!spawn) return false;
@@ -8183,7 +8299,7 @@
     function createBankLabel(color = "#ffd07a") {
       const canvas = document.createElement("canvas");
       canvas.width = 760;
-      canvas.height = 200;
+      canvas.height = 240;
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "rgba(18, 12, 6, 0.66)";
@@ -8196,9 +8312,11 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.font = "700 68px Arial";
-      ctx.fillText("SIETCH BANK", canvas.width * 0.5, canvas.height * 0.42);
+      ctx.fillText("SIETCH BANK", canvas.width * 0.5, canvas.height * 0.36);
       ctx.font = "700 40px Arial";
-      ctx.fillText("DEPOSIT SPICE (E)", canvas.width * 0.5, canvas.height * 0.72);
+      ctx.fillText("DEPOSIT SPICE (E)", canvas.width * 0.5, canvas.height * 0.62);
+      ctx.font = "700 24px Arial";
+      ctx.fillText("DEPOSITING RESTORES HEALTH + MAULA", canvas.width * 0.5, canvas.height * 0.78);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -8210,7 +8328,81 @@
         alphaTest: 0.08,
       });
       const sprite = new THREE.Sprite(material);
-      sprite.scale.set(8.6, 2.25, 1);
+      sprite.scale.set(8.8, 2.8, 1);
+      return sprite;
+    }
+
+    function createHintLabel(lines, color = "#ffe0a2", width = 7.8, height = 2.25) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 700;
+      canvas.height = 220;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(18, 12, 6, 0.64)";
+      ctx.fillRect(14, 28, canvas.width - 28, canvas.height - 56);
+      ctx.strokeStyle = "rgba(255, 210, 140, 0.66)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(14, 28, canvas.width - 28, canvas.height - 56);
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const safeLines = Array.isArray(lines) ? lines.slice(0, 3) : [String(lines || "")];
+      const top = safeLines.length === 1 ? 110 : 78;
+      safeLines.forEach((line, index) => {
+        ctx.font = index === 0 ? "700 42px Arial" : "700 28px Arial";
+        ctx.fillText(line, canvas.width * 0.5, top + (index * 54));
+      });
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        alphaTest: 0.08,
+      });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(width, height, 1);
+      return sprite;
+    }
+
+    function createSpiceMarkerLabel(color = "#ffe4a4") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 700;
+      canvas.height = 220;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(18, 12, 6, 0.64)";
+      ctx.fillRect(14, 28, canvas.width - 28, canvas.height - 56);
+      ctx.strokeStyle = "rgba(255, 210, 140, 0.66)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(14, 28, canvas.width - 28, canvas.height - 56);
+
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "700 42px Arial";
+      ctx.fillText("SPICE", canvas.width * 0.5, 84);
+
+      ctx.beginPath();
+      ctx.moveTo(canvas.width * 0.5, 156);
+      ctx.lineTo((canvas.width * 0.5) - 16, 126);
+      ctx.lineTo((canvas.width * 0.5) + 16, 126);
+      ctx.closePath();
+      ctx.fill();
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        alphaTest: 0.08,
+      });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(4.8, 1.7, 1);
       return sprite;
     }
 
@@ -9170,15 +9362,7 @@
               broadcastWormRadio("Worm consumed the thumper.");
             }
           }
-          const npcKillRadiusSq = CONFIG.wormKillRadius * CONFIG.wormKillRadius;
-          for (const npc of npcs) {
-            if (!npc || npc.dead) continue;
-            const ndx = npc.group.position.x - state.wormTarget.x;
-            const ndz = npc.group.position.z - state.wormTarget.z;
-            if ((ndx * ndx) + (ndz * ndz) <= npcKillRadiusSq) {
-              hitTarget(npc, 1.8, npc.health, { silent: true, bypassShield: true });
-            }
-	          }
+          killTargetsInRadius(state.wormTarget, CONFIG.wormKillRadius);
 	        }
 		        return;
         } catch (error) {
@@ -9436,16 +9620,7 @@
           beginDevour();
           return;
         }
-        // NPCs in kill zone
-        const npcKillRadiusSq = CONFIG.wormKillRadius * CONFIG.wormKillRadius;
-        for (const npc of npcs) {
-          if (!npc || npc.dead) continue;
-          const ndx = npc.group.position.x - state.wormTarget.x;
-          const ndz = npc.group.position.z - state.wormTarget.z;
-          if ((ndx * ndx) + (ndz * ndz) <= npcKillRadiusSq) {
-            hitTarget(npc, 1.8, npc.health, { silent: true, bypassShield: true });
-          }
-        }
+        killTargetsInRadius(state.wormTarget, CONFIG.wormKillRadius);
       }
 
       state.wormTimer = Math.max(0, state.wormTimer - delta);
@@ -9674,7 +9849,7 @@
         armorMat, mohawkMat, flashMats,
         health: 100, maxHealth: 100,
         dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0, wobble: 0, poisonTimer: 0,
-        respawnDelay: 8,
+        respawnDelay: CONFIG.npcRespawnDelay,
         colliderRadius: 0.5,
         colliderHeight: 2.2,
         bodyHitRadius: 1.4,

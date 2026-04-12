@@ -16,6 +16,9 @@ const SPICE_PLUME_SPAWN_CHANCE = 0.35;   // probability per check
 const SPICE_PLUME_COOLDOWN = 35;         // seconds after a plume is depleted
 const SPICE_DECAY_SECONDS = 45;          // seconds after first harvest before node auto-depletes
 const SPICE_MAX_CARRY = 10;
+const SPICE_TUTORIAL_NODE_ID = 0;
+const SPICE_TUTORIAL_YIELD_MIN = 1;
+const SPICE_TUTORIAL_YIELD_MAX = 3;
 const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
 const WORLD_SIZE = 1500;
@@ -34,6 +37,7 @@ const PLAYER_SPAWN_CENTER_X = -380;
 const PLAYER_SPAWN_CENTER_Z = -380;
 const PLAYER_SPAWN_RADIUS = 18;
 const PLAYER_SPAWN_MIN_SEPARATION = 6;
+const START_MESA_SAFE_RADIUS = 41;
 const DEFAULT_MAP_SEED = Math.floor(Math.random() * 0x1000000) >>> 0;
 const SERVER_START_MS = Date.now();
 
@@ -79,6 +83,12 @@ function rollSpiceYield(type, nodeId, cycle = 0) {
   const min = type === "plume" ? SPICE_PLUME_YIELD_MIN : SPICE_SMALL_YIELD_MIN;
   const max = type === "plume" ? SPICE_PLUME_YIELD_MAX : SPICE_SMALL_YIELD_MAX;
   return Math.floor(randomRange(min, max + 1, rand));
+}
+
+function rollTutorialSpiceYield(cycle = 0) {
+  const seed = ((MAP_SEED ^ 0x2b7e6a11) + (cycle * 0x85ebca6b)) >>> 0;
+  const rand = mulberry32(seed);
+  return Math.floor(randomRange(SPICE_TUTORIAL_YIELD_MIN, SPICE_TUTORIAL_YIELD_MAX + 1, rand));
 }
 
 const hasInitialSpicePlume = mulberry32((MAP_SEED ^ 0x1f4e2c73) >>> 0)() < SPICE_INITIAL_PLUME_CHANCE;
@@ -128,10 +138,14 @@ const socketSessionTokens = new Map(); // socketId -> playerToken
 // Spice nodes: server owns active state, remaining yield, type, and respawn timers.
 // Positions are still determined client-side from MAP_SEED for now.
 const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => {
-  const type = hasInitialSpicePlume && i === (SPICE_NODE_COUNT - 1) ? "plume" : "small";
-  const totalYield = rollSpiceYield(type, i, 0);
+  const tutorial = i === SPICE_TUTORIAL_NODE_ID;
+  const type = tutorial
+    ? "small"
+    : (hasInitialSpicePlume && i === (SPICE_NODE_COUNT - 1) ? "plume" : "small");
+  const totalYield = tutorial ? rollTutorialSpiceYield(0) : rollSpiceYield(type, i, 0);
   return {
     id: i,
+    tutorial,
     active: true,
     respawnTimer: 0,
     decayTimer: -1,
@@ -181,6 +195,12 @@ function assignTeam() {
 
 function getWorldTimeSeconds() {
   return (Date.now() - SERVER_START_MS) / 1000;
+}
+
+function isInsideStartMesaSafeZone(x, z) {
+  const dx = x - PLAYER_SPAWN_CENTER_X;
+  const dz = z - PLAYER_SPAWN_CENTER_Z;
+  return (dx * dx) + (dz * dz) <= (START_MESA_SAFE_RADIUS * START_MESA_SAFE_RADIUS);
 }
 
 function sanitizePlayerName(raw) {
@@ -875,7 +895,9 @@ setInterval(() => {
         node.decayTimer = -1;
         node.type = "small";
         node.respawnCount += 1;
-        node.totalYield = rollSpiceYield(node.type, node.id, node.respawnCount);
+        node.totalYield = node.tutorial
+          ? rollTutorialSpiceYield(node.respawnCount)
+          : rollSpiceYield(node.type, node.id, node.respawnCount);
         node.remaining = node.totalYield;
         changed = true;
       }
@@ -1143,6 +1165,7 @@ io.on("connection", (socket) => {
     if (!data) return;
     const p = players.get(socket.id);
     const kind = String(data.kind || "generic");
+    if (kind === "atomic_holtzman") return;
     const x = Number(data.x);
     const z = Number(data.z);
     const strength = clamp(Number(data.strength) || 0, 0, 1);
@@ -1181,6 +1204,7 @@ io.on("connection", (socket) => {
 
   socket.on("holtzmanDetonation", (data) => {
     if (!data) return;
+    const p = players.get(socket.id);
     const now = Date.now();
     if (now - lastHoltzmanDetonationMs < HOLTZMAN_EVENT_COOLDOWN_MS) return;
     lastHoltzmanDetonationMs = now;
@@ -1188,24 +1212,31 @@ io.on("connection", (socket) => {
     const y = Number(data.y);
     const z = Number(data.z);
     if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    const reportedSurface = data.surfaceType === "rock"
+      ? "rock"
+      : (data.surfaceType === "sand" ? "sand" : null);
+    const detonationSurface = reportedSurface || (p?.surfaceType === "sand" ? "sand" : "rock");
+    const wormEligible = detonationSurface === "sand";
 
     // Server-side atomic hotspot fallback so worm reaction does not depend on
     // client hotspot emit timing/connectivity.
-    pushNoiseHotspot("atomic_holtzman", x, z, 1.0, {
-      radius: 540,
-      ttl: 30,
-      signLevel: 1.0,
-    });
-    if (worm.phase === "idle" && worm.state === "off_map") {
-      worm.cooldown = 0;
-      worm.noisePressure = Math.max(worm.noisePressure, WORM_CFG.noisePressureSpawnThreshold);
-      spawnWormOutsideCluster({ x, z, source: "atomic_holtzman" }, getWorldTimeSeconds());
-    } else if (
-      worm.phase === "idle"
-      && (worm.state === "inbound" || worm.state === "hunting")
-      && worm.targetSource !== "atomic_holtzman"
-    ) {
-      trackWormTargetHotspot({ x, z, source: "atomic_holtzman" }, WORM_TICK_MS / 1000);
+    if (wormEligible) {
+      pushNoiseHotspot("atomic_holtzman", x, z, 1.0, {
+        radius: 540,
+        ttl: 30,
+        signLevel: 1.0,
+      });
+      if (worm.phase === "idle" && worm.state === "off_map") {
+        worm.cooldown = 0;
+        worm.noisePressure = Math.max(worm.noisePressure, WORM_CFG.noisePressureSpawnThreshold);
+        spawnWormOutsideCluster({ x, z, source: "atomic_holtzman" }, getWorldTimeSeconds());
+      } else if (
+        worm.phase === "idle"
+        && (worm.state === "inbound" || worm.state === "hunting")
+        && worm.targetSource !== "atomic_holtzman"
+      ) {
+        trackWormTargetHotspot({ x, z, source: "atomic_holtzman" }, WORM_TICK_MS / 1000);
+      }
     }
 
     for (const p of players.values()) {
@@ -1239,7 +1270,7 @@ io.on("connection", (socket) => {
     const nodeId = typeof data === "object" && data !== null ? data.id : data;
     const node = spiceNodes[nodeId];
     if (!node || !node.active) return;
-    const nextType = data?.type === "plume" ? "plume" : "small";
+    const nextType = node.tutorial ? "small" : (data?.type === "plume" ? "plume" : "small");
     const reportedTotalYield = Math.max(0, Math.floor(Number(data?.totalYield) || 0));
     const takenAmount = Math.max(0, Math.floor(Number(data?.takenAmount) || 0));
     const wasPristine = node.remaining === node.totalYield;
