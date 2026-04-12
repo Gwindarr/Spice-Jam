@@ -651,7 +651,7 @@
     <div class="panel">
       <h1 id="overlayTitle">Spice Jam</h1>
       <p id="overlayBody">Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.</p>
-      <p id="overlayHint">Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, Hold E in a patch, Q to deploy a thumper.</p>
+      <p id="overlayHint">Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, Hold E in a patch, Q to deploy a thumper. Lasguns and shields are a dangerous mix.</p>
       <div id="overlayCta" class="cta">Click to Play</div>
     </div>
   </div>
@@ -1101,7 +1101,46 @@
     const queryParams = new URLSearchParams(window.location.search);
     const _urlSeed = queryParams.get("seed");
     const DEFAULT_MAP_SEED = 0x758d98;
-    const MAP_SEED = _urlSeed ? (parseInt(_urlSeed, 16) >>> 0) : DEFAULT_MAP_SEED;
+    const LAST_SERVER_SEED_STORAGE_KEY = "spice_last_server_seed";
+    const LAST_SERVER_SEED_TTL_MS = 1000 * 60 * 60 * 2;
+
+    function readStoredServerSeed() {
+      try {
+        const raw = localStorage.getItem(LAST_SERVER_SEED_STORAGE_KEY);
+        if (!raw) return null;
+        const parsedRecord = JSON.parse(raw);
+        if (!parsedRecord || typeof parsedRecord !== "object") return null;
+        const savedAt = Number(parsedRecord.savedAt);
+        const parsedSeed = parseInt(String(parsedRecord.seed || ""), 16);
+        if (!Number.isFinite(savedAt) || !Number.isFinite(parsedSeed)) return null;
+        if ((Date.now() - savedAt) > LAST_SERVER_SEED_TTL_MS) {
+          localStorage.removeItem(LAST_SERVER_SEED_STORAGE_KEY);
+          return null;
+        }
+        return (parsedSeed >>> 0) & 0xFFFFFF;
+      } catch {
+        return null;
+      }
+    }
+
+    function rememberServerSeed(seed) {
+      const parsed = Number(seed);
+      if (!Number.isFinite(parsed)) return;
+      try {
+        localStorage.setItem(
+          LAST_SERVER_SEED_STORAGE_KEY,
+          JSON.stringify({
+            seed: (parsed >>> 0).toString(16).padStart(6, "0"),
+            savedAt: Date.now(),
+          })
+        );
+      } catch {}
+    }
+
+    const storedServerSeed = readStoredServerSeed();
+    const MAP_SEED = _urlSeed
+      ? (parseInt(_urlSeed, 16) >>> 0)
+      : (storedServerSeed ?? DEFAULT_MAP_SEED);
     const rng = mulberry32(MAP_SEED);
     const portalInboundParams = queryParams;
 
@@ -1344,11 +1383,20 @@
 		    placePlayerOnGround();
     portalSystem.applyInitialSpawn();
     const mesaNpcSpawns = [
-      { dx: 48, dz: 18, shielded: false },   // near
-      { dx: -56, dz: 26, shielded: false },  // near
+      {
+        dx: 48, dz: 18, shielded: false,
+        patrol: { type: "line", dirX: 1, dirZ: 0, range: 11, speed: 0.9 },
+      },   // near lateral patrol
+      {
+        dx: -56, dz: 26, shielded: false,
+        patrol: { type: "line", dirX: 0, dirZ: 1, range: 9, speed: 1.05 },
+      },  // near forward/back patrol
       { dx: 74, dz: -14, shielded: false },  // mid
       { dx: -70, dz: 54, shielded: true },   // mid shielded (visible side)
-      { dx: 102, dz: 42, shielded: false },  // farther
+      {
+        dx: 102, dz: 42, shielded: false,
+        patrol: { type: "circle", radius: 10, speed: 0.55 },
+      },  // farther circular patrol
       { dx: 26, dz: 88, shielded: true },    // farther shielded (in front arc)
     ];
     for (const spawn of mesaNpcSpawns) {
@@ -1356,7 +1404,7 @@
         createNpc(
           CONFIG.playerStart.x + spawn.dx,
           CONFIG.playerStart.z + spawn.dz,
-          { hasShield: spawn.shielded }
+          { hasShield: spawn.shielded, patrol: spawn.patrol }
         )
       );
     }
@@ -6541,8 +6589,8 @@
         return { moon, glowOuter, glowInner, orbitPhase, orbitTilt, orbitRadius, size };
       }
 
-      const moonA = makeMoon(0xffe6b8, Math.PI * 0.12, 0.34, 520, 27.5);
-      const moonB = makeMoon(0xd6e9ff, Math.PI * 0.49, -0.18, 500, 11.5);
+      const moonA = makeMoon(0xfff2d6, Math.PI * 0.12, 0.34, 480, 36);
+      const moonB = makeMoon(0xe3efff, Math.PI * 0.49, -0.18, 470, 13.5);
 
       return { mesh, mat, moonA, moonB };
     }
@@ -9602,6 +9650,17 @@
       root.add(headDot);
 
       const spawnPos = new THREE.Vector3(spawnX, groundY, spawnZ);
+      const patrol = opts.patrol
+        ? {
+            type: opts.patrol.type === "circle" ? "circle" : "line",
+            dirX: Number(opts.patrol.dirX) || 1,
+            dirZ: Number(opts.patrol.dirZ) || 0,
+            range: Math.max(2, Number(opts.patrol.range) || 8),
+            radius: Math.max(2, Number(opts.patrol.radius) || 8),
+            speed: Math.max(0.1, Number(opts.patrol.speed) || 0.8),
+            origin: spawnPos.clone(),
+          }
+        : null;
       const npc = {
         root, group: root,
         targetPivot, headDot,
@@ -9617,6 +9676,7 @@
         bodyHitRadius: 1.4,
         headHitRadius: 0.55,
         spawnPos, phaseOffset: Math.random() * Math.PI * 2,
+        patrol,
         shieldActive: !!opts.hasShield,
         shieldSphere,
         shieldHitFlash: 0,
@@ -9629,6 +9689,28 @@
     }
 
     function respawnNpcAtRandom(npc) {
+      if (npc.patrol?.origin) {
+        const ox = npc.patrol.origin.x;
+        const oz = npc.patrol.origin.z;
+        const oy = samplePlayerGroundHeight(ox, oz);
+        npc.root.position.set(ox, oy, oz);
+        npc.root.rotation.set(0, Math.random() * Math.PI * 2, 0);
+        npc.spawnPos.set(ox, oy, oz);
+        npc.health = npc.maxHealth;
+        npc.dead = false;
+        npc.deadFallTimer = 0;
+        npc.respawnTimer = 0;
+        npc.hitFlash = 0;
+        npc.shieldHitFlash = 0;
+        npc.poisonTimer = 0;
+        npc._dpsAccum = undefined; npc._dpsLastEmit = undefined;
+        npc._poisonAccum = undefined; npc._poisonLastEmit = undefined;
+        if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
+        if (npc.root.userData.spiceGlowMesh) npc.root.userData.spiceGlowMesh.visible = true;
+        if (npc.shieldSphere) npc.shieldSphere.visible = npc.shieldActive;
+        return;
+      }
+
       // Try up to 12 candidate spots; reject any that intersect rock geometry
       const radius = npc.colliderRadius ?? 0.5;
       const height = npc.colliderHeight ?? 2.2;
@@ -9665,6 +9747,43 @@
       if (npc.shieldSphere) npc.shieldSphere.visible = npc.shieldActive;
     }
 
+    function updateNpcPatrol(npc) {
+      if (!npc.patrol) return;
+
+      const patrolTime = state.elapsed * npc.patrol.speed + npc.phaseOffset;
+      let nextX = npc.patrol.origin.x;
+      let nextZ = npc.patrol.origin.z;
+      let faceX = Math.cos(npc.root.rotation.y);
+      let faceZ = Math.sin(npc.root.rotation.y);
+
+      if (npc.patrol.type === "circle") {
+        const angle = patrolTime;
+        nextX += Math.cos(angle) * npc.patrol.radius;
+        nextZ += Math.sin(angle) * npc.patrol.radius;
+        faceX = -Math.sin(angle);
+        faceZ = Math.cos(angle);
+      } else {
+        const dir = Math.hypot(npc.patrol.dirX, npc.patrol.dirZ) || 1;
+        const axisX = npc.patrol.dirX / dir;
+        const axisZ = npc.patrol.dirZ / dir;
+        const offset = Math.sin(patrolTime) * npc.patrol.range;
+        nextX += axisX * offset;
+        nextZ += axisZ * offset;
+        const travelSign = Math.cos(patrolTime) >= 0 ? 1 : -1;
+        faceX = axisX * travelSign;
+        faceZ = axisZ * travelSign;
+      }
+
+      const nextY = samplePlayerGroundHeight(nextX, nextZ);
+      npc.root.position.x = nextX;
+      npc.root.position.z = nextZ;
+      npc.root.position.y = nextY;
+      npc.spawnPos.set(nextX, nextY, nextZ);
+      if ((faceX * faceX) + (faceZ * faceZ) > 0.0001) {
+        npc.root.rotation.y = Math.atan2(faceZ, faceX);
+      }
+    }
+
     function updateNpcs(delta) {
       for (const npc of npcs) {
         npc.hitFlash = Math.max(0, npc.hitFlash - delta * 1.8);
@@ -9680,6 +9799,8 @@
           if (npc.respawnTimer <= 0) respawnNpcAtRandom(npc);
           continue;
         }
+
+        updateNpcPatrol(npc);
 
         // Poison damage tick
         if (npc.poisonTimer > 0) {
@@ -9852,7 +9973,7 @@
 	      setOverlay(
 	        "Spice Jam",
 	        portalBody,
-	        "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper.",
+	        "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper. Lasguns and shields are a dangerous mix.",
 	        "Click to Play"
 	      );
 	    }
@@ -10286,8 +10407,8 @@
       const maA = moonBaseAngle + moonA.orbitPhase;
       const moonDirA = tempMoonDirA.set(
         Math.cos(maA),
-        THREE.MathUtils.clamp(Math.sin(maA + moonA.orbitTilt) * 0.7 + 0.2, -0.32, 0.94),
-        Math.sin(maA) * 0.74
+        THREE.MathUtils.clamp((Math.sin(maA + moonA.orbitTilt) * 0.46) - 0.1, -0.42, 0.46),
+        Math.sin(maA) * 0.82
       ).normalize();
       moonA.moon.position.copy(player.position).addScaledVector(moonDirA, moonA.orbitRadius);
 
@@ -10298,14 +10419,17 @@
       moonDirB.normalize();
       moonB.moon.position
         .copy(moonA.moon.position)
-        .addScaledVector(moonDirB, 128 + (Math.sin(worldClock * 0.05) * 10))
-        .addScaledVector(tempUp, 52 + (Math.sin((worldClock * 0.04) + 1.4) * 6));
+        .addScaledVector(moonDirB, 142 + (Math.sin(worldClock * 0.05) * 10))
+        .addScaledVector(tempUp, 24 + (Math.sin((worldClock * 0.04) + 1.4) * 4));
 
-      const moonVis = THREE.MathUtils.smoothstep(nightFactor, 0.18, 0.92);
+      // Keep the moons readable through the whole night instead of letting them
+      // slowly wash in and out with the broader day/night lighting blend.
+      const moonPresence = THREE.MathUtils.smoothstep(nightFactor, 0.1, 0.26);
+      const moonVis = moonPresence > 0 ? THREE.MathUtils.lerp(0.72, 1, moonPresence) : 0;
       const moonPulseA = 0.92 + (Math.sin(worldClock * 0.35) * 0.04);
       const moonPulseB = 0.90 + (Math.sin((worldClock * 0.55) + 1.7) * 0.06);
       moonA.moon.material.opacity = moonVis;
-      moonB.moon.material.opacity = moonVis * 0.92;
+      moonB.moon.material.opacity = moonVis * 0.96;
       moonA.moon.visible = moonVis > 0.02;
       moonB.moon.visible = moonVis > 0.02;
       moonA.glowOuter.position.copy(moonA.moon.position);
@@ -10313,13 +10437,13 @@
       moonB.glowOuter.position.copy(moonB.moon.position);
       moonB.glowInner.position.copy(moonB.moon.position);
       moonA.glowOuter.material.opacity = moonVis * 1.0 * moonPulseA;
-      moonA.glowInner.material.opacity = moonVis * 0.78 * moonPulseA;
-      moonB.glowOuter.material.opacity = moonVis * 0.84 * moonPulseB;
-      moonB.glowInner.material.opacity = moonVis * 0.62 * moonPulseB;
-      const moonAOuterScale = moonA.size * (4.6 + (Math.sin(worldClock * 0.22) * 0.14));
-      const moonAInnerScale = moonA.size * (2.45 + (Math.sin(worldClock * 0.3) * 0.1));
-      const moonBOuterScale = moonB.size * (4.4 + (Math.sin((worldClock * 0.28) + 0.8) * 0.16));
-      const moonBInnerScale = moonB.size * (2.35 + (Math.sin((worldClock * 0.34) + 1.1) * 0.12));
+      moonA.glowInner.material.opacity = moonVis * 0.92 * moonPulseA;
+      moonB.glowOuter.material.opacity = moonVis * 0.95 * moonPulseB;
+      moonB.glowInner.material.opacity = moonVis * 0.74 * moonPulseB;
+      const moonAOuterScale = moonA.size * (5.4 + (Math.sin(worldClock * 0.22) * 0.18));
+      const moonAInnerScale = moonA.size * (2.9 + (Math.sin(worldClock * 0.3) * 0.12));
+      const moonBOuterScale = moonB.size * (4.9 + (Math.sin((worldClock * 0.28) + 0.8) * 0.18));
+      const moonBInnerScale = moonB.size * (2.6 + (Math.sin((worldClock * 0.34) + 1.1) * 0.14));
       moonA.glowOuter.scale.set(moonAOuterScale, moonAOuterScale, 1);
       moonA.glowInner.scale.set(moonAInnerScale, moonAInnerScale, 1);
       moonB.glowOuter.scale.set(moonBOuterScale, moonBOuterScale, 1);
@@ -10962,6 +11086,7 @@
       socket.on("seedMismatch", ({ seed }) => {
         const parsedSeed = Number(seed);
         if (!Number.isFinite(parsedSeed)) return;
+        rememberServerSeed(parsedSeed);
         const params = new URLSearchParams(window.location.search);
         params.set("seed", (parsedSeed >>> 0).toString(16).padStart(6, "0"));
         window.location.search = params.toString();
@@ -10972,10 +11097,14 @@
         mp.team = team;
         // If server has a canonical seed and ours differs, reload with correct seed
         if (snapshot.seed && snapshot.seed !== MAP_SEED) {
+          rememberServerSeed(snapshot.seed);
           const params = new URLSearchParams(window.location.search);
           params.set("seed", snapshot.seed.toString(16).padStart(6, "0"));
           window.location.search = params.toString();
           return;
+        }
+        if (snapshot.seed) {
+          rememberServerSeed(snapshot.seed);
         }
         stripSeedFromUrl();
         // Spawn existing players

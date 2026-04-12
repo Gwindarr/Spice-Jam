@@ -34,7 +34,7 @@ const PLAYER_SPAWN_CENTER_X = -380;
 const PLAYER_SPAWN_CENTER_Z = -380;
 const PLAYER_SPAWN_RADIUS = 18;
 const PLAYER_SPAWN_MIN_SEPARATION = 6;
-const DEFAULT_MAP_SEED = 0x758d98;
+const DEFAULT_MAP_SEED = Math.floor(Math.random() * 0x1000000) >>> 0;
 const SERVER_START_MS = Date.now();
 
 function mulberry32(seed) {
@@ -1366,5 +1366,7 @@ io.on("connection", (socket) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`Spice Jam server listening on :${PORT}`);
+  console.log(
+    `Spice Jam server listening on :${PORT} (seed=${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")})`
+  );
 });
