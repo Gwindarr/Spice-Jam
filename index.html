@@ -546,6 +546,10 @@
       color: #55ee66;
       font-size: 20px;
     }
+    .damage-number.spice-pickup {
+      color: #f0a830;
+      font-size: 28px;
+    }
     @keyframes damageFloat {
       0%   { opacity: 0; transform: translate(-50%, 0%) scale(0.6); }
       15%  { opacity: 1; transform: translate(-50%, -120%) scale(1.25); }
@@ -9220,7 +9224,7 @@
       }
     }
 
-    function spawnDroppedSpice(px, pz, amount = 1) {
+    function spawnDroppedSpice(px, pz, amount = 1, serverDropId = null) {
       const groundY = samplePlayerGroundHeight(px, pz);
       const mat = new THREE.MeshStandardMaterial({
         color: 0xc4780a,
@@ -9235,7 +9239,28 @@
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.5), mat);
       mesh.position.set(px, groundY + 0.08, pz);
       scene.add(mesh);
-      droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08, amount });
+      droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08, amount, dropId: serverDropId });
+    }
+
+    function removeDropById(dropId) {
+      for (let i = droppedSpicePickups.length - 1; i >= 0; i--) {
+        if (droppedSpicePickups[i].dropId === dropId) {
+          scene.remove(droppedSpicePickups[i].mesh);
+          droppedSpicePickups[i].mat.dispose();
+          droppedSpicePickups.splice(i, 1);
+          return;
+        }
+      }
+    }
+
+    function triggerSpicePickupNumber(amount) {
+      const el = document.createElement("div");
+      el.className = "damage-number spice-pickup";
+      el.textContent = "+" + amount + " Spice";
+      el.style.left = (window.innerWidth * 0.5) + "px";
+      el.style.top = (window.innerHeight * 0.45) + "px";
+      ui.damageNumbers.appendChild(el);
+      setTimeout(() => el.remove(), 1000);
     }
 
     const DROPPED_SPICE_DECAY = 15;
@@ -9267,12 +9292,22 @@
           const dx = player.position.x - drop.mesh.position.x;
           const dz = player.position.z - drop.mesh.position.z;
           if (dx * dx + dz * dz <= DROPPED_SPICE_PICKUP_RADIUS_SQ) {
-            const take = Math.min(drop.amount, CONFIG.spiceMaxCarry - state.spiceCarry);
-            state.spiceCarry += take;
-            broadcastWormRadio("Spice recovered from fallen warrior.");
-            scene.remove(drop.mesh);
-            drop.mat.dispose();
-            droppedSpicePickups.splice(i, 1);
+            if (mp.connected && drop.dropId != null) {
+              // Ask server to validate pickup (only once)
+              if (!drop.pickupPending) {
+                drop.pickupPending = true;
+                mp.emit("pickupSpiceDrop", drop.dropId);
+              }
+            } else {
+              // Single-player: immediate pickup
+              const take = Math.min(drop.amount, CONFIG.spiceMaxCarry - state.spiceCarry);
+              state.spiceCarry += take;
+              triggerSpicePickupNumber(take);
+              broadcastWormRadio("Spice recovered from fallen warrior.");
+              scene.remove(drop.mesh);
+              drop.mat.dispose();
+              droppedSpicePickups.splice(i, 1);
+            }
             continue;
           }
         }
@@ -10550,6 +10585,12 @@
         for (const node of snapshot.spiceNodes) {
           applyNetworkSpiceNodeState(node);
         }
+        // Sync existing spice drops
+        if (snapshot.spiceDrops) {
+          for (const drop of snapshot.spiceDrops) {
+            spawnDroppedSpice(drop.x, drop.z, drop.amount, drop.id);
+          }
+        }
         // Sync scores
         state.spiceScore = snapshot.scores[team] ?? 0;
         applyNetworkWormState(snapshot.worm);
@@ -10577,6 +10618,24 @@
         for (const node of nodes) {
           applyNetworkSpiceNodeState(node);
         }
+      });
+
+      // ── Spice drops (server-authoritative in MP) ──
+      socket.on("spiceDrop", ({ id, x, z, amount }) => {
+        spawnDroppedSpice(x, z, amount, id);
+      });
+
+      socket.on("spiceDropPickedUp", ({ dropId, playerId, taken }) => {
+        removeDropById(dropId);
+        if (playerId === socket.id && taken > 0) {
+          state.spiceCarry += taken;
+          triggerSpicePickupNumber(taken);
+          broadcastWormRadio("Spice recovered from fallen warrior.");
+        }
+      });
+
+      socket.on("spiceDropExpired", (dropId) => {
+        removeDropById(dropId);
       });
 
       socket.on("scoreUpdate", (scores) => {
@@ -10649,9 +10708,8 @@
             broadcastWormRadio("The worm has you.");
             return;
           }
-	          if (state.spiceCarry > 0) {
-	            spawnDroppedSpice(player.position.x, player.position.z, state.spiceCarry);
-	          }
+          // Server broadcasts spiceDrop to all clients — don't spawn locally
+          state.spiceCarry = 0;
           cancelHarvest();
           state.shieldActive = false;
           state.playerPoisonTimer = 0;

@@ -15,6 +15,7 @@ const SPICE_PLUME_SPAWN_INTERVAL = 60;   // seconds between plume spawn checks
 const SPICE_PLUME_SPAWN_CHANCE = 0.35;   // probability per check
 const SPICE_PLUME_COOLDOWN = 35;         // seconds after a plume is depleted
 const SPICE_DECAY_SECONDS = 45;          // seconds after first harvest before node auto-depletes
+const SPICE_MAX_CARRY = 10;
 const MAX_PLAYERS = 20;
 const WORM_TICK_MS = 100;
 const WORLD_SIZE = 1500;
@@ -117,6 +118,10 @@ const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => {
 let spicePlumeCooldown = 0;
 let spicePlumeSpawnTimer = 0;
 
+const spiceDrops = new Map(); // dropId → { x, z, amount, timer }
+let nextDropId = 1;
+const SPICE_DROP_LIFETIME = 15; // seconds before drop sinks and disappears
+
 const scores = { fremen: 0, harkonnen: 0 };
 const noiseHotspots = [];
 const worm = {
@@ -155,6 +160,7 @@ function getWorldSnapshot() {
   return {
     players: [...players.values()],
     spiceNodes,
+    spiceDrops: [...spiceDrops.values()],
     scores,
     seed: MAP_SEED,
     worm: {
@@ -454,6 +460,13 @@ function consumePlayerThumper(player) {
     respawnSeconds: 0,
   });
   return true;
+}
+
+function spawnSpiceDrop(x, z, amount) {
+  if (amount <= 0) return;
+  const id = nextDropId++;
+  spiceDrops.set(id, { id, x, z, amount, timer: SPICE_DROP_LIFETIME });
+  io.emit("spiceDrop", { id, x, z, amount });
 }
 
 function clearPlayerTransientState(player, { clearCarry = true } = {}) {
@@ -798,6 +811,15 @@ setInterval(() => {
   }
 
   if (changed) io.emit("spiceSync", spiceNodes);
+
+  // Expire spice drops
+  for (const [id, drop] of spiceDrops) {
+    drop.timer -= TICK_MS / 1000;
+    if (drop.timer <= 0) {
+      spiceDrops.delete(id);
+      io.emit("spiceDropExpired", id);
+    }
+  }
 }, TICK_MS);
 
 setInterval(() => {
@@ -829,6 +851,7 @@ setInterval(() => {
     p.health = Math.max(0, p.health - dmg);
     io.emit("playerDamaged", { id: p.id, health: p.health, attackerId: p.poisonAttackerId });
     if (p.health <= 0) {
+      if (p.spiceCarry > 0) spawnSpiceDrop(p.x, p.z, p.spiceCarry);
       clearPlayerTransientState(p, { clearCarry: true });
       io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
       emitDeathEvent(p.id, p.poisonAttackerId, "poison");
@@ -929,6 +952,7 @@ io.on("connection", (socket) => {
     target.health = Math.max(0, target.health - clampedDamage);
     io.emit("playerDamaged", { id: targetId, health: target.health, attackerId });
     if (target.health <= 0) {
+      if (target.spiceCarry > 0) spawnSpiceDrop(target.x, target.z, target.spiceCarry);
       clearPlayerTransientState(target, { clearCarry: true });
       io.emit("playerKilled", { id: targetId, killerId: attackerId });
       emitDeathEvent(targetId, attackerId, attackType);
@@ -1136,6 +1160,22 @@ io.on("connection", (socket) => {
     scores[p.team] += depositedAmount;
     p.spiceCarry = Math.max(0, (Number(p.spiceCarry) || 0) - depositedAmount);
     io.emit("scoreUpdate", scores);
+  });
+
+  // ── Spice drop pickup ──
+  socket.on("pickupSpiceDrop", (dropId) => {
+    const p = players.get(socket.id);
+    if (!p || p.health <= 0) return;
+    const drop = spiceDrops.get(dropId);
+    if (!drop) return;
+    const take = Math.min(drop.amount, SPICE_MAX_CARRY - Math.max(0, p.spiceCarry));
+    if (take <= 0) return;
+    p.spiceCarry += take;
+    drop.amount -= take;
+    if (drop.amount <= 0) {
+      spiceDrops.delete(dropId);
+    }
+    io.emit("spiceDropPickedUp", { dropId, playerId: socket.id, taken: take, remaining: drop.amount || 0 });
   });
 
   // ── Poison applied (maula dart) ──
