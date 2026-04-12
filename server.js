@@ -29,6 +29,7 @@ const HOLTZMAN_LETHAL_RADIUS = 35;
 const HOLTZMAN_DAMAGE_RADIUS = 70;
 const HOLTZMAN_DAMAGE = 80;
 const HOLTZMAN_EVENT_COOLDOWN_MS = 250;
+const SPAWN_PROTECTION_SECONDS = 1.0;
 const PLAYER_SPAWN_CENTER_X = -380;
 const PLAYER_SPAWN_CENTER_Z = -380;
 const PLAYER_SPAWN_RADIUS = 18;
@@ -520,7 +521,13 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
     target.z = spawn.z;
     target.y = 0;
     clearPlayerTransientState(target, { clearCarry: true });
-    io.emit("playerRespawned", { id: targetId, spawn });
+    grantSpawnProtection(target);
+    io.emit("playerRespawned", {
+      id: targetId,
+      spawn,
+      protectedUntil: target.spawnProtectedUntil,
+      worldTime: getWorldTimeSeconds(),
+    });
   }, delayMs);
 }
 
@@ -572,6 +579,16 @@ function clearPlayerTransientState(player, { clearCarry = true } = {}) {
   if (clearCarry) {
     player.spiceCarry = 0;
   }
+}
+
+function grantSpawnProtection(player, seconds = SPAWN_PROTECTION_SECONDS) {
+  if (!player) return;
+  player.spawnProtectedUntil = getWorldTimeSeconds() + Math.max(0, Number(seconds) || 0);
+}
+
+function isSpawnProtected(player, now = getWorldTimeSeconds()) {
+  if (!player) return false;
+  return Number(player.spawnProtectedUntil) > now;
 }
 
 function sampleStrongestWormHotspot() {
@@ -654,7 +671,7 @@ function sampleStrongestWormHotspot() {
 }
 
 function killPlayerByWorm(target) {
-  if (!target || target.health <= 0) return;
+  if (!target || target.health <= 0 || isSpawnProtected(target)) return;
   target.health = 0;
   clearPlayerTransientState(target, { clearCarry: true });
   io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
@@ -796,6 +813,7 @@ function tickWorm(dt) {
           consumePlayerThumper(p);
         }
         if (p.health <= 0 || p.surfaceType !== "sand") continue;
+        if (isSpawnProtected(p)) continue;
         if (dist2(p.x, p.z, worm.target.x, worm.target.z) <= killR2) {
           victims.push(p);
         }
@@ -936,6 +954,7 @@ setInterval(() => {
     if (p.poisonTimer <= 0) continue;
     p.poisonTimer = Math.max(0, p.poisonTimer - dt);
     if (p.health <= 0) { p.poisonTimer = 0; continue; }
+    if (isSpawnProtected(p)) continue;
     const dmg = POISON_DPS * dt;
     p.health = Math.max(0, p.health - dmg);
     io.emit("playerDamaged", { id: p.id, health: p.health, attackerId: p.poisonAttackerId });
@@ -1027,6 +1046,7 @@ io.on("connection", (socket) => {
     thumperX: 0,
     thumperZ: 0,
     thumperSignal: 0,
+    spawnProtectedUntil: getWorldTimeSeconds() + SPAWN_PROTECTION_SECONDS,
     vx: 0,
     vz: 0,
     moveTime: 0,
@@ -1057,6 +1077,7 @@ io.on("connection", (socket) => {
   function applyPlayerDamage(targetId, damage, attackerId = socket.id, attackType = "generic") {
     const target = players.get(targetId);
     if (!target || target.health <= 0) return false;
+    if (isSpawnProtected(target)) return false;
     if (target.shieldActive && isShieldBlockedAttack(attackType)) {
       socket.emit("shieldBlocked", { targetId, attackType });
       return false;
@@ -1272,7 +1293,9 @@ io.on("connection", (socket) => {
     if (depositedAmount <= 0) return;
     scores[p.team] += depositedAmount;
     p.spiceCarry = Math.max(0, (Number(p.spiceCarry) || 0) - depositedAmount);
+    p.health = 100;
     io.emit("scoreUpdate", scores);
+    io.emit("playerDamaged", { id: socket.id, health: p.health, attackerId: "bank" });
   });
 
   // ── Spice drop pickup ──
@@ -1295,6 +1318,7 @@ io.on("connection", (socket) => {
   socket.on("poisonPlayer", ({ targetId, attackType = "maula" }) => {
     const target = players.get(targetId);
     if (!target || target.health <= 0) return;
+    if (isSpawnProtected(target)) return;
     if (target.shieldActive && isShieldBlockedAttack(attackType)) {
       socket.emit("shieldBlocked", { targetId, attackType });
       return;

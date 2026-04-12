@@ -1145,7 +1145,8 @@
       harvestTimer: 0,
       plumeSpawnTimer: 0,
       plumeCooldownTimer: 0,
-      interactHint: "Find a spice patch in the open sand.",
+      interactHint: "Harvest spice in open sand, then return to the Sietch Bank on rock.",
+      nearDepot: false,
       wormPhase: "idle",
       wormTimer: 0,
       wormCooldown: 0,
@@ -1155,6 +1156,7 @@
       wormNetCooldown: 0,
       wormNetVisualsEnabled: true,
       wormRecoveryTimer: 0,
+      spawnProtectionTimer: 0,
 		      wormRadioTimer: 0,
 		      wormRadioMessage: "",
 	      wormShake: 0,
@@ -1253,6 +1255,9 @@
 	    const tempProjectileCenter = new THREE.Vector3();
 	    const tempProjectileDelta = new THREE.Vector3();
 	    const tempProjectileClosest = new THREE.Vector3();
+	    const tempMoonDirA = new THREE.Vector3();
+	    const tempMoonDirB = new THREE.Vector3();
+	    const tempYAxis = new THREE.Vector3(0, 1, 0);
 	    const tempLasgunImpact = new THREE.Vector3();
 	    const tempLasgunEnd = new THREE.Vector3();
 	    const tempLasgunAimPoint = new THREE.Vector3();
@@ -4875,25 +4880,29 @@
 	        const progress = THREE.MathUtils.clamp(state.harvestTimer / CONFIG.spiceHarvestDuration, 0, 1);
 	        return `Harvesting spice patch: ${Math.round(progress * 100)}%`;
       }
-      if (state.spiceCarry > 0 && nearDepot) return "Press E to deposit spice.";
-      if (state.spiceCarry >= CONFIG.spiceMaxCarry) return "Bag full — return to the sietch depot.";
-      if (canHarvest) return "Stand in the spice patch and hold E to harvest.";
-      if (state.spiceCarry > 0) return "Find more spice, or return to the depot to bank.";
-      return "Leave rock and find a spice patch in the open sand.";
-    }
+	      if (state.spiceCarry > 0 && nearDepot) return "Press E at the Sietch Bank to deposit spice.";
+	      if (state.spiceCarry <= 0 && nearDepot) return "Sietch Bank: bring harvested spice here to score.";
+	      if (state.spiceCarry >= CONFIG.spiceMaxCarry) return "Bag full — return to the sietch depot.";
+	      if (canHarvest) return "Stand in the spice patch and hold E to harvest.";
+	      if (state.spiceCarry > 0) return "Return to the glowing Sietch Bank on rock to deposit.";
+	      return "Leave rock and find a spice patch in the open sand.";
+	    }
 
     function updateSpiceObjective(delta) {
       const pulseTime = state.elapsed * 1.8;
       const horizontalSpeed = Math.hypot(player.userData.velocity.x, player.userData.velocity.z);
       // Deposit spice at the sietch depot — E key while in range
-      const _dpDx = player.position.x - spiceDepot.worldPos.x;
-      const _dpDz = player.position.z - spiceDepot.worldPos.z;
-      const nearDepot = (_dpDx * _dpDx) + (_dpDz * _dpDz) <= spiceDepot.depositRadius * spiceDepot.depositRadius;
-      const ePressed = keyState.KeyE && !state.paused && controls.isLocked;
+	      const _dpDx = player.position.x - spiceDepot.worldPos.x;
+	      const _dpDz = player.position.z - spiceDepot.worldPos.z;
+	      const nearDepot = (_dpDx * _dpDx) + (_dpDz * _dpDz) <= spiceDepot.depositRadius * spiceDepot.depositRadius;
+	      state.nearDepot = nearDepot;
+	      const ePressed = keyState.KeyE && !state.paused && controls.isLocked;
       if (nearDepot && state.spiceCarry > 0 && state.wormPhase !== "devour" && ePressed && !state.depositKeyConsumed) {
         const depositAmount = state.spiceCarry;
         state.spiceScore += depositAmount;
         state.spiceCarry = 0;
+        state.playerHealth = CONFIG.playerMaxHealth;
+        state.playerPoisonTimer = 0;
         const maulaRefillCount = refillMaulaToFull();
         state.depositKeyConsumed = true;
         state.depositToastTimer = 2.8;
@@ -4919,7 +4928,7 @@
         }
       }
 
-      spiceDepot.update(delta, state.elapsed, state.spiceCarry > 0);
+	      spiceDepot.update(delta, state.elapsed, state.spiceCarry > 0, nearDepot);
       if (state.depositToastTimer > 0) {
         state.depositToastTimer -= delta;
         if (state.depositToastTimer <= 0) {
@@ -5350,14 +5359,22 @@
 	        flatShading: true,
 	      });
 	      const skinMaterial = new THREE.MeshLambertMaterial({ color: 0xe4b08f, flatShading: true });
-	      const visorMaterial = new THREE.MeshStandardMaterial({
-	        color: 0x9dd7e8,
-	        emissive: 0x2a4f5d,
-	        emissiveIntensity: 0.2,
-	        roughness: 0.18,
-	        metalness: 0.18,
-	        flatShading: true,
-	      });
+		      const visorMaterial = new THREE.MeshStandardMaterial({
+		        color: 0x9dd7e8,
+		        emissive: 0x2a4f5d,
+		        emissiveIntensity: 0.2,
+		        roughness: 0.18,
+		        metalness: 0.18,
+		        flatShading: true,
+		      });
+		      const eyeMaterial = new THREE.MeshStandardMaterial({
+		        color: 0x9ad6ff,
+		        emissive: 0x57b3ff,
+		        emissiveIntensity: 1.05,
+		        roughness: 0.08,
+		        metalness: 0.34,
+		        flatShading: true,
+		      });
 
 	      const torso = createCapsuleBody(underSuitMaterial);
 	      torso.position.y = 1.88;
@@ -5469,19 +5486,20 @@
 	      respirator.position.set(0, 3.8, 0.54);
 	      root.add(respirator);
 
-	      const leftLens = makeMesh(
-	        new THREE.SphereGeometry(0.08, 8, 8),
-	        visorMaterial
-	      );
-	      leftLens.position.set(-0.17, 4.05, 0.58);
-	      root.add(leftLens);
+			      const leftLens = makeMesh(
+			        new THREE.SphereGeometry(0.1, 10, 10),
+			        eyeMaterial
+			      );
+			      leftLens.position.set(-0.17, 4.05, 0.64);
+			      root.add(leftLens);
 
-	      const rightLens = makeMesh(
-	        new THREE.SphereGeometry(0.08, 8, 8),
-	        visorMaterial
-	      );
-	      rightLens.position.set(0.17, 4.05, 0.58);
-	      root.add(rightLens);
+			      const rightLens = makeMesh(
+			        new THREE.SphereGeometry(0.1, 10, 10),
+			        eyeMaterial
+			      );
+			      rightLens.position.set(0.17, 4.05, 0.64);
+			      root.add(rightLens);
+		      root.userData.eyeMaterial = eyeMaterial;
 
 	      const headAnchor = new THREE.Object3D();
 	      headAnchor.position.y = 4.16;
@@ -6467,27 +6485,64 @@
       scene.add(mesh);
 
       // Two Arrakis moons
-      const moonGeo = new THREE.SphereGeometry(1, 14, 10);
-      function makeMoon(color, orbitAngle, orbitTilt, orbitRadius) {
-        const moonMat = new THREE.MeshBasicMaterial({ color });
+      const moonGeo = new THREE.SphereGeometry(1, 28, 20);
+      function makeMoonGlowTexture() {
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext("2d");
+        const grad = ctx.createRadialGradient(64, 64, 6, 64, 64, 64);
+        grad.addColorStop(0.0, "rgba(255,255,255,0.95)");
+        grad.addColorStop(0.35, "rgba(255,245,215,0.48)");
+        grad.addColorStop(0.72, "rgba(255,230,180,0.12)");
+        grad.addColorStop(1.0, "rgba(255,210,150,0.0)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 128, 128);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.needsUpdate = true;
+        return tex;
+      }
+      const moonGlowTex = makeMoonGlowTexture();
+
+      function makeMoonGlow(color, size) {
+        const glow = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: moonGlowTex,
+            color,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
+          })
+        );
+        glow.scale.set(size, size, 1);
+        glow.frustumCulled = false;
+        glow.renderOrder = -2;
+        scene.add(glow);
+        return glow;
+      }
+
+      function makeMoon(color, orbitPhase, orbitTilt, orbitRadius, size = 10) {
+        const moonMat = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        });
         const moon = new THREE.Mesh(moonGeo, moonMat);
-        moon.scale.setScalar(10);
+        moon.scale.setScalar(size);
         moon.frustumCulled = false;
         moon.renderOrder = -1;
         scene.add(moon);
-        return { moon, orbitAngle, orbitTilt, orbitRadius };
+        const glowOuter = makeMoonGlow(color, size * 3.8);
+        const glowInner = makeMoonGlow(0xfff0c8, size * 2.1);
+        return { moon, glowOuter, glowInner, orbitPhase, orbitTilt, orbitRadius, size };
       }
 
-      const moonA = makeMoon(0xfff0cc, 0.7, 0.4, 620);
-      // Add "fist of God" dark marking to large moon
-      const fistGeo = new THREE.SphereGeometry(1, 8, 8);
-      const fistMat = new THREE.MeshBasicMaterial({ color: 0x2a2218, transparent: true, opacity: 0.72, depthWrite: false });
-      const fistMesh = new THREE.Mesh(fistGeo, fistMat);
-      fistMesh.scale.set(4.2, 5.5, 1.8);
-      fistMesh.position.set(2.5, 1.5, 9.2); // offset slightly toward viewer face
-      moonA.moon.add(fistMesh);
-
-      const moonB = makeMoon(0xdde8ff, 3.5, -0.3, 580);
+      const moonA = makeMoon(0xffe6b8, Math.PI * 0.12, 0.34, 520, 27.5);
+      const moonB = makeMoon(0xd6e9ff, Math.PI * 0.49, -0.18, 500, 11.5);
 
       return { mesh, mat, moonA, moonB };
     }
@@ -7919,9 +7974,9 @@
       plumeEventState.coreNode = null;
     }
 
-    function createSpiceDepot() {
-      const startPatch = ROCK_PATCHES[0];
-      const depotX = startPatch.x;
+	    function createSpiceDepot() {
+	      const startPatch = ROCK_PATCHES[0];
+	      const depotX = startPatch.x;
       const depotZ = startPatch.z - 10;
       const depotY = sampleGroundHeight(depotX, depotZ);
 
@@ -7968,26 +8023,65 @@
       const haloMat = new THREE.MeshBasicMaterial({
         color: 0xff8800, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.BackSide,
       });
-      const halo = new THREE.Mesh(new THREE.SphereGeometry(5.0, 8, 6), haloMat);
-      halo.position.y = 2.5;
-      group.add(halo);
+	      const halo = new THREE.Mesh(new THREE.SphereGeometry(5.0, 8, 6), haloMat);
+	      halo.position.y = 2.5;
+	      group.add(halo);
 
-      let depositFlash = 0;
+	      const bankLabel = createBankLabel("#ffd07a");
+	      bankLabel.position.set(0, 7.4, 0);
+	      group.add(bankLabel);
 
-      return {
-        worldPos: new THREE.Vector3(depotX, depotY, depotZ),
-        depositRadius: 6,
-        triggerDeposit() { depositFlash = 1.0; },
-        update(delta, elapsed, carrying) {
-          const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
-          crystalMat.emissiveIntensity = depositFlash > 0
-            ? 2.0 + depositFlash * 3.5
-            : (carrying ? 0.65 + pulse * 1.0 : 0.4 + pulse * 0.25);
-          depositFlash = Math.max(0, depositFlash - delta * 3.0);
-          haloMat.opacity = carrying ? 0.07 + pulse * 0.16 : 0;
-        },
-      };
-    }
+	      const beaconMat = new THREE.MeshBasicMaterial({
+	        color: 0xffb347,
+	        transparent: true,
+	        opacity: 0.18,
+	        depthWrite: false,
+	        blending: THREE.AdditiveBlending,
+	      });
+	      const beacon = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 4.0, 18, 12, 1, true), beaconMat);
+	      beacon.position.y = 9.0;
+	      group.add(beacon);
+
+	      const zoneMat = new THREE.MeshBasicMaterial({
+	        color: 0xffc470,
+	        transparent: true,
+	        opacity: 0.16,
+	        depthWrite: false,
+	        side: THREE.DoubleSide,
+	      });
+	      const zoneRing = new THREE.Mesh(new THREE.RingGeometry(6.9, 7.6, 36), zoneMat);
+	      zoneRing.rotation.x = -Math.PI / 2;
+	      zoneRing.position.y = 0.08;
+	      group.add(zoneRing);
+
+	      let depositFlash = 0;
+
+	      return {
+	        worldPos: new THREE.Vector3(depotX, depotY, depotZ),
+	        depositRadius: 7.5,
+	        triggerDeposit() { depositFlash = 1.0; },
+	        update(delta, elapsed, carrying, nearDepot = false) {
+	          const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
+	          crystalMat.emissiveIntensity = depositFlash > 0
+	            ? 2.0 + depositFlash * 3.5
+	            : (carrying ? 0.65 + pulse * 1.0 : 0.4 + pulse * 0.25);
+	          depositFlash = Math.max(0, depositFlash - delta * 3.0);
+	          haloMat.opacity = carrying ? 0.07 + pulse * 0.16 : 0.02 + pulse * 0.03;
+	          const beaconPulse = 0.5 + 0.5 * Math.sin(elapsed * 1.6);
+	          const focusBoost = nearDepot ? 0.1 : 0;
+	          beaconMat.opacity = carrying
+	            ? 0.16 + beaconPulse * 0.24 + focusBoost
+	            : 0.06 + beaconPulse * 0.08;
+	          zoneMat.opacity = nearDepot
+	            ? 0.28 + pulse * 0.12
+	            : (carrying ? 0.12 + pulse * 0.08 : 0.08);
+	          bankLabel.material.opacity = nearDepot
+	            ? 1
+	            : (carrying ? 0.92 : 0.78);
+	          zoneRing.rotation.z += delta * 0.12;
+	        },
+	      };
+	    }
 
     function normalizePortalRefUrl(rawRef) {
       if (!rawRef) return null;
@@ -8005,25 +8099,66 @@
 
     function createPortalLabel(text, color = "#ffe6b0") {
       const canvas = document.createElement("canvas");
-      canvas.width = 512;
-      canvas.height = 128;
+      canvas.width = 768;
+      canvas.height = 192;
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "rgba(18, 12, 6, 0.62)";
-      ctx.fillRect(6, 22, canvas.width - 12, canvas.height - 44);
+      ctx.fillRect(10, 28, canvas.width - 20, canvas.height - 56);
       ctx.strokeStyle = "rgba(255, 210, 140, 0.68)";
       ctx.lineWidth = 4;
-      ctx.strokeRect(6, 22, canvas.width - 12, canvas.height - 44);
-      ctx.font = "700 42px Arial";
+      ctx.strokeRect(10, 28, canvas.width - 20, canvas.height - 56);
+      const fontSize = text.length > 22 ? 48 : 56;
+      ctx.font = `700 ${fontSize}px Arial`;
       ctx.fillStyle = color;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(text, canvas.width * 0.5, canvas.height * 0.5);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
-      const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        alphaTest: 0.08,
+      });
       const sprite = new THREE.Sprite(material);
-      sprite.scale.set(9, 2.2, 1);
+      sprite.scale.set(10.8, 2.6, 1);
+      return sprite;
+    }
+
+    function createBankLabel(color = "#ffd07a") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 760;
+      canvas.height = 200;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(18, 12, 6, 0.66)";
+      ctx.fillRect(14, 34, canvas.width - 28, canvas.height - 68);
+      ctx.strokeStyle = "rgba(255, 210, 140, 0.74)";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(14, 34, canvas.width - 28, canvas.height - 68);
+
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "700 68px Arial";
+      ctx.fillText("SIETCH BANK", canvas.width * 0.5, canvas.height * 0.42);
+      ctx.font = "700 40px Arial";
+      ctx.fillText("DEPOSIT SPICE (E)", canvas.width * 0.5, canvas.height * 0.72);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        alphaTest: 0.08,
+      });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(8.6, 2.25, 1);
       return sprite;
     }
 
@@ -8566,6 +8701,9 @@
     function updateWormUiTimers(delta) {
       if (state.wormRecoveryTimer > 0) {
         state.wormRecoveryTimer = Math.max(0, state.wormRecoveryTimer - delta);
+      }
+      if (state.spawnProtectionTimer > 0) {
+        state.spawnProtectionTimer = Math.max(0, state.spawnProtectionTimer - delta);
       }
       if (state.wormRadioTimer > 0) {
         state.wormRadioTimer = Math.max(0, state.wormRadioTimer - delta);
@@ -9614,8 +9752,18 @@
       }
     }
 
+    function getRandomInitialSpawnOffset() {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.sqrt(Math.random()) * 7.5;
+      return {
+        x: CONFIG.playerStart.x + Math.cos(angle) * dist,
+        z: CONFIG.playerStart.z + Math.sin(angle) * dist,
+      };
+    }
+
     function placePlayerOnGround() {
-      respawnAtBase();
+      const start = getRandomInitialSpawnOffset();
+      respawnAtBase({ spawnX: start.x, spawnZ: start.z });
     }
 
 	    function bindEvents() {
@@ -10061,14 +10209,27 @@
       target.lerpColors(tempColorA.setHex(fromHex), tempColorB.setHex(toHex), amount);
     }
 
-    function updateDayNight(delta) {
+    function getSynchronizedWorldTimeSeconds() {
       if (mp.connected && state.serverWorldTimeBase !== null) {
         const nowSec = performance.now() * 0.001;
-        state.elapsed = state.serverWorldTimeBase + Math.max(0, nowSec - state.serverWorldTimeStamp);
-      } else {
-        state.elapsed += delta;
+        return state.serverWorldTimeBase + Math.max(0, nowSec - state.serverWorldTimeStamp);
       }
-      state.dayTime = ((state.elapsed + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
+      return state.elapsed;
+    }
+
+    function applySpawnProtectionFromServer(protectedUntil) {
+      const expiresAt = Number(protectedUntil);
+      if (!Number.isFinite(expiresAt)) return;
+      const remaining = expiresAt - getSynchronizedWorldTimeSeconds();
+      state.spawnProtectionTimer = Math.max(state.spawnProtectionTimer, remaining);
+    }
+
+    function updateDayNight(delta) {
+      // Keep local elapsed for gameplay/animation timers; derive day/night clock
+      // from server world time when available so reloads do not reset time-of-day.
+      state.elapsed += delta;
+      const worldClock = getSynchronizedWorldTimeSeconds();
+      state.dayTime = ((worldClock + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
 
       const current = getCycleKeyPair(state.dayTime);
       const amount = (state.dayTime - current.a.t) / (current.b.t - current.a.t || 1);
@@ -10086,9 +10247,18 @@
       hemiLight.intensity = 0.6 + (nightFactor * 0.38);
       fillLight.intensity = THREE.MathUtils.lerp(0.08, 0.28, nightFactor);
       renderer.toneMappingExposure = THREE.MathUtils.lerp(1.05, 1.22, nightFactor);
-      rockMaterial.emissiveIntensity = 0.08 + (nightFactor * 0.26);
-      stars.material.opacity = THREE.MathUtils.clamp((0.72 - sun.intensity) / 0.54, 0, 0.95);
-      stars.position.set(player.position.x, 0, player.position.z);
+	      rockMaterial.emissiveIntensity = 0.08 + (nightFactor * 0.26);
+	      const eyeGlow = THREE.MathUtils.lerp(0.9, 2.2, nightFactor);
+	      if (player.userData.eyeMaterial) {
+	        player.userData.eyeMaterial.emissiveIntensity = eyeGlow;
+	      }
+	      for (const [, rp] of remotePlayers) {
+	        if (rp.mesh?.userData?.eyeMaterial) {
+	          rp.mesh.userData.eyeMaterial.emissiveIntensity = eyeGlow;
+	        }
+	      }
+	      stars.material.opacity = THREE.MathUtils.clamp((0.72 - sun.intensity) / 0.54, 0, 0.95);
+	      stars.position.set(player.position.x, 0, player.position.z);
 
       const sunAngle = (state.dayTime * Math.PI * 2) + (Math.PI * 0.5);
       const sunRadius = 170;
@@ -10107,27 +10277,58 @@
       skyDome.mat.uniforms.uSunDir.value
         .subVectors(sun.position, tempSunTarget).normalize();
 
-      // Moons: orbit on tilted planes, slower than sun
-      const moonSpeed = state.elapsed * 0.08;
-      const px = player.position.x, pz = player.position.z;
+      // Moons: phase-locked to cycle and generally opposite the sun.
+      const px = player.position.x;
+      const py = player.position.y;
+      const pz = player.position.z;
       const { moonA, moonB } = skyDome;
-      const maA = moonSpeed + moonA.orbitAngle;
-      moonA.moon.position.set(
-        px + Math.cos(maA) * moonA.orbitRadius,
-        player.position.y + Math.sin(maA) * 480 + Math.sin(moonA.orbitTilt) * 120,
-        pz + Math.sin(maA) * moonA.orbitRadius * 0.6
-      );
-      const maB = moonSpeed + moonB.orbitAngle;
-      moonB.moon.position.set(
-        px + Math.cos(maB) * moonB.orbitRadius * 0.7,
-        player.position.y + Math.sin(maB) * 420 + Math.sin(moonB.orbitTilt) * 80,
-        pz + Math.sin(maB) * moonB.orbitRadius
-      );
-      // Only show moons when dark enough
-      const moonVis = THREE.MathUtils.clamp(1.0 - sun.intensity * 0.8, 0, 1);
-      moonA.moon.material.opacity !== undefined || (moonA.moon.material.transparent = true);
-      moonA.moon.visible = moonVis > 0.05;
-      moonB.moon.visible = moonVis > 0.05;
+      const moonBaseAngle = sunAngle + Math.PI * 0.88;
+      const maA = moonBaseAngle + moonA.orbitPhase;
+      const moonDirA = tempMoonDirA.set(
+        Math.cos(maA),
+        THREE.MathUtils.clamp(Math.sin(maA + moonA.orbitTilt) * 0.7 + 0.2, -0.32, 0.94),
+        Math.sin(maA) * 0.74
+      ).normalize();
+      moonA.moon.position.copy(player.position).addScaledVector(moonDirA, moonA.orbitRadius);
+
+      const moonDirB = tempMoonDirB
+        .copy(moonDirA)
+        .cross(tempUp);
+      if (moonDirB.lengthSq() < 0.0001) moonDirB.set(1, 0, 0);
+      moonDirB.normalize();
+      moonB.moon.position
+        .copy(moonA.moon.position)
+        .addScaledVector(moonDirB, 128 + (Math.sin(worldClock * 0.05) * 10))
+        .addScaledVector(tempUp, 52 + (Math.sin((worldClock * 0.04) + 1.4) * 6));
+
+      const moonVis = THREE.MathUtils.smoothstep(nightFactor, 0.18, 0.92);
+      const moonPulseA = 0.92 + (Math.sin(worldClock * 0.35) * 0.04);
+      const moonPulseB = 0.90 + (Math.sin((worldClock * 0.55) + 1.7) * 0.06);
+      moonA.moon.material.opacity = moonVis;
+      moonB.moon.material.opacity = moonVis * 0.92;
+      moonA.moon.visible = moonVis > 0.02;
+      moonB.moon.visible = moonVis > 0.02;
+      moonA.glowOuter.position.copy(moonA.moon.position);
+      moonA.glowInner.position.copy(moonA.moon.position);
+      moonB.glowOuter.position.copy(moonB.moon.position);
+      moonB.glowInner.position.copy(moonB.moon.position);
+      moonA.glowOuter.material.opacity = moonVis * 1.0 * moonPulseA;
+      moonA.glowInner.material.opacity = moonVis * 0.78 * moonPulseA;
+      moonB.glowOuter.material.opacity = moonVis * 0.84 * moonPulseB;
+      moonB.glowInner.material.opacity = moonVis * 0.62 * moonPulseB;
+      const moonAOuterScale = moonA.size * (4.6 + (Math.sin(worldClock * 0.22) * 0.14));
+      const moonAInnerScale = moonA.size * (2.45 + (Math.sin(worldClock * 0.3) * 0.1));
+      const moonBOuterScale = moonB.size * (4.4 + (Math.sin((worldClock * 0.28) + 0.8) * 0.16));
+      const moonBInnerScale = moonB.size * (2.35 + (Math.sin((worldClock * 0.34) + 1.1) * 0.12));
+      moonA.glowOuter.scale.set(moonAOuterScale, moonAOuterScale, 1);
+      moonA.glowInner.scale.set(moonAInnerScale, moonAInnerScale, 1);
+      moonB.glowOuter.scale.set(moonBOuterScale, moonBOuterScale, 1);
+      moonB.glowInner.scale.set(moonBInnerScale, moonBInnerScale, 1);
+      const moonGlowVisible = moonVis > 0.02;
+      moonA.glowOuter.visible = moonGlowVisible;
+      moonA.glowInner.visible = moonGlowVisible;
+      moonB.glowOuter.visible = moonGlowVisible;
+      moonB.glowInner.visible = moonGlowVisible;
     }
 
     function getCycleKeyPair(dayTime) {
@@ -10257,12 +10458,16 @@
       ui.wormFill.style.backgroundColor = `hsl(${wormHue}, 92%, 52%)`;
 	      if (wormPhase === "warning" || wormPhase === "breach" || wormPhase === "devour") {
 	        ui.hudStatus.textContent = "Worm incoming";
+      } else if (state.spawnProtectionTimer > 0) {
+        ui.hudStatus.textContent = `Spawn shield ${state.spawnProtectionTimer.toFixed(1)}s`;
       } else if (state.harvestNode) {
         ui.hudStatus.textContent = "Harvesting spice";
       } else if (state.spiceCarry >= CONFIG.spiceMaxCarry) {
         ui.hudStatus.textContent = state.surfaceType === "rock" ? "Bag full — deposit" : "Bag full — get to rock";
-      } else if (state.spiceCarry > 0) {
-        ui.hudStatus.textContent = state.surfaceType === "rock" ? "Spice secured" : "Find more spice";
+	      } else if (state.spiceCarry > 0) {
+	        ui.hudStatus.textContent = state.nearDepot
+	          ? "At Sietch Bank — Press E to deposit"
+	          : (state.surfaceType === "rock" ? "Spice secured — find bank" : "Carry spice to the bank");
       } else if (state.shieldActive && state.surfaceType === "sand") {
         ui.hudStatus.textContent = "Shield draws worms";
       } else if (state.interactHint.includes("Press E to enter")) {
@@ -10416,18 +10621,15 @@
     function createNameplateSprite(labelText, colorHex) {
       const text = sanitizePlayerName(labelText) || "Pilgrim";
       const canvas = document.createElement("canvas");
-      canvas.width = 512;
-      canvas.height = 128;
+      canvas.width = 448;
+      canvas.height = 104;
       const ctx = canvas.getContext("2d");
       if (!ctx) return null;
 
-      const bgRgb = `rgba(12, 10, 8, 0.65)`;
-      const edgeColor = `#${colorHex.toString(16).padStart(6, "0")}`;
+      const bgRgb = `rgba(12, 10, 8, 0.52)`;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = bgRgb;
-      ctx.strokeStyle = edgeColor;
-      ctx.lineWidth = 4;
-      const x = 8; const y = 8; const w = canvas.width - 16; const h = canvas.height - 16; const r = 22;
+      const x = 8; const y = 8; const w = canvas.width - 16; const h = canvas.height - 16; const r = 16;
       ctx.beginPath();
       ctx.moveTo(x + r, y);
       ctx.lineTo(x + w - r, y);
@@ -10440,13 +10642,12 @@
       ctx.quadraticCurveTo(x, y, x + r, y);
       ctx.closePath();
       ctx.fill();
-      ctx.stroke();
 
-      ctx.font = "700 56px Arial";
+      ctx.font = "700 44px Arial";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#f7e8c5";
-      ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
@@ -10459,8 +10660,8 @@
       });
       const sprite = new THREE.Sprite(material);
       sprite.renderOrder = 35;
-      sprite.position.set(0, 4.65, 0);
-      sprite.scale.set(3.6, 0.9, 1);
+      sprite.position.set(0, 5.4, 0);
+      sprite.scale.set(2.55, 0.56, 1);
       return sprite;
     }
 
@@ -10730,6 +10931,7 @@
         transports: ["websocket", "polling"],
         reconnectionAttempts: 3,
         reconnectionDelay: 5000,
+        closeOnBeforeunload: true,
         auth: {
           seed: MAP_SEED,
           playerToken,
@@ -10793,9 +10995,13 @@
         // Sync scores
         state.spiceScore = snapshot.scores[team] ?? 0;
         applyNetworkWormState(snapshot.worm);
-        if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
-          respawnAtBase({ spawnX: spawn.x, spawnZ: spawn.z });
+        const self = snapshot.players?.find((p) => p.id === id);
+        if (self && Number.isFinite(Number(self.spawnProtectedUntil))) {
+          applySpawnProtectionFromServer(self.spawnProtectedUntil);
         }
+        // Do not force a second local spawn on initial join; this causes a
+        // visible load-time teleport/lighting pop. Server spawn is still used
+        // for real respawns via playerRespawned.
       });
 
       socket.on("playerJoined", (data) => addRemotePlayer(data));
@@ -10938,11 +11144,16 @@
       });
 
       socket.on("playerPoisoned", ({ id, duration }) => {
+        const seconds = Number(duration);
         if (id === socket.id) {
-          state.playerPoisonTimer = Math.max(state.playerPoisonTimer, Number(duration) || CONFIG.maulaPoisonDuration);
+          if (Number.isFinite(seconds) && seconds <= 0) {
+            state.playerPoisonTimer = 0;
+          } else {
+            state.playerPoisonTimer = Math.max(state.playerPoisonTimer, seconds || CONFIG.maulaPoisonDuration);
+          }
         }
         const rp = remotePlayers.get(id);
-        if (rp) rp.poisonTimer = duration;
+        if (rp) rp.poisonTimer = Number.isFinite(seconds) ? Math.max(0, seconds) : CONFIG.maulaPoisonDuration;
       });
 
       socket.on("shieldBlocked", ({ targetId }) => {
@@ -10951,12 +11162,15 @@
         else sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
       });
 
-	      socket.on("playerRespawned", ({ id, spawn }) => {
+	      socket.on("playerRespawned", ({ id, spawn, protectedUntil, worldTime }) => {
 	        const rp = remotePlayers.get(id);
 	        if (rp) {
           if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
             rp.data.x = spawn.x;
             rp.data.z = spawn.z;
+          }
+          if (Number.isFinite(Number(protectedUntil))) {
+            rp.data.spawnProtectedUntil = Number(protectedUntil);
           }
           rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
           rp.mesh.rotation.x = 0; rp._lastEmissive = 0; rp._lasgunDmgAccum = 0;
@@ -10967,6 +11181,11 @@
           });
 	        }
 	        if (id === socket.id) {
+          if (typeof worldTime === "number" && Number.isFinite(worldTime)) {
+            state.serverWorldTimeBase = worldTime;
+            state.serverWorldTimeStamp = performance.now() * 0.001;
+          }
+          applySpawnProtectionFromServer(protectedUntil);
           const wasWormDeath = isLocalWormDeathPhase();
           if (wasWormDeath) {
             state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;
