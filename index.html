@@ -694,7 +694,7 @@
     if (location.protocol !== "file:") {
       const jamWidgetScript = document.createElement("script");
       jamWidgetScript.async = true;
-      jamWidgetScript.src = "https://jam.pieter.com/2026/widget.js";
+      jamWidgetScript.src = "https://vibejam.cc/2026/widget.js";
       document.head.appendChild(jamWidgetScript);
     } else {
       console.warn("Serve this project over http://localhost:8000 instead of opening index.html via file://");
@@ -1098,10 +1098,12 @@
       };
     }
 
-    const _urlSeed = new URLSearchParams(window.location.search).get("seed");
-    const MAP_SEED = _urlSeed ? (parseInt(_urlSeed, 16) >>> 0) : Math.floor(Math.random() * 0xFFFFFF);
+    const queryParams = new URLSearchParams(window.location.search);
+    const _urlSeed = queryParams.get("seed");
+    const DEFAULT_MAP_SEED = 0x758d98;
+    const MAP_SEED = _urlSeed ? (parseInt(_urlSeed, 16) >>> 0) : DEFAULT_MAP_SEED;
     const rng = mulberry32(MAP_SEED);
-    const portalInboundParams = new URLSearchParams(window.location.search);
+    const portalInboundParams = queryParams;
 
     // Each dune layer: random ridge direction and phase offset, fixed amplitude and frequency magnitude.
     const DUNE_LAYERS = [
@@ -1289,6 +1291,8 @@
       connected: false,
       team: null,
       socket: null,
+      playerName: "",
+      connecting: false,
       emit(...args) { if (this.socket) this.socket.emit(...args); },
     };
     const remotePlayers = new Map(); // id → { mesh, data }
@@ -8089,6 +8093,9 @@
         params.set("rotation_z", camera.rotation.z.toFixed(4));
         params.set("hp", Math.round(THREE.MathUtils.clamp(state.playerHealth, 1, 100)).toString());
         if (!params.has("color")) params.set("color", "amber");
+        const name = getPreferredPlayerName();
+        if (name) params.set("username", name);
+        if (mp.team) params.set("team", mp.team);
         return params;
       }
 
@@ -9576,10 +9583,12 @@
     // Single respawn point for ALL deaths — same place as game start
     function respawnAtBase(opts = {}) {
       const applyMaulaLoadout = opts.applyMaulaLoadout === true;
-      player.position.x = CONFIG.playerStart.x;
-      player.position.z = CONFIG.playerStart.z;
+      const spawnX = Number.isFinite(opts.spawnX) ? opts.spawnX : CONFIG.playerStart.x;
+      const spawnZ = Number.isFinite(opts.spawnZ) ? opts.spawnZ : CONFIG.playerStart.z;
+      player.position.x = spawnX;
+      player.position.z = spawnZ;
       player.position.y = samplePlayerGroundHeight(
-        CONFIG.playerStart.x, CONFIG.playerStart.z
+        spawnX, spawnZ
       ) + CONFIG.playerStandHeight;
       player.userData.velocity.set(0, 0, 0);
       player.userData.grounded = true;
@@ -10335,19 +10344,117 @@
     }
 
     // ── Multiplayer ────────────────────────────────────────────────────────────
-    function createRemotePlayerMesh(team) {
+    function sanitizePlayerName(raw) {
+      if (typeof raw !== "string") return "";
+      return raw
+        .replace(/\s+/g, " ")
+        .replace(/[^\w .'-]/g, "")
+        .trim()
+        .slice(0, 24);
+    }
+
+    function getPreferredPlayerName() {
+      const candidates = ["utm_name", "name", "player_name", "player"];
+      for (const key of candidates) {
+        const value = sanitizePlayerName(queryParams.get(key) || "");
+        if (value) {
+          try { localStorage.setItem("spice_player_name", value); } catch {}
+          return value;
+        }
+      }
+      try {
+        return sanitizePlayerName(localStorage.getItem("spice_player_name") || "");
+      } catch {
+        return "";
+      }
+    }
+
+    function hashString32(value) {
+      let hash = 2166136261 >>> 0;
+      for (let i = 0; i < value.length; i += 1) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function getPlayerAccentColor(team, playerId = "") {
+      const fremenPalette = [0xffc05e, 0xf3d384, 0xffa26a, 0xd0d88a];
+      const harkPalette = [0xff5c5c, 0xff7f6c, 0xd99880, 0xe58d6a];
+      const palette = team === "fremen" ? fremenPalette : harkPalette;
+      const idx = playerId ? (hashString32(playerId) % palette.length) : 0;
+      return palette[idx];
+    }
+
+    function createNameplateSprite(labelText, colorHex) {
+      const text = sanitizePlayerName(labelText) || "Pilgrim";
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+
+      const bgRgb = `rgba(12, 10, 8, 0.65)`;
+      const edgeColor = `#${colorHex.toString(16).padStart(6, "0")}`;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = bgRgb;
+      ctx.strokeStyle = edgeColor;
+      ctx.lineWidth = 4;
+      const x = 8; const y = 8; const w = canvas.width - 16; const h = canvas.height - 16; const r = 22;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "700 56px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#f7e8c5";
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      texture.minFilter = THREE.LinearFilter;
+      const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const sprite = new THREE.Sprite(material);
+      sprite.renderOrder = 35;
+      sprite.position.set(0, 4.65, 0);
+      sprite.scale.set(3.6, 0.9, 1);
+      return sprite;
+    }
+
+    function createRemotePlayerMesh(team, playerId = "", playerName = "") {
       // Reuse the full player model — already has weapon + cargo userData refs
       const root = createPlayer();
       root.position.set(0, 0, 0);
 
       // Team indicator ring floating above head
-      const indicatorColor = team === "fremen" ? 0xffb844 : 0xff2222;
+      const indicatorColor = getPlayerAccentColor(team, playerId);
       const indicatorMat = new THREE.MeshBasicMaterial({ color: indicatorColor });
       const indicator = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 6, 16), indicatorMat);
       indicator.rotation.x = Math.PI / 2;
       indicator.position.y = 3.8;
       root.add(indicator);
       root.userData.teamIndicator = indicator;
+      const nameplate = createNameplateSprite(playerName, indicatorColor);
+      if (nameplate) {
+        root.add(nameplate);
+        root.userData.nameplate = nameplate;
+      }
 
       return root;
     }
@@ -10368,7 +10475,7 @@
 
     function addRemotePlayer(data) {
       if (remotePlayers.has(data.id)) return;
-      const mesh = createRemotePlayerMesh(data.team);
+      const mesh = createRemotePlayerMesh(data.team, data.id, data.name || "");
       mesh.position.set(data.x, data.y, data.z);
       mesh.rotation.y = data.rotY ?? 0;
       scene.add(mesh);
@@ -10378,6 +10485,9 @@
     function removeRemotePlayer(id) {
       const rp = remotePlayers.get(id);
       if (!rp) return;
+      const nameplate = rp.mesh.userData?.nameplate;
+      if (nameplate?.material?.map) nameplate.material.map.dispose();
+      if (nameplate?.material) nameplate.material.dispose();
       scene.remove(rp.mesh);
       remotePlayers.delete(id);
     }
@@ -10551,6 +10661,8 @@
 
     function initMultiplayer() {
       try {
+        if (mp.connecting || mp.connected || mp.socket) return;
+        mp.connecting = true;
         // SERVER_URL can be overridden by a global set before this script
         const isLocal = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
         const serverUrl = isLocal
@@ -10558,6 +10670,7 @@
           : (typeof SERVER_URL !== "undefined" ? SERVER_URL : null);
 
         if (!serverUrl) {
+          mp.connecting = false;
           console.log("[MP] No server URL — running offline");
           return;
         }
@@ -10571,36 +10684,59 @@
         // Keep this fully isolated from local rendering startup.
         fetch(serverUrl, probeOptions)
           .then(() => connectMultiplayer(serverUrl))
-          .catch(() => console.log("[MP] Server not reachable — running offline"));
+          .catch(() => {
+            mp.connecting = false;
+            console.log("[MP] Server not reachable — running offline");
+          });
       } catch (error) {
+        mp.connecting = false;
         console.warn("[MP] Multiplayer init failed — running offline", error);
       }
     }
 
     function connectMultiplayer(serverUrl) {
+      if (mp.socket) return;
+      const playerName = getPreferredPlayerName();
+      mp.playerName = playerName;
       const socket = io(serverUrl, {
         transports: ["websocket", "polling"],
         reconnectionAttempts: 3,
         reconnectionDelay: 5000,
+        auth: {
+          seed: MAP_SEED,
+          ...(playerName ? { name: playerName } : {}),
+        },
       });
       mp.socket = socket;
 
       socket.on("connect", () => {
+        mp.connecting = false;
         mp.connected = true;
         console.log("[MP] Connected:", socket.id);
       });
 
       socket.on("disconnect", () => {
+        mp.connecting = false;
         mp.connected = false;
         mp.team = null;
+        mp.socket = null;
         console.log("[MP] Disconnected");
       });
 
       socket.on("serverFull", () => {
+        mp.connecting = false;
         console.warn("[MP] Server full");
       });
 
-      socket.on("welcome", ({ id, team, snapshot }) => {
+      socket.on("seedMismatch", ({ seed }) => {
+        const parsedSeed = Number(seed);
+        if (!Number.isFinite(parsedSeed)) return;
+        const params = new URLSearchParams(window.location.search);
+        params.set("seed", (parsedSeed >>> 0).toString(16).padStart(6, "0"));
+        window.location.search = params.toString();
+      });
+
+      socket.on("welcome", ({ id, team, spawn, snapshot }) => {
         console.log(`[MP] Joined as ${team}`);
         mp.team = team;
         // If server has a canonical seed and ours differs, reload with correct seed
@@ -10627,6 +10763,9 @@
         // Sync scores
         state.spiceScore = snapshot.scores[team] ?? 0;
         applyNetworkWormState(snapshot.worm);
+        if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
+          respawnAtBase({ spawnX: spawn.x, spawnZ: spawn.z });
+        }
       });
 
       socket.on("playerJoined", (data) => addRemotePlayer(data));
@@ -10782,9 +10921,13 @@
         else sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
       });
 
-	      socket.on("playerRespawned", ({ id }) => {
+	      socket.on("playerRespawned", ({ id, spawn }) => {
 	        const rp = remotePlayers.get(id);
 	        if (rp) {
+          if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
+            rp.data.x = spawn.x;
+            rp.data.z = spawn.z;
+          }
           rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
           rp.mesh.rotation.x = 0; rp._lastEmissive = 0; rp._lasgunDmgAccum = 0;
           rp.mesh.traverse((obj) => {
@@ -10811,7 +10954,11 @@
           state.damageFlashTimer = 0;
           state.directHitNoticeTimer = 0;
           state.playerPoisonTimer = 0;
-          respawnAtBase();
+          if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
+            respawnAtBase({ spawnX: spawn.x, spawnZ: spawn.z });
+          } else {
+            respawnAtBase();
+          }
         }
       });
     }

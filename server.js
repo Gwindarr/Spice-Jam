@@ -29,7 +29,11 @@ const HOLTZMAN_LETHAL_RADIUS = 35;
 const HOLTZMAN_DAMAGE_RADIUS = 70;
 const HOLTZMAN_DAMAGE = 80;
 const HOLTZMAN_EVENT_COOLDOWN_MS = 250;
-const MAP_SEED = Math.floor(Math.random() * 0xFFFFFF);
+const PLAYER_SPAWN_CENTER_X = -380;
+const PLAYER_SPAWN_CENTER_Z = -380;
+const PLAYER_SPAWN_RADIUS = 18;
+const PLAYER_SPAWN_MIN_SEPARATION = 6;
+const DEFAULT_MAP_SEED = 0x758d98;
 const SERVER_START_MS = Date.now();
 
 function mulberry32(seed) {
@@ -43,6 +47,26 @@ function mulberry32(seed) {
 function randomRange(min, max, rand = Math.random) {
   return min + ((max - min) * rand());
 }
+
+function parseMapSeed(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  let parsed = NaN;
+  if (/^0x[0-9a-f]+$/i.test(raw)) {
+    parsed = Number.parseInt(raw, 16);
+  } else if (/^[0-9a-f]{6,8}$/i.test(raw) && /[a-f]/i.test(raw)) {
+    parsed = Number.parseInt(raw, 16);
+  } else if (/^\d+$/.test(raw)) {
+    parsed = Number.parseInt(raw, 10);
+  }
+
+  if (!Number.isFinite(parsed)) return null;
+  return (parsed >>> 0) & 0xFFFFFF;
+}
+
+const MAP_SEED = parseMapSeed(process.env.MAP_SEED) ?? DEFAULT_MAP_SEED;
 
 function rollSpiceYield(type, nodeId, cycle = 0) {
   const seed = (
@@ -154,6 +178,51 @@ function assignTeam() {
 
 function getWorldTimeSeconds() {
   return (Date.now() - SERVER_START_MS) / 1000;
+}
+
+function sanitizePlayerName(raw) {
+  if (typeof raw !== "string") return "";
+  return raw
+    .replace(/\s+/g, " ")
+    .replace(/[^\w .'-]/g, "")
+    .trim()
+    .slice(0, 24);
+}
+
+function pickPlayerSpawnPoint(excludeId = null) {
+  const others = [];
+  for (const p of players.values()) {
+    if (!p || p.id === excludeId || p.health <= 0) continue;
+    others.push(p);
+  }
+
+  const minSeparationSq = PLAYER_SPAWN_MIN_SEPARATION * PLAYER_SPAWN_MIN_SEPARATION;
+  let best = null;
+  let bestScore = -Infinity;
+  const attempts = 24;
+
+  for (let i = 0; i < attempts; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.sqrt(Math.random()) * PLAYER_SPAWN_RADIUS;
+    const x = clampToPlayableBounds(PLAYER_SPAWN_CENTER_X + (Math.cos(angle) * dist));
+    const z = clampToPlayableBounds(PLAYER_SPAWN_CENTER_Z + (Math.sin(angle) * dist));
+
+    let nearestSq = Infinity;
+    for (const p of others) {
+      const d2 = dist2(x, z, p.x, p.z);
+      if (d2 < nearestSq) nearestSq = d2;
+    }
+    if (!Number.isFinite(nearestSq)) nearestSq = minSeparationSq;
+
+    const score = nearestSq + (Math.random() * 0.0001);
+    if (score > bestScore) {
+      bestScore = score;
+      best = { x, z };
+    }
+    if (nearestSq >= minSeparationSq) break;
+  }
+
+  return best || { x: PLAYER_SPAWN_CENTER_X, z: PLAYER_SPAWN_CENTER_Z };
 }
 
 function getWorldSnapshot() {
@@ -429,9 +498,13 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
   setTimeout(() => {
     const target = players.get(targetId);
     if (!target) return;
+    const spawn = pickPlayerSpawnPoint(targetId);
     target.health = 100;
+    target.x = spawn.x;
+    target.z = spawn.z;
+    target.y = 0;
     clearPlayerTransientState(target, { clearCarry: true });
-    io.emit("playerRespawned", { id: targetId });
+    io.emit("playerRespawned", { id: targetId, spawn });
   }, delayMs);
 }
 
@@ -900,14 +973,22 @@ io.on("connection", (socket) => {
     return;
   }
 
+  const clientSeed = parseMapSeed(socket.handshake.auth?.seed);
+  if (clientSeed !== null && clientSeed !== MAP_SEED) {
+    socket.emit("seedMismatch", { seed: MAP_SEED });
+    socket.disconnect(true);
+    return;
+  }
+
   const team = assignTeam();
-  const rawName = String(socket.handshake.auth?.name || "").trim().slice(0, 24);
+  const spawn = pickPlayerSpawnPoint(socket.id);
+  const rawName = sanitizePlayerName(String(socket.handshake.auth?.name || ""));
   const name = rawName || ("Pilgrim-" + socket.id.slice(-4).toUpperCase());
   const player = {
     id: socket.id,
     name,
     team,
-    x: 0, y: 0, z: 0,
+    x: spawn.x, y: 0, z: spawn.z,
     rotY: 0,
     spiceCarry: 0,
     health: 100,
@@ -932,7 +1013,7 @@ io.on("connection", (socket) => {
   console.log(`[+] ${socket.id} "${name}" joined as ${team} (${players.size} players)`);
 
   // Send new player the full world state
-  socket.emit("welcome", { id: socket.id, team, snapshot: getWorldSnapshot() });
+  socket.emit("welcome", { id: socket.id, team, spawn, snapshot: getWorldSnapshot() });
 
   // Tell everyone else about the new player
   socket.broadcast.emit("playerJoined", player);
@@ -1209,10 +1290,10 @@ io.on("connection", (socket) => {
   });
 
   // ── Disconnect ──
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
     players.delete(socket.id);
     io.emit("playerLeft", socket.id);
-    console.log(`[-] ${socket.id} left (${players.size} players)`);
+    console.log(`[-] ${socket.id} left (${players.size} players) reason=${reason || "unknown"}`);
   });
 });
 
