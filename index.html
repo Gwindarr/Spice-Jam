@@ -1158,6 +1158,7 @@
 	      maulaReloadTimer: 0,
 	      maulaLoaded: true,
 	      maulaReserveAmmo: CONFIG.maulaMaxDarts - 1,
+      depositToastMessage: "",
 	      lasgunFireTimer: 0,
 	      lasgunBeamTimer: 0,
 	      lasgunSpinUpTimer: 0,
@@ -2870,6 +2871,28 @@
 	      }
 	      return tryKnifeAttack();
 	    }
+
+    function getMaulaTotalDarts() {
+      return state.maulaReserveAmmo + (state.maulaLoaded ? 1 : 0);
+    }
+
+    function refillMaulaToFull() {
+      const current = getMaulaTotalDarts();
+      const missing = Math.max(0, CONFIG.maulaMaxDarts - current);
+      if (missing === 0) return 0;
+      state.maulaLoaded = true;
+      state.maulaReserveAmmo = Math.max(0, CONFIG.maulaMaxDarts - 1);
+      state.maulaReloadTimer = 0;
+      return missing;
+    }
+
+    function applyRespawnMaulaLoadout() {
+      state.maulaLoaded = true;
+      state.maulaReserveAmmo = 0;
+      state.maulaReloadTimer = 0;
+      state.maulaCooldown = 0;
+      state.maulaFireTimer = 0;
+    }
 
 	    function performKnifeHit() {
 	      let hit = false;
@@ -4859,8 +4882,13 @@
         const depositAmount = state.spiceCarry;
         state.spiceScore += depositAmount;
         state.spiceCarry = 0;
+        const maulaRefillCount = refillMaulaToFull();
         state.depositKeyConsumed = true;
         state.depositToastTimer = 2.8;
+        state.depositToastMessage = maulaRefillCount > 0
+          ? `Spice deposited  ✦  Bank: ${state.spiceScore}  ✦  Maula refilled`
+          : `Spice deposited  ✦  Bank: ${state.spiceScore}`;
+        ui.depositToast.classList.remove("show");
         spiceDepot.triggerDeposit();
         mp.emit("spiceDeposited", { amount: depositAmount });
       }
@@ -4885,7 +4913,8 @@
         if (state.depositToastTimer <= 0) {
           ui.depositToast.classList.remove("show");
         } else if (!ui.depositToast.classList.contains("show")) {
-          ui.depositToast.textContent = `Spice deposited  ✦  Bank: ${state.spiceScore}`;
+          ui.depositToast.textContent = state.depositToastMessage
+            || `Spice deposited  ✦  Bank: ${state.spiceScore}`;
           ui.depositToast.classList.add("show");
         }
       }
@@ -6183,7 +6212,7 @@
 	      state.holtzmanDeathTimer -= delta;
 	      if (state.holtzmanDeathTimer <= 0) {
 	        state.holtzmanDeathTimer = -1;
-	        respawnAtBase();
+	        respawnAtBase({ applyMaulaLoadout: true });
 	      }
 	    }
 
@@ -8678,7 +8707,7 @@
 	      wormHazard.group.visible = false;
       if (!mp.connected) {
 	        startWormRetreat();
-	        respawnAtBase();
+		        respawnAtBase({ applyMaulaLoadout: true });
       }
 	    }
 
@@ -9545,7 +9574,8 @@
     // ── End NPC System ──────────────────────────────────────────────────────────
 
     // Single respawn point for ALL deaths — same place as game start
-    function respawnAtBase() {
+    function respawnAtBase(opts = {}) {
+      const applyMaulaLoadout = opts.applyMaulaLoadout === true;
       player.position.x = CONFIG.playerStart.x;
       player.position.z = CONFIG.playerStart.z;
       player.position.y = samplePlayerGroundHeight(
@@ -9561,6 +9591,9 @@
       state.pvpDeathPose = 0;
       camera.rotation.set(CONFIG.cameraPitchDown, 0, 0);
       updateCameraRig(1);
+      if (applyMaulaLoadout) {
+        applyRespawnMaulaLoadout();
+      }
     }
 
     function placePlayerOnGround() {
