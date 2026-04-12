@@ -121,6 +121,8 @@ const WORM_CFG = {
 // ── Game state ────────────────────────────────────────────────────────────────
 
 const players = new Map(); // socketId → playerState
+const playerSessions = new Map(); // playerToken -> { name, team, socketId, lastSeen }
+const socketSessionTokens = new Map(); // socketId -> playerToken
 
 // Spice nodes: server owns active state, remaining yield, type, and respawn timers.
 // Positions are still determined client-side from MAP_SEED for now.
@@ -187,6 +189,20 @@ function sanitizePlayerName(raw) {
     .replace(/[^\w .'-]/g, "")
     .trim()
     .slice(0, 24);
+}
+
+function sanitizePlayerToken(raw) {
+  if (typeof raw !== "string") return "";
+  const token = raw.trim().slice(0, 64);
+  if (!/^[a-z0-9_-]{12,64}$/i.test(token)) return "";
+  return token;
+}
+
+function fallbackPlayerName(socketId, playerToken = "") {
+  const stableSuffix = playerToken
+    ? playerToken.slice(-4).toUpperCase()
+    : String(socketId).slice(-4).toUpperCase();
+  return `Pilgrim-${stableSuffix}`;
 }
 
 function pickPlayerSpawnPoint(excludeId = null) {
@@ -980,10 +996,17 @@ io.on("connection", (socket) => {
     return;
   }
 
-  const team = assignTeam();
+  const sessionToken = sanitizePlayerToken(String(socket.handshake.auth?.playerToken || ""));
+  const session = sessionToken ? (playerSessions.get(sessionToken) || null) : null;
+  if (session?.socketId && session.socketId !== socket.id) {
+    const prevSocket = io.sockets.sockets.get(session.socketId);
+    if (prevSocket) prevSocket.disconnect(true);
+  }
+
+  const team = session?.team || assignTeam();
   const spawn = pickPlayerSpawnPoint(socket.id);
   const rawName = sanitizePlayerName(String(socket.handshake.auth?.name || ""));
-  const name = rawName || ("Pilgrim-" + socket.id.slice(-4).toUpperCase());
+  const name = rawName || session?.name || fallbackPlayerName(socket.id, sessionToken);
   const player = {
     id: socket.id,
     name,
@@ -1009,6 +1032,15 @@ io.on("connection", (socket) => {
     moveTime: 0,
   };
   players.set(socket.id, player);
+  if (sessionToken) {
+    playerSessions.set(sessionToken, {
+      name,
+      team,
+      socketId: socket.id,
+      lastSeen: Date.now(),
+    });
+    socketSessionTokens.set(socket.id, sessionToken);
+  }
 
   console.log(`[+] ${socket.id} "${name}" joined as ${team} (${players.size} players)`);
 
@@ -1291,6 +1323,18 @@ io.on("connection", (socket) => {
 
   // ── Disconnect ──
   socket.on("disconnect", (reason) => {
+    const sessionTokenOnDisconnect = socketSessionTokens.get(socket.id);
+    socketSessionTokens.delete(socket.id);
+    const leftPlayer = players.get(socket.id);
+    if (sessionTokenOnDisconnect) {
+      const sessionState = playerSessions.get(sessionTokenOnDisconnect);
+      if (sessionState && sessionState.socketId === socket.id) {
+        sessionState.socketId = null;
+        sessionState.lastSeen = Date.now();
+        if (leftPlayer?.name) sessionState.name = leftPlayer.name;
+        if (leftPlayer?.team) sessionState.team = leftPlayer.team;
+      }
+    }
     players.delete(socket.id);
     io.emit("playerLeft", socket.id);
     console.log(`[-] ${socket.id} left (${players.size} players) reason=${reason || "unknown"}`);

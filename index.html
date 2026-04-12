@@ -1105,6 +1105,14 @@
     const rng = mulberry32(MAP_SEED);
     const portalInboundParams = queryParams;
 
+    function stripSeedFromUrl() {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has("seed")) return;
+      url.searchParams.delete("seed");
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState(null, "", next || "/");
+    }
+
     // Each dune layer: random ridge direction and phase offset, fixed amplitude and frequency magnitude.
     const DUNE_LAYERS = [
       { amp: 30,  mag: 0.016 },
@@ -8081,6 +8089,7 @@
       function buildForwardParams() {
         const params = new URLSearchParams(window.location.search);
         params.delete("portal");
+        params.delete("seed");
         params.set("ref", currentGameRef);
         const vel = player.userData.velocity;
         const speed = Math.hypot(vel.x, vel.z);
@@ -10369,6 +10378,24 @@
       }
     }
 
+    function getOrCreatePlayerToken() {
+      const storageKey = "spice_player_token";
+      const makeToken = () => {
+        const rand = Math.random().toString(36).slice(2, 10);
+        const now = Date.now().toString(36);
+        return `${now}${rand}`;
+      };
+      try {
+        const existing = String(localStorage.getItem(storageKey) || "").trim();
+        if (/^[a-z0-9_-]{12,64}$/i.test(existing)) return existing;
+        const token = makeToken();
+        localStorage.setItem(storageKey, token);
+        return token;
+      } catch {
+        return makeToken();
+      }
+    }
+
     function hashString32(value) {
       let hash = 2166136261 >>> 0;
       for (let i = 0; i < value.length; i += 1) {
@@ -10697,6 +10724,7 @@
     function connectMultiplayer(serverUrl) {
       if (mp.socket) return;
       const playerName = getPreferredPlayerName();
+      const playerToken = getOrCreatePlayerToken();
       mp.playerName = playerName;
       const socket = io(serverUrl, {
         transports: ["websocket", "polling"],
@@ -10704,6 +10732,7 @@
         reconnectionDelay: 5000,
         auth: {
           seed: MAP_SEED,
+          playerToken,
           ...(playerName ? { name: playerName } : {}),
         },
       });
@@ -10715,12 +10744,12 @@
         console.log("[MP] Connected:", socket.id);
       });
 
-      socket.on("disconnect", () => {
+      socket.on("disconnect", (reason, details) => {
         mp.connecting = false;
         mp.connected = false;
         mp.team = null;
         mp.socket = null;
-        console.log("[MP] Disconnected");
+        console.log("[MP] Disconnected", reason, details?.description || "");
       });
 
       socket.on("serverFull", () => {
@@ -10746,6 +10775,7 @@
           window.location.search = params.toString();
           return;
         }
+        stripSeedFromUrl();
         // Spawn existing players
         for (const p of snapshot.players) {
           if (p.id !== id) addRemotePlayer(p);
