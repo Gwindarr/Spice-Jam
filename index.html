@@ -609,7 +609,10 @@
 	        <span id="hudContextValue" class="compact-value">0%</span>
       </div>
     </div>
-    <div id="hudStatus" class="hud-status">Find spice in open sand.</div>
+    <div class="hud-status" style="display:flex;justify-content:space-between;align-items:baseline;">
+      <span id="hudStatus">Find spice in open sand.</span>
+      <span id="hudPlayerCount" style="font-size:11px;color:rgba(200,151,96,0.6);white-space:nowrap;margin-left:8px;"></span>
+    </div>
   </div>
   <div id="depositToast" class="deposit-toast"></div>
   <div id="damageFlash"></div>
@@ -998,6 +1001,7 @@
       hitMarker: document.getElementById("hitMarker"),
       damageNumbers: document.getElementById("damageNumbers"),
       killFeed: document.getElementById("killFeed"),
+      hudPlayerCount: document.getElementById("hudPlayerCount"),
       portalPrompt: document.getElementById("portalPrompt"),
       hudDay: document.getElementById("hudDay"),
       hudPhase: document.getElementById("hudPhase"),
@@ -10825,6 +10829,13 @@
       }
     }
 
+    function updatePlayerCount() {
+      const count = remotePlayers.size + (mp.connected ? 1 : 0);
+      const text = mp.connected ? `Players ${count}/20` : "";
+      console.log("[MP] updatePlayerCount:", text, "connected:", mp.connected, "remote:", remotePlayers.size);
+      ui.hudPlayerCount.textContent = text;
+    }
+
     function addRemotePlayer(data) {
       if (remotePlayers.has(data.id)) return;
       const mesh = createRemotePlayerMesh(data.team, data.id, data.name || "");
@@ -10832,6 +10843,7 @@
       mesh.rotation.y = data.rotY ?? 0;
       scene.add(mesh);
       remotePlayers.set(data.id, { mesh, data: { ...data }, hitFlash: 0, poisonTimer: 0 });
+      updatePlayerCount();
     }
 
     function removeRemotePlayer(id) {
@@ -10842,6 +10854,7 @@
       if (nameplate?.material) nameplate.material.dispose();
       scene.remove(rp.mesh);
       remotePlayers.delete(id);
+      updatePlayerCount();
     }
 
     function updateRemotePlayers(delta) {
@@ -11068,6 +11081,7 @@
         mp.connecting = false;
         mp.connected = true;
         console.log("[MP] Connected:", socket.id);
+        updatePlayerCount();
       });
 
       socket.on("disconnect", (reason, details) => {
@@ -11076,6 +11090,7 @@
         mp.team = null;
         mp.socket = null;
         console.log("[MP] Disconnected", reason, details?.description || "");
+        updatePlayerCount();
       });
 
       socket.on("serverFull", () => {
