@@ -62,7 +62,51 @@
 	      min-width: 208px;
 	      max-width: 220px;
 	      padding: 10px 12px;
+        pointer-events: auto;
 	    }
+
+    #devHudToggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 0 8px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    #devHudToggle::after {
+      content: "−";
+      font-size: 14px;
+      line-height: 1;
+      color: rgba(240, 200, 96, 0.9);
+    }
+
+    #devHud.collapsed {
+      min-width: 0;
+      max-width: none;
+      padding: 8px 10px;
+    }
+
+    #devHud.collapsed #devHudToggle {
+      margin-bottom: 0;
+    }
+
+    #devHud.collapsed #devHudToggle::after {
+      content: "+";
+    }
+
+    #devHud.collapsed .line,
+    #devHud.collapsed .noise-row,
+    #devHud.collapsed .hint {
+      display: none;
+    }
 
     .hud-panel .title {
       margin: 0 0 8px;
@@ -569,9 +613,69 @@
         right: 10px;
       }
 
+      #devHud.collapsed {
+        padding: 7px 10px;
+      }
+
       .compact-meter {
         grid-template-columns: 32px minmax(0, 1fr) 36px;
       }
+    }
+
+    body.spice-mobile-ui #playerHud {
+      top: 12px;
+      left: 12px;
+      right: auto;
+      bottom: auto;
+      width: min(210px, calc(100vw - 24px));
+      padding: 8px 9px;
+      background:
+        radial-gradient(circle at top left, rgba(250, 186, 82, 0.09), transparent 42%),
+        linear-gradient(180deg, rgba(46, 24, 7, 0.84), rgba(16, 10, 4, 0.84)),
+        var(--panel);
+    }
+
+    body.spice-mobile-ui #playerHud .player-strip {
+      gap: 4px;
+    }
+
+    body.spice-mobile-ui #playerHud .hud-tag {
+      min-height: 24px;
+      padding: 4px 8px;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+    }
+
+    body.spice-mobile-ui #playerHud .compact-meter-stack {
+      gap: 4px;
+      margin-top: 6px;
+    }
+
+    body.spice-mobile-ui #playerHud .compact-meter {
+      grid-template-columns: 26px minmax(0, 1fr) 34px;
+      gap: 6px;
+    }
+
+    body.spice-mobile-ui #playerHud .compact-label,
+    body.spice-mobile-ui #playerHud .compact-value {
+      font-size: 10px;
+      letter-spacing: 0.05em;
+    }
+
+    body.spice-mobile-ui #playerHud .compact-track {
+      height: 8px;
+    }
+
+    body.spice-mobile-ui #playerHud .hud-status {
+      display: block !important;
+      margin-top: 6px;
+      min-height: 0;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    body.spice-mobile-ui #hudPlayerCount {
+      display: none;
     }
   </style>
 </head>
@@ -620,7 +724,7 @@
   <div id="combatStatus"></div>
 
 	  <div id="devHud" class="hud-panel">
-	    <div class="title">Dev Hud</div>
+      <button id="devHudToggle" type="button" aria-expanded="true">Dev Hud</button>
 	    <div id="hudDay" class="line">Time: 12:00</div>
 	    <div id="hudPhase" class="line">Phase: Day</div>
     <div id="hudSpeed" class="line">Speed: 0.0</div>
@@ -998,6 +1102,8 @@
       overlayBody: document.getElementById("overlayBody"),
       overlayHint: document.getElementById("overlayHint"),
       overlayCta: document.getElementById("overlayCta"),
+      devHud: document.getElementById("devHud"),
+      devHudToggle: document.getElementById("devHudToggle"),
       resumeHint: document.getElementById("resumeHint"),
       deathFlash: document.getElementById("deathFlash"),
       deathText: document.getElementById("deathText"),
@@ -1050,6 +1156,7 @@
 
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 900);
     const CAMERA_BASE_FOV = camera.fov;
+    camera.rotation.order = "YXZ";
     camera.rotation.x = CONFIG.cameraPitchDown;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1063,7 +1170,41 @@
     document.body.appendChild(renderer.domElement);
 
 
-    const controls = new PointerLockControls(camera, document.body);
+    function isProbablyMobile() {
+      const hasTouch = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+      const coarsePointer = typeof window !== "undefined"
+        && typeof window.matchMedia === "function"
+        && window.matchMedia("(pointer: coarse)").matches;
+      return hasTouch && coarsePointer;
+    }
+
+    function createMobileControlsShim() {
+      const emitter = new EventTarget();
+      return {
+        isLocked: false,
+        lock() {
+          if (this.isLocked) return;
+          this.isLocked = true;
+          emitter.dispatchEvent(new Event("lock"));
+        },
+        unlock() {
+          if (!this.isLocked) return;
+          this.isLocked = false;
+          emitter.dispatchEvent(new Event("unlock"));
+        },
+        addEventListener(type, listener) {
+          emitter.addEventListener(type, listener);
+        },
+        removeEventListener(type, listener) {
+          emitter.removeEventListener(type, listener);
+        },
+      };
+    }
+
+    const IS_MOBILE = isProbablyMobile();
+    const controls = IS_MOBILE
+      ? createMobileControlsShim()
+      : new PointerLockControls(camera, document.body);
     scene.add(camera);
 
     const hemiLight = new THREE.HemisphereLight(0xa0d8f8, 0xc49060, 0.6);
@@ -1273,6 +1414,15 @@
       KeyQ: false,
     };
 
+    const mobileInput = {
+      moveX: 0,
+      moveY: 0,
+      magnitude: 0,
+      lookYaw: camera.rotation.y,
+      lookPitch: camera.rotation.x,
+      active: false,
+    };
+
     const clock = new THREE.Clock();
 
     const tempForward = new THREE.Vector3();
@@ -1367,10 +1517,11 @@
 	    const thumper = createThumper();
     // Must be initialized before createSpiceObjective so the initial plume event can fire
     var plumeEventState = { active: false, elapsed: 0, burstRing: null, dustPuffs: [], coreNode: null };
-	    const spiceObjective = createSpiceObjective();
+    const spiceObjective = createSpiceObjective();
     const spiceDepot = createSpiceDepot();
     const portalSystem = createPortalSystem();
 	    const trainingDummy = createTrainingDummy();
+    const extraTrainingDummies = [];
     const shieldedDummies = [
       createTrainingDummy({ offsetX: 8.8, offsetZ: -6.2, hasShield: true }),
       createTrainingDummy({ offsetX: 25, offsetZ: 0, hasShield: true }),
@@ -1404,7 +1555,7 @@
     }
 
     function createSpiceCarrySign() {
-      const sign = createHintLabel(["YELLOW BACK CUBE", "= CARRYING SPICE"], "#ffe59a", 7.4, 2.0);
+      const sign = createHintLabel(["GLOWING PACK", "= CARRIES SPICE", "SPICE DROPS ON DEATH"], "#ffe59a", 7.9, 2.35);
       sign.position.set(CONFIG.playerStart.x - 10, sampleGroundHeight(CONFIG.playerStart.x - 10, CONFIG.playerStart.z - 22) + 5.6, CONFIG.playerStart.z - 22);
       scene.add(sign);
       return sign;
@@ -1449,6 +1600,7 @@
         )
       );
     }
+    await initMobileControlScheme();
 	    bindEvents();
     updateDayNight(0);
     refreshHud();
@@ -3021,22 +3173,44 @@
 	        hit = true;
 	      }
 
-	      if (
-	        trainingDummy &&
-	        testKnifeHitTarget(trainingDummy.group.position, CONFIG.trainingDummyHitRadius)
-	      ) {
-	        hitTarget(trainingDummy, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
-	        trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
-	        triggerKnifeImpact(tempProjectileCenter, strikeDir);
-	        hit = true;
-	      }
+      if (!hit) {
+        for (const dummy of getAllTrainingDummies()) {
+          if (!dummy || dummy.dead) continue;
+          if (testKnifeHitTarget(dummy.group.position, CONFIG.trainingDummyHitRadius)) {
+            hitTarget(dummy, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
+            dummy.targetPivot.getWorldPosition(tempProjectileCenter);
+            triggerKnifeImpact(tempProjectileCenter, strikeDir);
+            hit = true;
+            break;
+          }
+        }
+      }
+
+      if (!hit) {
+        for (const sd of shieldedDummies) {
+          if (!sd || sd.dead) continue;
+          if (testKnifeHitTarget(sd.group.position, CONFIG.trainingDummyHitRadius)) {
+            sd.targetPivot.getWorldPosition(tempProjectileCenter);
+            sd.shieldHitFlash = Math.max(sd.shieldHitFlash ?? 0, 1.0);
+            triggerKnifeImpact(tempProjectileCenter, strikeDir);
+            hit = true;
+            break;
+          }
+        }
+      }
 
       if (!hit) {
         for (const npc of npcs) {
           if (npc.dead) continue;
           if (testKnifeHitTarget(npc.group.position, npc.bodyHitRadius)) {
-            hitTarget(npc, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
             tempProjectileCenter.set(npc.group.position.x, npc.group.position.y + 1.2, npc.group.position.z);
+            if (npc.shieldActive) {
+              npc.shieldHitFlash = Math.max(npc.shieldHitFlash ?? 0, 1.0);
+              triggerKnifeImpact(tempProjectileCenter, strikeDir);
+              hit = true;
+              break;
+            }
+            hitTarget(npc, 1, resolveImpactDamage(CONFIG.knifeDamage).damage);
             triggerKnifeImpact(tempProjectileCenter, strikeDir);
             hit = true;
             break;
@@ -3242,10 +3416,11 @@
 	        checkNpcAim(npc.headDot, npc.headHitRadius);
 	        checkNpcAim(npc.targetPivot, npc.bodyHitRadius);
 	      }
-	      if (trainingDummy && !trainingDummy.dead) {
-	        checkNpcAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
-	        checkNpcAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
-	      }
+      for (const dummy of getAllTrainingDummies()) {
+        if (!dummy || dummy.dead) continue;
+        checkNpcAim(dummy.headDot, CONFIG.trainingDummyHeadRadius);
+        checkNpcAim(dummy.targetPivot, CONFIG.trainingDummyHitRadius);
+      }
         for (const [, rp] of remotePlayers) {
           tempProjectileCenter.set(rp.mesh.position.x, rp.mesh.position.y + 2.56, rp.mesh.position.z);
           const tB = tempKnifeOffset.subVectors(tempProjectileCenter, camera.position).dot(tempForward);
@@ -3331,11 +3506,11 @@
 	      knifeRoot.rotation.z = THREE.MathUtils.lerp(0.12, -0.42, swingAmount);
 	    }
 
-	    function hitMaulaProjectileTarget(result, headshot = false) {
+	    function hitMaulaProjectileTarget(target, result, headshot = false) {
 	      const intensity = headshot ? 1.45 : result.isCritical ? 1.2 : 1;
-	      hitTarget(trainingDummy, intensity, result.damage);
-	      if (!trainingDummy.dead) {
-	        trainingDummy.poisonTimer = CONFIG.maulaPoisonDuration;
+	      hitTarget(target, intensity, result.damage);
+	      if (!target.dead) {
+	        target.poisonTimer = CONFIG.maulaPoisonDuration;
 	      }
 	      const suffix = headshot
 	        ? `Headshot for ${result.damage}.`
@@ -3349,6 +3524,10 @@
 	      });
 	      emitNoiseImpulse(CONFIG.maulaImpactNoiseImpulse);
 	    }
+
+    function getAllTrainingDummies() {
+      return [trainingDummy, ...extraTrainingDummies].filter(Boolean);
+    }
 
 	    function updateMaulaCombat(delta) {
 	      if (state.maulaCooldown > 0) {
@@ -3499,35 +3678,75 @@
 	          }
 	        }
 
-	        if (!hit && trainingDummy) {
-	          trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
-	          if (segmentHitsSphere(
-	            tempProjectileStart,
-	            tempProjectileEnd,
-	            tempProjectileCenter,
-	            CONFIG.trainingDummyHeadRadius + CONFIG.maulaProjectileRadius
-	          )) {
-	            hitMaulaProjectileTarget(resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true }), true);
-	            hit = true;
-	          } else {
-	            trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
-	            if (segmentHitsSphere(
-	              tempProjectileStart,
-	              tempProjectileEnd,
-	              tempProjectileCenter,
-	              CONFIG.trainingDummyHitRadius + CONFIG.maulaProjectileRadius
-	            )) {
-	              hitMaulaProjectileTarget(resolveImpactDamage(CONFIG.maulaImpactDamage));
-	              hit = true;
-	            }
-	          }
-	        }
+        if (!hit) {
+          for (const dummy of getAllTrainingDummies()) {
+            if (!dummy || dummy.dead) continue;
+            dummy.headDot.getWorldPosition(tempProjectileCenter);
+            if (segmentHitsSphere(
+              tempProjectileStart,
+              tempProjectileEnd,
+              tempProjectileCenter,
+              CONFIG.trainingDummyHeadRadius + CONFIG.maulaProjectileRadius
+            )) {
+              hitMaulaProjectileTarget(dummy, resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true }), true);
+              hit = true;
+              break;
+            }
+            dummy.targetPivot.getWorldPosition(tempProjectileCenter);
+            if (segmentHitsSphere(
+              tempProjectileStart,
+              tempProjectileEnd,
+              tempProjectileCenter,
+              CONFIG.trainingDummyHitRadius + CONFIG.maulaProjectileRadius
+            )) {
+              hitMaulaProjectileTarget(dummy, resolveImpactDamage(CONFIG.maulaImpactDamage));
+              hit = true;
+              break;
+            }
+          }
+        }
+
+        if (!hit) {
+          for (const sd of shieldedDummies) {
+            if (!sd || sd.dead) continue;
+            sd.headDot.getWorldPosition(tempProjectileCenter);
+            if (segmentHitsSphere(
+              tempProjectileStart,
+              tempProjectileEnd,
+              tempProjectileCenter,
+              CONFIG.trainingDummyHeadRadius + CONFIG.maulaProjectileRadius
+            )) {
+              sd.shieldHitFlash = Math.max(sd.shieldHitFlash ?? 0, 1.0);
+              sfx.shieldToggle.play({ volumeMultiplier: 1.0, playbackRate: 1.2 });
+              hit = true;
+              break;
+            }
+            sd.targetPivot.getWorldPosition(tempProjectileCenter);
+            if (segmentHitsSphere(
+              tempProjectileStart,
+              tempProjectileEnd,
+              tempProjectileCenter,
+              CONFIG.trainingDummyHitRadius + CONFIG.maulaProjectileRadius
+            )) {
+              sd.shieldHitFlash = Math.max(sd.shieldHitFlash ?? 0, 1.0);
+              sfx.shieldToggle.play({ volumeMultiplier: 1.0, playbackRate: 1.2 });
+              hit = true;
+              break;
+            }
+          }
+        }
 
         if (!hit) {
           for (const npc of npcs) {
             if (npc.dead) continue;
             npc.headDot.getWorldPosition(tempProjectileCenter);
             if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, npc.headHitRadius + CONFIG.maulaProjectileRadius)) {
+              if (npc.shieldActive) {
+                npc.shieldHitFlash = Math.max(npc.shieldHitFlash ?? 0, 1.0);
+                sfx.shieldToggle.play({ volumeMultiplier: 1.0, playbackRate: 1.2 });
+                hit = true;
+                break;
+              }
               const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
               hitTarget(npc, 1.45, result.damage, { headshot: true });
               if (!npc.dead) npc.poisonTimer = CONFIG.maulaPoisonDuration;
@@ -3539,6 +3758,12 @@
             }
             npc.targetPivot.getWorldPosition(tempProjectileCenter);
             if (segmentHitsSphere(tempProjectileStart, tempProjectileEnd, tempProjectileCenter, npc.bodyHitRadius + CONFIG.maulaProjectileRadius)) {
+              if (npc.shieldActive) {
+                npc.shieldHitFlash = Math.max(npc.shieldHitFlash ?? 0, 1.0);
+                sfx.shieldToggle.play({ volumeMultiplier: 1.0, playbackRate: 1.2 });
+                hit = true;
+                break;
+              }
               const result = resolveImpactDamage(CONFIG.maulaImpactDamage);
               hitTarget(npc, result.isCritical ? 1.2 : 1, result.damage);
               if (!npc.dead) npc.poisonTimer = CONFIG.maulaPoisonDuration;
@@ -4042,10 +4267,11 @@
 	        snapAim(npc.headDot, npc.headHitRadius);
 	        snapAim(npc.targetPivot, npc.bodyHitRadius);
 	      }
-	      if (trainingDummy && !trainingDummy.dead) {
-	        snapAim(trainingDummy.headDot, CONFIG.trainingDummyHeadRadius);
-	        snapAim(trainingDummy.targetPivot, CONFIG.trainingDummyHitRadius);
-	      }
+      for (const dummy of getAllTrainingDummies()) {
+        if (!dummy || dummy.dead) continue;
+        snapAim(dummy.headDot, CONFIG.trainingDummyHeadRadius);
+        snapAim(dummy.targetPivot, CONFIG.trainingDummyHitRadius);
+      }
 	      for (const sd of shieldedDummies) {
 	        if (!sd || sd.dead) continue;
 	        snapAim(sd.headDot, CONFIG.trainingDummyHeadRadius);
@@ -4088,18 +4314,20 @@
 	        if (d < bestDistance) { bestDistance = d; bestType = "thumper"; bestHeadshot = false; }
 	      }
 
-	      if (trainingDummy && !trainingDummy.dead) {
-	        trainingDummy.headDot.getWorldPosition(tempProjectileCenter);
-	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
-	          const d = origin.distanceTo(tempProjectileCenter);
-	          if (d < bestDistance) { bestDistance = d; bestType = "dummy"; bestHeadshot = true; }
-	        }
-	        trainingDummy.targetPivot.getWorldPosition(tempProjectileCenter);
-	        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
-	          const d = origin.distanceTo(tempProjectileCenter);
-	          if (d < bestDistance && bestType !== "dummy") { bestDistance = d; bestType = "dummy"; bestHeadshot = false; }
-	        }
-	      }
+      let bestDummy = null;
+      for (const dummy of getAllTrainingDummies()) {
+        if (!dummy || dummy.dead) continue;
+        dummy.headDot.getWorldPosition(tempProjectileCenter);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHeadRadius + 0.08)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance) { bestDistance = d; bestType = "dummy"; bestHeadshot = true; bestDummy = dummy; }
+        }
+        dummy.targetPivot.getWorldPosition(tempProjectileCenter);
+        if (segmentHitsSphere(origin, tempLasgunEnd, tempProjectileCenter, CONFIG.trainingDummyHitRadius + 0.1)) {
+          const d = origin.distanceTo(tempProjectileCenter);
+          if (d < bestDistance && bestType !== "dummy") { bestDistance = d; bestType = "dummy"; bestHeadshot = false; bestDummy = dummy; }
+        }
+      }
 
 	      let bestShieldedDummy = null;
       let bestShieldedNpc = null;
@@ -4179,8 +4407,8 @@
 	      if (bestType === "thumper") {
 	        setThumperActive(false);
 	        broadcastWormRadio("Lasgun beam sheared through the thumper.");
-	      } else if (bestType === "dummy") {
-	        hitTarget(trainingDummy, 0.35, CONFIG.lasgunDPS * delta, { continuous: true });
+	      } else if (bestType === "dummy" && bestDummy) {
+	        hitTarget(bestDummy, 0.35, CONFIG.lasgunDPS * delta, { continuous: true });
 	      } else if (bestType && bestType.startsWith("npc:")) {
 	        const ni = parseInt(bestType.slice(4));
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
@@ -5247,7 +5475,7 @@
     }
 
     function resolveDummyCollision(velocity) {
-      resolveCylinderDummyCollision(trainingDummy, velocity);
+      for (const dummy of getAllTrainingDummies()) resolveCylinderDummyCollision(dummy, velocity);
       for (const sd of shieldedDummies) resolveCylinderDummyCollision(sd, velocity);
       for (const npc of npcs) resolveCylinderDummyCollision(npc, velocity);
     }
@@ -6277,16 +6505,17 @@
 	          }
 	        }
 	        // Practice targets and NPCs
-	        if (trainingDummy && !trainingDummy.dead) {
-	          const dDist = ePos.distanceTo(trainingDummy.group.position);
-	          if (dDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            killHazardTarget(trainingDummy, 2.0);
-	          } else if (dDist < CONFIG.holtzmanExplosionDamageRadius) {
-	            const f = 1 - (dDist - CONFIG.holtzmanExplosionLethalRadius) /
-	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
-	            hitTarget(trainingDummy, 1.5, CONFIG.holtzmanExplosionDamage * f, { silent: true });
-	          }
-	        }
+        for (const dummy of getAllTrainingDummies()) {
+          if (!dummy || dummy.dead) continue;
+          const dDist = ePos.distanceTo(dummy.group.position);
+          if (dDist < CONFIG.holtzmanExplosionLethalRadius) {
+            killHazardTarget(dummy, 2.0);
+          } else if (dDist < CONFIG.holtzmanExplosionDamageRadius) {
+            const f = 1 - (dDist - CONFIG.holtzmanExplosionLethalRadius) /
+              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
+            hitTarget(dummy, 1.5, CONFIG.holtzmanExplosionDamage * f, { silent: true });
+          }
+        }
 	        for (const sd of shieldedDummies) {
 	          if (!sd || sd.dead) continue;
 	          const sDist = ePos.distanceTo(sd.group.position);
@@ -7187,8 +7416,8 @@
 	    function createTrainingDummy(opts = {}) {
 	      const ox = opts.offsetX !== undefined ? opts.offsetX : CONFIG.trainingDummyOffsetX;
 	      const oz = opts.offsetZ !== undefined ? opts.offsetZ : CONFIG.trainingDummyOffsetZ;
-        const baseX = CONFIG.playerStart.x + ox;
-        const baseZ = CONFIG.playerStart.z + oz;
+        const baseX = Number.isFinite(opts.worldX) ? opts.worldX : CONFIG.playerStart.x + ox;
+        const baseZ = Number.isFinite(opts.worldZ) ? opts.worldZ : CONFIG.playerStart.z + oz;
 	      const group = new THREE.Group();
 	      group.position.set(
 	        baseX,
@@ -7445,10 +7674,11 @@
     function killTargetsInRadius(center, radius) {
       const radiusSq = radius * radius;
 
-      if (trainingDummy && !trainingDummy.dead) {
-        const dx = trainingDummy.group.position.x - center.x;
-        const dz = trainingDummy.group.position.z - center.z;
-        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(trainingDummy, 1.8);
+      for (const dummy of getAllTrainingDummies()) {
+        if (!dummy || dummy.dead) continue;
+        const dx = dummy.group.position.x - center.x;
+        const dz = dummy.group.position.z - center.z;
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(dummy, 1.8);
       }
 
       for (const sd of shieldedDummies) {
@@ -7466,15 +7696,16 @@
       }
     }
 
-	    function respawnTrainingDummy() {
-	      trainingDummy.health = CONFIG.dummyMaxHealth;
-	      trainingDummy.dead = false;
-	      trainingDummy.deadFallTimer = 0;
-	      trainingDummy.respawnTimer = 0;
-	      trainingDummy.hitFlash = 0;
-	      trainingDummy.wobble = 0;
-	      trainingDummy.group.position.copy(trainingDummy.spawnPos);
-	      trainingDummy.group.rotation.set(0, 0, 0);
+	    function respawnTrainingDummy(dummy = trainingDummy) {
+	      dummy.health = CONFIG.dummyMaxHealth;
+	      dummy.dead = false;
+	      dummy.deadFallTimer = 0;
+	      dummy.respawnTimer = 0;
+	      dummy.hitFlash = 0;
+	      dummy.wobble = 0;
+        dummy.poisonTimer = 0;
+	      dummy.group.position.copy(dummy.spawnPos);
+	      dummy.group.rotation.set(0, 0, 0);
 	    }
 
 	    function updateShieldedDummy(delta, sd) {
@@ -7885,7 +8116,12 @@
         const tutorial = id === CONFIG.spiceTutorialNodeId;
         const totalYield = rollNodeYield(type, id, 0, tutorial);
         const tutorialLabel = tutorial
-          ? createHintLabel(["SPICE", "v"], "#ffe4a4", 4.8, 1.7)
+          ? createHintLabel(
+            ["HOLD E TO HARVEST", "HARVESTING CREATES NOISE", "DON'T STAY TOO LONG"],
+            "#ffe4a4",
+            7.6,
+            2.45
+          )
           : null;
         if (tutorialLabel) {
           tutorialLabel.position.set(0, 6.3, 0);
@@ -8297,6 +8533,9 @@
     }
 
     function createBankLabel(color = "#ffd07a") {
+      const title = arguments[1] ?? "SIETCH BANK";
+      const subtitle = arguments[2] ?? "DEPOSIT SPICE (E)";
+      const footer = arguments[3] ?? "DEPOSITING RESTORES HEALTH + MAULA";
       const canvas = document.createElement("canvas");
       canvas.width = 760;
       canvas.height = 240;
@@ -8312,11 +8551,11 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.font = "700 68px Arial";
-      ctx.fillText("SIETCH BANK", canvas.width * 0.5, canvas.height * 0.36);
+      ctx.fillText(title, canvas.width * 0.5, canvas.height * 0.36);
       ctx.font = "700 40px Arial";
-      ctx.fillText("DEPOSIT SPICE (E)", canvas.width * 0.5, canvas.height * 0.62);
+      ctx.fillText(subtitle, canvas.width * 0.5, canvas.height * 0.62);
       ctx.font = "700 24px Arial";
-      ctx.fillText("DEPOSITING RESTORES HEALTH + MAULA", canvas.width * 0.5, canvas.height * 0.78);
+      ctx.fillText(footer, canvas.width * 0.5, canvas.height * 0.78);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -8335,7 +8574,7 @@
     function createHintLabel(lines, color = "#ffe0a2", width = 7.8, height = 2.25) {
       const canvas = document.createElement("canvas");
       canvas.width = 700;
-      canvas.height = 220;
+      canvas.height = 250;
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "rgba(18, 12, 6, 0.64)";
@@ -8347,10 +8586,10 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const safeLines = Array.isArray(lines) ? lines.slice(0, 3) : [String(lines || "")];
-      const top = safeLines.length === 1 ? 110 : 78;
+      const top = safeLines.length === 1 ? 125 : safeLines.length === 2 ? 90 : 62;
       safeLines.forEach((line, index) => {
         ctx.font = index === 0 ? "700 42px Arial" : "700 28px Arial";
-        ctx.fillText(line, canvas.width * 0.5, top + (index * 54));
+        ctx.fillText(line, canvas.width * 0.5, top + (index * 58));
       });
 
       const texture = new THREE.CanvasTexture(canvas);
@@ -8651,58 +8890,46 @@
 	      }
 	    }
 
-	    function updateTrainingDummy(delta) {
-	      trainingDummy.hitFlash = Math.max(0, trainingDummy.hitFlash - (delta * 2.8));
-	      trainingDummy.wobble = Math.max(0, trainingDummy.wobble - (delta * 1.9));
+	    function updateTrainingDummy(delta, dummy = trainingDummy, phaseOffset = 0.8) {
+	      dummy.hitFlash = Math.max(0, dummy.hitFlash - (delta * 2.8));
+	      dummy.wobble = Math.max(0, dummy.wobble - (delta * 1.9));
 
-	      if (trainingDummy.dead) {
-	        // Fall-over animation: rotate forward over 0.55s
-	        trainingDummy.deadFallTimer = Math.min(1, trainingDummy.deadFallTimer + delta / 0.55);
-	        const fall = trainingDummy.deadFallTimer * trainingDummy.deadFallTimer; // ease-in
-	        trainingDummy.group.rotation.x = fall * (Math.PI * 0.48);
-	        trainingDummy.group.position.y = trainingDummy.spawnPos.y - fall * 1.8;
-	        // Tick respawn
-	        trainingDummy.respawnTimer = Math.max(0, trainingDummy.respawnTimer - delta);
-	        if (trainingDummy.respawnTimer <= 0) respawnTrainingDummy();
+	      if (dummy.dead) {
+	        dummy.deadFallTimer = Math.min(1, dummy.deadFallTimer + delta / 0.55);
+	        const fall = dummy.deadFallTimer * dummy.deadFallTimer;
+	        dummy.group.rotation.x = fall * (Math.PI * 0.48);
+	        dummy.group.position.y = dummy.spawnPos.y - fall * 1.8;
+	        dummy.respawnTimer = Math.max(0, dummy.respawnTimer - delta);
+	        if (dummy.respawnTimer <= 0) respawnTrainingDummy(dummy);
 	        return;
 	      }
 
-	      const idleSway = Math.sin((state.elapsed * 1.6) + 0.8) * 0.018;
-	      const wobbleWave = Math.sin((1 - trainingDummy.wobble) * 15.5) * trainingDummy.wobble * 0.26;
-	      trainingDummy.targetPivot.rotation.z = idleSway + wobbleWave;
-	      trainingDummy.targetPivot.rotation.x = Math.sin((1 - trainingDummy.wobble) * 8.2) * trainingDummy.wobble * 0.08;
+	      const idleSway = Math.sin((state.elapsed * 1.6) + phaseOffset) * 0.018;
+	      const wobbleWave = Math.sin((1 - dummy.wobble) * 15.5) * dummy.wobble * 0.26;
+	      dummy.targetPivot.rotation.z = idleSway + wobbleWave;
+	      dummy.targetPivot.rotation.x = Math.sin((1 - dummy.wobble) * 8.2) * dummy.wobble * 0.08;
 
-	      const poisonStrength = THREE.MathUtils.clamp(trainingDummy.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
+	      const poisonStrength = THREE.MathUtils.clamp(dummy.poisonTimer / CONFIG.maulaPoisonDuration, 0, 1);
 	      const poisonPulse = poisonStrength > 0 ? 0.5 + Math.sin(state.elapsed * 6) * 0.5 : 0;
-	      trainingDummy.targetMaterial.emissive.setRGB(
+	      dummy.targetMaterial.emissive.setRGB(
 	        0.55 - poisonStrength * 0.45,
 	        0.20 + poisonStrength * 0.55,
 	        0.14 - poisonStrength * 0.10
 	      );
-	      trainingDummy.targetMaterial.emissiveIntensity = 0.04 + (Math.min(trainingDummy.hitFlash, 1.6) * 0.5) + (poisonPulse * 0.35);
-	      trainingDummy.frontPlate.material.opacity = Math.min(0.88, 0.36 + (trainingDummy.hitFlash * 0.32));
-	      trainingDummy.frontPlate.scale.setScalar(1 + (trainingDummy.hitFlash * 0.18));
+	      dummy.targetMaterial.emissiveIntensity = 0.04 + (Math.min(dummy.hitFlash, 1.6) * 0.5) + (poisonPulse * 0.35);
+	      dummy.frontPlate.material.opacity = Math.min(0.88, 0.36 + (dummy.hitFlash * 0.32));
+	      dummy.frontPlate.scale.setScalar(1 + (dummy.hitFlash * 0.18));
 
-	      // Tick poison damage
-
-
-	      if (trainingDummy.poisonTimer > 0) {
-
-
-	        trainingDummy.poisonTimer = Math.max(0, trainingDummy.poisonTimer - delta);
-
-
-	        hitTarget(trainingDummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { continuous: true, poison: true });
-
-
+	      if (dummy.poisonTimer > 0) {
+	        dummy.poisonTimer = Math.max(0, dummy.poisonTimer - delta);
+	        hitTarget(dummy, 0, CONFIG.maulaPoisonDamagePerSecond * delta, { continuous: true, poison: true });
 	      }
 
-	      // Billboard health bar to always face camera
-	      trainingDummy.healthBarGroup.quaternion.copy(camera.quaternion);
-	      const hp = trainingDummy.health / trainingDummy.maxHealth;
-	      trainingDummy.hpFill.scale.x = Math.max(0.001, hp);
-	      trainingDummy.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
-	      trainingDummy.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
+	      dummy.healthBarGroup.quaternion.copy(camera.quaternion);
+	      const hp = dummy.health / dummy.maxHealth;
+	      dummy.hpFill.scale.x = Math.max(0.001, hp);
+	      dummy.hpFill.position.x = -(1 - Math.max(0.001, hp)) * 1.0;
+	      dummy.hpFill.material.color.setHSL(hp * 0.33, 0.9, 0.42);
 	    }
 
 	    function sampleStrongestNoiseHotspot() {
@@ -10046,6 +10273,7 @@
       player.rotation.x = 0;
       state.pvpDeathPose = 0;
       camera.rotation.set(CONFIG.cameraPitchDown, 0, 0);
+      syncMobileLookFromCamera();
       updateCameraRig(1);
       if (applyMaulaLoadout) {
         applyRespawnMaulaLoadout();
@@ -10064,6 +10292,92 @@
     function placePlayerOnGround() {
       const start = getRandomInitialSpawnOffset();
       respawnAtBase({ spawnX: start.x, spawnZ: start.z });
+    }
+
+    function syncMobileLookFromCamera() {
+      if (!IS_MOBILE) return;
+      camera.rotation.order = "YXZ";
+      mobileInput.lookYaw = camera.rotation.y;
+      mobileInput.lookPitch = THREE.MathUtils.clamp(camera.rotation.x, -1.18, 0.58);
+    }
+
+    function setMobileMoveInput(x, y) {
+      if (!IS_MOBILE) return;
+      const nx = THREE.MathUtils.clamp(x, -1, 1);
+      const ny = THREE.MathUtils.clamp(y, -1, 1);
+      mobileInput.moveX = nx;
+      mobileInput.moveY = ny;
+      mobileInput.magnitude = THREE.MathUtils.clamp(Math.hypot(nx, ny), 0, 1);
+      mobileInput.active = mobileInput.magnitude > 0.001;
+    }
+
+    function clearMobileMoveInput() {
+      if (!IS_MOBILE) return;
+      mobileInput.moveX = 0;
+      mobileInput.moveY = 0;
+      mobileInput.magnitude = 0;
+      mobileInput.active = false;
+    }
+
+    function applyMobileLookDelta(dx, dy) {
+      if (!IS_MOBILE || !controls.isLocked || state.paused) return;
+      const yawSensitivity = 0.0042;
+      const pitchSensitivity = 0.0035;
+      mobileInput.lookYaw -= dx * yawSensitivity;
+      mobileInput.lookPitch = THREE.MathUtils.clamp(
+        mobileInput.lookPitch - (dy * pitchSensitivity),
+        -1.18,
+        0.58
+      );
+      camera.rotation.order = "YXZ";
+      camera.rotation.y = mobileInput.lookYaw;
+      camera.rotation.x = mobileInput.lookPitch;
+    }
+
+    function queueJump() {
+      if (state.paused || !controls.isLocked) return;
+      player.userData.jumpBuffer = CONFIG.playerJumpBuffer;
+    }
+
+    function endPrimaryAttack() {
+      state.lasgunFiring = false;
+      sfx.lasgunHum.stop();
+    }
+
+    function startPrimaryAttack() {
+      enableAudio();
+      return tryPrimaryAttack();
+    }
+
+    function setInteractPressed(pressed) {
+      keyState.KeyE = Boolean(pressed);
+    }
+
+    async function initMobileControlScheme() {
+      if (!IS_MOBILE) return;
+      syncMobileLookFromCamera();
+      const { initMobileControls } = await import("./mobile-controls.js");
+      initMobileControls({
+        controls,
+        onMove: setMobileMoveInput,
+        onLookDelta: applyMobileLookDelta,
+        onJump: queueJump,
+        onPrimaryStart: startPrimaryAttack,
+        onPrimaryEnd: endPrimaryAttack,
+        onInteractChange: setInteractPressed,
+        onEquipWeapon: (weapon) => {
+          enableAudio();
+          equipWeapon(weapon);
+        },
+        onToggleShield: () => {
+          enableAudio();
+          toggleShieldVisual();
+        },
+        onDeployThumper: () => {
+          enableAudio();
+          tryDeployThumper();
+        },
+      });
     }
 
 	    function bindEvents() {
@@ -10111,17 +10425,18 @@
         }
       });
 
-	      document.addEventListener("pointerdown", (event) => {
-	        enableAudio();
-	        if (event.button !== 0) return;
-	        tryPrimaryAttack();
-	      });
+      if (!IS_MOBILE) {
+	        document.addEventListener("pointerdown", (event) => {
+	          enableAudio();
+	          if (event.button !== 0) return;
+	          tryPrimaryAttack();
+	        });
 
-	      document.addEventListener("pointerup", (event) => {
-	        if (event.button !== 0) return;
-	        state.lasgunFiring = false;
-	        sfx.lasgunHum.stop();
-	      });
+	        document.addEventListener("pointerup", (event) => {
+	          if (event.button !== 0) return;
+	          endPrimaryAttack();
+	        });
+      }
 
       ui.overlay.addEventListener("click", () => {
         enableAudio();
@@ -10130,6 +10445,12 @@
 
       ui.resumeHint.addEventListener("click", () => {
         controls.lock();
+      });
+
+      ui.devHudToggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setDevHudCollapsed(!ui.devHud.classList.contains("collapsed"));
       });
 
       controls.addEventListener("lock", () => {
@@ -10149,18 +10470,25 @@
 	      const portalBody = portalSystem.hasInboundPortal
 	        ? "You arrived through a portal. Step into the return portal to go back, or find the Vibe Jam portal to continue."
 	        : "Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.";
+      const hintText = IS_MOBILE
+        ? "Left thumbstick to move, drag on the right to look, tap ATTACK to strike, 1 for crysknife, 2 for maula, 3 for lasgun, SHIELD for defense, hold E in a patch, THUMPER to deploy. Lasguns and shields are a dangerous mix."
+        : "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper. Lasguns and shields are a dangerous mix.";
 	      setOverlay(
 	        "Spice Jam",
 	        portalBody,
-	        "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper. Lasguns and shields are a dangerous mix.",
-	        "Click to Play"
+	        hintText,
+	        IS_MOBILE ? "Tap to Play" : "Click to Play"
 	      );
+      ui.resumeHint.textContent = IS_MOBILE ? "TAP TO RESUME" : "CLICK TO RESUME";
+      if (IS_MOBILE) setDevHudCollapsed(true);
 	    }
 
     function clearMovementInput() {
       for (const code of Object.keys(keyState)) {
         keyState[code] = false;
       }
+      clearMobileMoveInput();
+      endPrimaryAttack();
       player.userData.jumpBuffer = 0;
     }
 
@@ -10169,6 +10497,11 @@
       ui.overlayBody.textContent = body;
       ui.overlayHint.textContent = hint;
       ui.overlayCta.textContent = cta;
+    }
+
+    function setDevHudCollapsed(collapsed) {
+      ui.devHud.classList.toggle("collapsed", collapsed);
+      ui.devHudToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
     }
 
     function onWindowResize() {
@@ -10183,7 +10516,8 @@
       const shiftActive = keyState.Shift || keyState.ShiftLeft || keyState.ShiftRight;
       const controlActive = keyState.Control || keyState.ControlLeft || keyState.ControlRight;
       const crouchActive = keyState.KeyC || controlActive;
-      const runActive = shiftActive && !crouchActive;
+      const mobileRunActive = IS_MOBILE && mobileInput.magnitude > 0.82;
+      const runActive = (shiftActive || mobileRunActive) && !crouchActive;
 
       const crouchAlpha = 1 - Math.exp(-CONFIG.crouchTransitionSpeed * delta);
       player.userData.crouchAmount = THREE.MathUtils.lerp(
@@ -10245,19 +10579,27 @@
         tempForward.normalize();
         tempRight.crossVectors(tempForward, tempUp).normalize();
         tempInput.set(0, 0, 0);
+        const digitalMovementActive = keyState.KeyW || keyState.KeyA || keyState.KeyS || keyState.KeyD;
 
         if (keyState.KeyW) tempInput.add(tempForward);
         if (keyState.KeyS) tempInput.sub(tempForward);
         if (keyState.KeyD) tempInput.add(tempRight);
         if (keyState.KeyA) tempInput.sub(tempRight);
+        if (IS_MOBILE && mobileInput.active) {
+          tempInput.addScaledVector(tempForward, mobileInput.moveY);
+          tempInput.addScaledVector(tempRight, mobileInput.moveX);
+        }
 
         if (tempInput.lengthSq() > 0) {
           hasMovementInput = true;
+          const analogMagnitude = digitalMovementActive
+            ? 1
+            : (IS_MOBILE ? THREE.MathUtils.clamp(mobileInput.magnitude, 0, 1) : 1);
           tempInput.normalize();
           const carryMultiplier = state.spiceCarry > 0 ? CONFIG.spiceCarrySpeedMultiplier : 1;
           const stanceMultiplier = (
             crouchActive ? CONFIG.playerCrouchMultiplier : runActive ? CONFIG.playerRunMultiplier : 1
-          ) * carryMultiplier;
+          ) * carryMultiplier * analogMagnitude;
           const slopeFactor = player.userData.grounded
             ? sampleSlopeFactor(player.position.x, player.position.z) : 0;
           const slopeSpeedMult = 1 - slopeFactor * (1 - CONFIG.slopeSpeedMin);
