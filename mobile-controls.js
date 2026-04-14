@@ -115,6 +115,13 @@ export function initMobileControls(options = {}) {
       width: 104px;
       height: 104px;
     }
+    .mc-attack.mc-aim-stick {
+      border-color: rgba(255, 90, 70, 0.72);
+      background: rgba(80, 18, 8, 0.52);
+    }
+    .mc-attack.mc-aim-stick.active {
+      background: rgba(180, 40, 20, 0.74);
+    }
     .mc-jump {
       right: 118px;
       bottom: 12px;
@@ -268,6 +275,29 @@ export function initMobileControls(options = {}) {
     interact: null,
   };
 
+  // Lasgun aim-stick state
+  let currentWeapon = "knife";
+  let aimStickPointerId = null;
+  let aimStickLastX = 0;
+  let aimStickLastY = 0;
+
+  function stopAimStick() {
+    if (aimStickPointerId !== null) {
+      onPrimaryEnd?.();
+    }
+    aimStickPointerId = null;
+  }
+
+  function updateAttackButton() {
+    if (currentWeapon === "lasgun") {
+      attackBtn.textContent = "Aim";
+      attackBtn.classList.add("mc-aim-stick");
+    } else {
+      attackBtn.textContent = "Attack";
+      attackBtn.classList.remove("mc-aim-stick");
+    }
+  }
+
   const stop = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -304,6 +334,10 @@ export function initMobileControls(options = {}) {
   };
 
   const releaseActions = () => {
+    if (aimStickPointerId !== null) {
+      attackBtn.classList.remove("active");
+      stopAimStick();
+    }
     if (actionPointers.attack !== null) {
       actionPointers.attack = null;
       attackBtn.classList.remove("active");
@@ -345,6 +379,15 @@ export function initMobileControls(options = {}) {
       updateJoystick(event.clientX, event.clientY);
       return;
     }
+    if (event.pointerId === aimStickPointerId) {
+      stop(event);
+      const dx = event.clientX - aimStickLastX;
+      const dy = event.clientY - aimStickLastY;
+      aimStickLastX = event.clientX;
+      aimStickLastY = event.clientY;
+      onLookDelta?.(dx, dy);
+      return;
+    }
     if (event.pointerId === look.pointerId) {
       stop(event);
       const dx = event.clientX - look.lastX;
@@ -362,6 +405,10 @@ export function initMobileControls(options = {}) {
     if (event.pointerId === look.pointerId) {
       look.pointerId = null;
     }
+    if (event.pointerId === aimStickPointerId) {
+      attackBtn.classList.remove("active");
+      stopAimStick();
+    }
     if (event.pointerId === actionPointers.attack) {
       actionPointers.attack = null;
       attackBtn.classList.remove("active");
@@ -377,6 +424,10 @@ export function initMobileControls(options = {}) {
   window.addEventListener("pointercancel", (event) => {
     if (event.pointerId === joystick.pointerId) releaseJoystick();
     if (event.pointerId === look.pointerId) look.pointerId = null;
+    if (event.pointerId === aimStickPointerId) {
+      attackBtn.classList.remove("active");
+      stopAimStick();
+    }
     if (event.pointerId === actionPointers.attack || event.pointerId === actionPointers.interact) {
       releaseActions();
     }
@@ -385,9 +436,17 @@ export function initMobileControls(options = {}) {
   attackBtn.addEventListener("pointerdown", (event) => {
     if (!controls.isLocked) return;
     stop(event);
-    actionPointers.attack = event.pointerId;
-    attackBtn.classList.add("active");
-    onPrimaryStart?.();
+    if (currentWeapon === "lasgun") {
+      aimStickPointerId = event.pointerId;
+      aimStickLastX = event.clientX;
+      aimStickLastY = event.clientY;
+      attackBtn.classList.add("active");
+      onPrimaryStart?.();
+    } else {
+      actionPointers.attack = event.pointerId;
+      attackBtn.classList.add("active");
+      onPrimaryStart?.();
+    }
   });
 
   interactBtn.addEventListener("pointerdown", (event) => {
@@ -430,7 +489,13 @@ export function initMobileControls(options = {}) {
       if (!controls.isLocked) return;
       stop(event);
       const weapon = btn.dataset.weapon;
+      if (weapon !== "lasgun" && aimStickPointerId !== null) {
+        attackBtn.classList.remove("active");
+        stopAimStick();
+      }
+      currentWeapon = weapon;
       setWeaponActive(weapon);
+      updateAttackButton();
       onEquipWeapon?.(weapon);
     });
   }
