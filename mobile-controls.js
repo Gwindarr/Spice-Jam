@@ -275,21 +275,35 @@ export function initMobileControls(options = {}) {
     interact: null,
   };
 
-  // Lasgun aim-stick state
+  // Ranged aim-stick state: lasgun fires while held, maula fires on release.
   let currentWeapon = "knife";
   let aimStickPointerId = null;
+  let aimStickWeapon = null;
   let aimStickLastX = 0;
   let aimStickLastY = 0;
 
   function stopAimStick() {
-    if (aimStickPointerId !== null) {
+    if (aimStickPointerId !== null && aimStickWeapon === "lasgun") {
       onPrimaryEnd?.();
     }
     aimStickPointerId = null;
+    aimStickWeapon = null;
+  }
+
+  function releaseAimStick({ fireMaula = false } = {}) {
+    const weapon = aimStickWeapon;
+    if (aimStickPointerId !== null && weapon === "maula" && fireMaula) {
+      onPrimaryStart?.();
+      onPrimaryEnd?.();
+    } else {
+      stopAimStick();
+    }
+    aimStickPointerId = null;
+    aimStickWeapon = null;
   }
 
   function updateAttackButton() {
-    if (currentWeapon === "lasgun") {
+    if (currentWeapon === "lasgun" || currentWeapon === "maula") {
       attackBtn.textContent = "Aim";
       attackBtn.classList.add("mc-aim-stick");
     } else {
@@ -336,7 +350,7 @@ export function initMobileControls(options = {}) {
   const releaseActions = () => {
     if (aimStickPointerId !== null) {
       attackBtn.classList.remove("active");
-      stopAimStick();
+      releaseAimStick();
     }
     if (actionPointers.attack !== null) {
       actionPointers.attack = null;
@@ -407,7 +421,7 @@ export function initMobileControls(options = {}) {
     }
     if (event.pointerId === aimStickPointerId) {
       attackBtn.classList.remove("active");
-      stopAimStick();
+      releaseAimStick({ fireMaula: true });
     }
     if (event.pointerId === actionPointers.attack) {
       actionPointers.attack = null;
@@ -426,7 +440,7 @@ export function initMobileControls(options = {}) {
     if (event.pointerId === look.pointerId) look.pointerId = null;
     if (event.pointerId === aimStickPointerId) {
       attackBtn.classList.remove("active");
-      stopAimStick();
+      releaseAimStick();
     }
     if (event.pointerId === actionPointers.attack || event.pointerId === actionPointers.interact) {
       releaseActions();
@@ -436,12 +450,15 @@ export function initMobileControls(options = {}) {
   attackBtn.addEventListener("pointerdown", (event) => {
     if (!controls.isLocked) return;
     stop(event);
-    if (currentWeapon === "lasgun") {
+    if (currentWeapon === "lasgun" || currentWeapon === "maula") {
       aimStickPointerId = event.pointerId;
+      aimStickWeapon = currentWeapon;
       aimStickLastX = event.clientX;
       aimStickLastY = event.clientY;
       attackBtn.classList.add("active");
-      onPrimaryStart?.();
+      if (currentWeapon === "lasgun") {
+        onPrimaryStart?.();
+      }
     } else {
       actionPointers.attack = event.pointerId;
       attackBtn.classList.add("active");
@@ -489,9 +506,9 @@ export function initMobileControls(options = {}) {
       if (!controls.isLocked) return;
       stop(event);
       const weapon = btn.dataset.weapon;
-      if (weapon !== "lasgun" && aimStickPointerId !== null) {
+      if (aimStickPointerId !== null) {
         attackBtn.classList.remove("active");
-        stopAimStick();
+        releaseAimStick();
       }
       currentWeapon = weapon;
       setWeaponActive(weapon);

@@ -333,6 +333,31 @@
       display: none;
     }
 
+    body.spice-booting #overlay {
+      cursor: wait;
+    }
+
+    body.spice-booting #overlay .panel {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body.spice-mobile-landing #overlay {
+      background:
+        radial-gradient(circle at top, rgba(240, 170, 70, 0.16), transparent 48%),
+        rgba(4, 2, 0, 0.78);
+    }
+
+    body.spice-mobile-landing .panel {
+      width: min(520px, calc(100vw - 32px));
+      padding: 26px 24px;
+    }
+
+    body.spice-mobile-landing .panel .cta {
+      color: #1a1005;
+      background: #f0c860;
+    }
+
     #resumeHint {
       position: fixed;
       top: 20px;
@@ -476,6 +501,11 @@
       font-size: 16px;
       line-height: 1.5;
       color: var(--muted);
+    }
+
+    #overlayHint {
+      white-space: pre-line;
+      text-align: left;
     }
 
     .panel .cta {
@@ -679,7 +709,7 @@
     }
   </style>
 </head>
-<body>
+<body class="spice-booting">
   <div id="playerHud" class="hud-panel">
     <div class="player-strip">
       <div id="hudWeapon" class="hud-tag">Knife</div>
@@ -757,11 +787,29 @@
   <div id="overlay">
     <div class="panel">
       <h1 id="overlayTitle">Spice Jam</h1>
-      <p id="overlayBody">Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.</p>
-      <p id="overlayHint">Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, Hold E in a patch, Q to deploy a thumper. Lasguns and shields are a dangerous mix.</p>
+      <p id="overlayBody">Collect the glowing resource, called spice. Stand in bright patches to gather it, then return it to the bank. Stay on rock when the giant worm is near.</p>
+	      <p id="overlayHint">Click to start.
+Move: WASD. Jump: Space. Attack: click.
+Weapons: 1 knife, 2 dart pistol, 3 laser.
+Collect spice: stand in a glowing patch and hold E.
+Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       <div id="overlayCta" class="cta">Click to Play</div>
     </div>
   </div>
+
+  <script>
+    (() => {
+      const hasTouch = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
+      const coarsePointer = typeof window.matchMedia === "function"
+        && window.matchMedia("(pointer: coarse)").matches;
+      const mobileDevice = hasTouch && coarsePointer;
+      window.SPICE_MOBILE_DEVICE = mobileDevice;
+
+      if (mobileDevice) {
+        document.body.classList.add("spice-mobile-landing");
+      }
+    })();
+  </script>
 
   <div id="deathFlash">
     <div class="death-panel">
@@ -774,7 +822,7 @@
   <!-- Server -->
   <script>window.SERVER_URL = "https://api.bananatriangles.com";</script>
   <!-- Socket.io client — loaded before the module script so `io` is global -->
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
   <script type="importmap">
   {
@@ -1167,10 +1215,14 @@
     renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = CONFIG.shadowEnabled;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setClearColor(scene.background, 1);
     document.body.appendChild(renderer.domElement);
 
 
     function isProbablyMobile() {
+      if (typeof window !== "undefined" && typeof window.SPICE_MOBILE_DEVICE === "boolean") {
+        return window.SPICE_MOBILE_DEVICE;
+      }
       const hasTouch = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
       const coarsePointer = typeof window !== "undefined"
         && typeof window.matchMedia === "function"
@@ -1394,6 +1446,7 @@
       hitMarkerTimer: 0,
       serverWorldTimeBase: null,
       serverWorldTimeStamp: 0,
+      renderWorldTime: 0,
       portalRedirecting: false,
     };
 
@@ -1534,7 +1587,7 @@
     ];
 
     function createMesaWeaponSign() {
-      const sign = createHintLabel(["WEAPONS", "1 KNIFE   2 MAULA   3 LASGUN"], "#ffe2a8", 7.2, 2.1);
+      const sign = createHintLabel(["WEAPONS", "1 KNIFE   2 DARTS   3 LASGUN"], "#ffe2a8", 7.2, 2.1);
       sign.position.set(CONFIG.playerStart.x + 24, sampleGroundHeight(CONFIG.playerStart.x + 24, CONFIG.playerStart.z + 10) + 6.2, CONFIG.playerStart.z + 10);
       scene.add(sign);
       return sign;
@@ -1600,10 +1653,13 @@
         )
       );
     }
-    await initMobileControlScheme();
-	    bindEvents();
+    await initMobileControlScheme().catch((error) => {
+      console.warn("[mobile] Control init failed", error);
+    });
+    bindEvents();
     updateDayNight(0);
     refreshHud();
+    renderer.render(scene, camera);
     animate();
     initMultiplayer();
 
@@ -5045,7 +5101,7 @@
 	        return "Harvesting spice. Stay still and keep the dunes quiet.";
 	      }
 	      if (state.maulaReloadTimer > 0) {
-	        return "Reloading maula dart. Switching weapons cancels reload.";
+	        return "Reloading darts. Switching weapons cancels reload.";
 	      }
 	      if (state.wormRadioTimer > 0) {
 	        return state.wormRadioMessage;
@@ -5231,7 +5287,7 @@
         state.depositKeyConsumed = true;
         state.depositToastTimer = 2.8;
         state.depositToastMessage = maulaRefillCount > 0
-          ? `Spice deposited  ✦  Bank: ${state.spiceScore}  ✦  Maula refilled`
+          ? `Spice deposited  ✦  Bank: ${state.spiceScore}  ✦  Darts refilled`
           : `Spice deposited  ✦  Bank: ${state.spiceScore}`;
         ui.depositToast.classList.remove("show");
         spiceDepot.triggerDeposit();
@@ -8535,7 +8591,7 @@
     function createBankLabel(color = "#ffd07a") {
       const title = arguments[1] ?? "SIETCH BANK";
       const subtitle = arguments[2] ?? "DEPOSIT SPICE (E)";
-      const footer = arguments[3] ?? "DEPOSITING RESTORES HEALTH + MAULA";
+      const footer = arguments[3] ?? "DEPOSITING RESTORES HEALTH + DARTS";
       const canvas = document.createElement("canvas");
       canvas.width = 760;
       canvas.height = 240;
@@ -10438,10 +10494,17 @@
 	        });
       }
 
-      ui.overlay.addEventListener("click", () => {
+      const startFromOverlay = (event) => {
+        event?.preventDefault?.();
         enableAudio();
         controls.lock();
-      });
+      };
+
+      if (IS_MOBILE) {
+        ui.overlay.addEventListener("pointerup", startFromOverlay);
+      } else {
+        ui.overlay.addEventListener("click", startFromOverlay);
+      }
 
       ui.resumeHint.addEventListener("click", () => {
         controls.lock();
@@ -10467,12 +10530,12 @@
         ui.resumeHint.classList.add("visible");
       });
 
-	      const portalBody = portalSystem.hasInboundPortal
-	        ? "You arrived through a portal. Step into the return portal to go back, or find the Vibe Jam portal to continue."
-	        : "Harvest spice from glowing sand patches, then get it back to rock before the worm takes you.";
+      const portalBody = portalSystem.hasInboundPortal
+	        ? "You arrived through a portal from another game. Step into the return portal to go back, or find the Vibe Jam portal to continue."
+	        : "Collect the glowing resource, called spice. Stand in bright patches to gather it, then return it to the bank. Stay on rock when the giant worm is near.";
       const hintText = IS_MOBILE
-        ? "Left thumbstick to move, drag on the right to look, tap ATTACK to strike, 1 for crysknife, 2 for maula, 3 for lasgun, SHIELD for defense, hold E in a patch, THUMPER to deploy. Lasguns and shields are a dangerous mix."
-        : "Click to lock the mouse. WASD to move, Space to jump, Click to attack, 1 for crysknife, 2 for maula, 3 for lasgun, F shield, Hold E in a patch, Q to deploy a thumper. Lasguns and shields are a dangerous mix.";
+        ? "Best with keyboard and mouse.\nMobile: left pad moves. Drag the right side to look.\nDart pistol: tap 2, hold AIM, drag to aim, release to shoot.\nCollect spice: stand in a glowing patch and hold the E button.\nTHUMP drops a noise decoy. SHIELD blocks damage. Do not fire lasers into shields."
+        : "Click to start.\nMove: WASD. Jump: Space. Attack: click.\nWeapons: 1 knife, 2 dart pistol, 3 laser.\nCollect spice: stand in a glowing patch and hold E.\nQ drops a noise decoy. F toggles shield. Do not fire lasers into shields.";
 	      setOverlay(
 	        "Spice Jam",
 	        portalBody,
@@ -10497,6 +10560,7 @@
       ui.overlayBody.textContent = body;
       ui.overlayHint.textContent = hint;
       ui.overlayCta.textContent = cta;
+      document.body.classList.remove("spice-booting");
     }
 
     function setDevHudCollapsed(collapsed) {
@@ -10870,7 +10934,16 @@
       // Keep local elapsed for gameplay/animation timers; derive day/night clock
       // from server world time when available so reloads do not reset time-of-day.
       state.elapsed += delta;
-      const worldClock = getSynchronizedWorldTimeSeconds();
+      const targetWorldClock = getSynchronizedWorldTimeSeconds();
+      if (mp.connected && state.serverWorldTimeBase !== null && delta > 0) {
+        state.renderWorldTime += delta;
+        const cycle = CONFIG.cycleDuration;
+        const cycleDelta = ((((targetWorldClock - state.renderWorldTime) % cycle) + (cycle * 1.5)) % cycle) - (cycle * 0.5);
+        state.renderWorldTime += cycleDelta * (1 - Math.exp(-6 * delta));
+      } else {
+        state.renderWorldTime = targetWorldClock;
+      }
+      const worldClock = state.renderWorldTime;
       state.dayTime = ((worldClock + CONFIG.dayTimeStart * CONFIG.cycleDuration) % CONFIG.cycleDuration) / CONFIG.cycleDuration;
 
       const current = getCycleKeyPair(state.dayTime);
@@ -11035,7 +11108,7 @@
 	      ui.hudSpeed.textContent = `Spd ${horizontalSpeed.toFixed(1)} ${moveMode}`;
 	      ui.hudPos.textContent = `Pos: (${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
 	      ui.hudSurface.textContent = `Surf ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
-	      ui.hudCargo.textContent = `Carry ${state.spiceCarry}/${CONFIG.spiceMaxCarry}`;
+	      ui.hudCargo.textContent = `Spice ${state.spiceCarry}/${CONFIG.spiceMaxCarry}`;
 	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
 	      const activePlume = spiceObjective.nodes.find(n => n.type === "plume" && n.active);
 	      ui.hudPlume.textContent = activePlume
@@ -11044,11 +11117,11 @@
 	      if (state.equippedWeapon === "maula") {
 	        const maulaTotal = state.maulaReserveAmmo + (state.maulaLoaded ? 1 : 0);
 	        if (state.maulaReloadTimer > 0) {
-	          ui.hudWeapon.textContent = `Maula — loading...`;
+	          ui.hudWeapon.textContent = `Darts — loading...`;
 	        } else if (maulaTotal === 0) {
-	          ui.hudWeapon.textContent = `Maula — empty`;
+	          ui.hudWeapon.textContent = `Darts — empty`;
 	        } else {
-	          ui.hudWeapon.textContent = `Maula ${maulaTotal}/${CONFIG.maulaMaxDarts}`;
+	          ui.hudWeapon.textContent = `Darts ${maulaTotal}/${CONFIG.maulaMaxDarts}`;
 	        }
 	      } else if (state.equippedWeapon === "lasgun") {
 	        ui.hudWeapon.textContent = "Lasgun";
