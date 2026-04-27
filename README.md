@@ -4,10 +4,19 @@
 
 ## Run
 
-Serve the folder locally and open it in a browser:
+Install dependencies, start the local game server, and open the served page:
 
 ```bash
-python3 -m http.server
+npm install
+npm start
 ```
 
-Then visit `http://localhost:8000`.
+Then visit `http://localhost:3001`.
+
+For auto-restart during development:
+
+```bash
+npm run dev
+```
+
+The server serves both the static game files and the local Socket.IO multiplayer endpoint. To use a different port, run `PORT=4000 npm start` and open `http://localhost:4000`.

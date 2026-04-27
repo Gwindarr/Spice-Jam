@@ -753,8 +753,8 @@
   <div id="vignette"></div>
   <div id="combatStatus"></div>
 
-	  <div id="devHud" class="hud-panel">
-      <button id="devHudToggle" type="button" aria-expanded="true">Dev Hud</button>
+	  <div id="devHud" class="hud-panel collapsed">
+      <button id="devHudToggle" type="button" aria-expanded="false">Dev Hud</button>
 	    <div id="hudDay" class="line">Time: 12:00</div>
 	    <div id="hudPhase" class="line">Phase: Day</div>
     <div id="hudSpeed" class="line">Speed: 0.0</div>
@@ -3894,9 +3894,9 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	      return out;
 	    }
 
-	    function tryLasgunAttack() {
-	      if (
-	        state.paused ||
+		    function tryLasgunAttack() {
+		      if (
+		        state.paused ||
 	        !controls.isLocked ||
 	        state.wormPhase === "devour" ||
 	        state.wormPhase === "recover" ||
@@ -3914,11 +3914,16 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	      state.lasgunSpinUpTimer = CONFIG.lasgunSpinUpDuration;
 	      state.lasgunFovPunchTimer = CONFIG.lasgunFovPunchDuration;
 	      sfx.lasgunFire.play({ volumeMultiplier: 0.92 });
-	      sfx.lasgunHum.start();
-	      return true;
-	    }
+		      sfx.lasgunHum.start();
+		      return true;
+		    }
 
-	    function toggleShieldVisual() {
+    function resetHoltzmanFuse() {
+      state.holtzmanFuse = 0;
+      sfx.holtzmanFuse.stop();
+    }
+
+		    function toggleShieldVisual() {
 	      if (state.shieldActive) {
 	        state.shieldActive = false;
 	        state.shieldFlash = 1;
@@ -4279,20 +4284,20 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	        state.lasgunCharge = Math.min(1, state.lasgunCharge + delta * CONFIG.lasgunRechargeRate);
 	      }
 
-	      if (!state.lasgunFiring) {
-	        state.holtzmanFuse = 0;
-	        return;
-	      }
+		      if (!state.lasgunFiring) {
+		        resetHoltzmanFuse();
+		        return;
+		      }
 
 	      // Stop conditions
 	      if (state.paused || !controls.isLocked || state.equippedWeapon !== "lasgun" ||
 	          state.wormPhase === "devour" || state.wormPhase === "recover" ||
-	          state.holtzmanDeathTimer > 0) {
-	        state.lasgunFiring = false;
-	        state.holtzmanFuse = 0;
-	        sfx.lasgunHum.stop();
-	        return;
-	      }
+		          state.holtzmanDeathTimer > 0) {
+		        state.lasgunFiring = false;
+		        resetHoltzmanFuse();
+		        sfx.lasgunHum.stop();
+		        return;
+		      }
 
 	      // Drain power — skip once Holtzman resonance has begun (can't abort the reaction)
 	      if (state.holtzmanFuse === 0) {
@@ -4487,6 +4492,7 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
             }
           }
 	      } else if (bestType === "shielded" && bestShieldedDummy) {
+		        if (state.holtzmanFuse === 0) sfx.holtzmanFuse.start();
 		        state.holtzmanFuse += delta;
 		        // Immediate strobe — any contact starts the warning
 	        bestShieldedDummy.shieldHitFlash = Math.sin(state.elapsed * 45) > 0 ? 1.0 : 0.05;
@@ -4500,6 +4506,7 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
           triggerHoltzmanDetonation(bestShieldedDummy.group.position.clone(), { emitNetwork: true });
         }
 	      } else if (bestType === "shielded_npc" && bestShieldedNpc) {
+        if (state.holtzmanFuse === 0) sfx.holtzmanFuse.start();
         state.holtzmanFuse += delta;
         bestShieldedNpc.shieldHitFlash = Math.sin(state.elapsed * 45) > 0 ? 1.0 : 0.05;
         bestShieldedNpc.shieldMessageTimer = (bestShieldedNpc.shieldMessageTimer || 0) - delta;
@@ -4512,13 +4519,16 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
           triggerHoltzmanDetonation(bestShieldedNpc.group.position.clone(), { emitNetwork: true });
         }
 	      } else if (bestType === "shielded_remote" && bestShieldedRemote) {
+        if (state.holtzmanFuse === 0) sfx.holtzmanFuse.start();
         state.holtzmanFuse += delta;
         triggerRemoteShieldBlockFeedback(bestShieldedRemote, bestShieldedRemote.mesh.position);
         if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
           triggerHoltzmanDetonation(bestShieldedRemote.mesh.position.clone(), { emitNetwork: true });
         }
-	      }
-	      if (bestType !== "shielded" && bestType !== "shielded_npc" && bestType !== "shielded_remote") state.holtzmanFuse = 0;
+		      }
+		      if (bestType !== "shielded" && bestType !== "shielded_npc" && bestType !== "shielded_remote") {
+			        resetHoltzmanFuse();
+			      }
 
 	      // Rock impact FX
 	      if (bestType === null && rockHit) {
@@ -4974,6 +4984,226 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	      };
 	    }
 
+    // Holtzman detonation: heavy pressure wave with a soft low-end hit.
+    // Avoid sharp high-frequency cracks, which read like a snap or whip.
+    function createHoltzmanBlast() {
+      let ctx = null;
+      let noiseBuf = null;
+
+      function ensureCtx() {
+        if (ctx) return ctx;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        ctx = new AC();
+        const len = Math.floor(ctx.sampleRate * 5);
+        noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const data = noiseBuf.getChannelData(0);
+        for (let i = 0; i < len; i += 1) data[i] = Math.random() * 2 - 1;
+        return ctx;
+      }
+
+      function createSaturator(amount = 2.2) {
+        const shaper = ctx.createWaveShaper();
+        const samples = 512;
+        const curve = new Float32Array(samples);
+        for (let i = 0; i < samples; i += 1) {
+          const x = (i / (samples - 1)) * 2 - 1;
+          curve[i] = Math.tanh(x * amount);
+        }
+        shaper.curve = curve;
+        shaper.oversample = "2x";
+        return shaper;
+      }
+
+      return {
+        play() {
+          if (!audioState.enabled) return;
+          if (!ensureCtx()) return;
+          if (ctx.state === "suspended") ctx.resume();
+          const now = ctx.currentTime;
+          const master = ctx.createGain();
+          master.gain.value = CONFIG.sfxMasterVolume;
+          const compressor = ctx.createDynamicsCompressor();
+          compressor.threshold.value = -18;
+          compressor.knee.value = 24;
+          compressor.ratio.value = 4.5;
+          compressor.attack.value = 0.004;
+          compressor.release.value = 0.55;
+          master.connect(compressor);
+          compressor.connect(ctx.destination);
+
+          // Sub pressure: quick body hit, no click.
+          const subOsc = ctx.createOscillator();
+          subOsc.type = "sine";
+          subOsc.frequency.setValueAtTime(44, now);
+          subOsc.frequency.exponentialRampToValueAtTime(26, now + 1.25);
+          const subGain = ctx.createGain();
+          subGain.gain.setValueAtTime(0.0001, now);
+          subGain.gain.linearRampToValueAtTime(1.1, now + 0.035);
+          subGain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+          subOsc.connect(subGain);
+          subGain.connect(master);
+          subOsc.start(now);
+          subOsc.stop(now + 1.45);
+
+          // Low-mid boom: saturated mass around the chest instead of a sharp crack.
+          const bodyOsc = ctx.createOscillator();
+          bodyOsc.type = "triangle";
+          bodyOsc.frequency.setValueAtTime(118, now);
+          bodyOsc.frequency.exponentialRampToValueAtTime(58, now + 0.9);
+          const bodyDrive = createSaturator(2.8);
+          const bodyLP = ctx.createBiquadFilter();
+          bodyLP.type = "lowpass";
+          bodyLP.frequency.value = 360;
+          bodyLP.Q.value = 0.8;
+          const bodyGain = ctx.createGain();
+          bodyGain.gain.setValueAtTime(0.0001, now);
+          bodyGain.gain.linearRampToValueAtTime(0.72, now + 0.055);
+          bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+          bodyOsc.connect(bodyDrive);
+          bodyDrive.connect(bodyLP);
+          bodyLP.connect(bodyGain);
+          bodyGain.connect(master);
+          bodyOsc.start(now);
+          bodyOsc.stop(now + 1.15);
+
+          // Pressure wash: slow air movement, deliberately low-passed.
+          const pressureNoise = ctx.createBufferSource();
+          pressureNoise.buffer = noiseBuf;
+          const pressureLP = ctx.createBiquadFilter();
+          pressureLP.type = "lowpass";
+          pressureLP.frequency.setValueAtTime(420, now);
+          pressureLP.frequency.exponentialRampToValueAtTime(120, now + 1.8);
+          pressureLP.Q.value = 0.9;
+          const pressureGain = ctx.createGain();
+          pressureGain.gain.setValueAtTime(0.0001, now);
+          pressureGain.gain.linearRampToValueAtTime(0.5, now + 0.12);
+          pressureGain.gain.exponentialRampToValueAtTime(0.001, now + 2.25);
+          pressureNoise.connect(pressureLP);
+          pressureLP.connect(pressureGain);
+          pressureGain.connect(master);
+          pressureNoise.start(now);
+          pressureNoise.stop(now + 2.35);
+
+          // Small grit layer for scale, kept below the low-end so it does not snap.
+          const gritNoise = ctx.createBufferSource();
+          gritNoise.buffer = noiseBuf;
+          const gritBP = ctx.createBiquadFilter();
+          gritBP.type = "bandpass";
+          gritBP.frequency.value = 720;
+          gritBP.Q.value = 0.75;
+          const midGain = ctx.createGain();
+          midGain.gain.setValueAtTime(0.0001, now);
+          midGain.gain.linearRampToValueAtTime(0.18, now + 0.08);
+          midGain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+          gritNoise.connect(gritBP);
+          gritBP.connect(midGain);
+          midGain.connect(master);
+          gritNoise.start(now);
+          gritNoise.stop(now + 1);
+
+          // Long ground rumble tail.
+          const rumbleNoise = ctx.createBufferSource();
+          rumbleNoise.buffer = noiseBuf;
+          const rumbleLP = ctx.createBiquadFilter();
+          rumbleLP.type = "lowpass";
+          rumbleLP.frequency.setValueAtTime(150, now);
+          rumbleLP.frequency.exponentialRampToValueAtTime(52, now + 4.2);
+          rumbleLP.Q.value = 1.1;
+          const rumbleGain = ctx.createGain();
+          rumbleGain.gain.setValueAtTime(0.0001, now);
+          rumbleGain.gain.linearRampToValueAtTime(0.46, now + 0.35);
+          rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 4.75);
+          rumbleNoise.connect(rumbleLP);
+          rumbleLP.connect(rumbleGain);
+          rumbleGain.connect(master);
+          rumbleNoise.start(now);
+          rumbleNoise.stop(now + 4.9);
+
+          setTimeout(() => {
+            try { master.disconnect(); } catch (e) {}
+            try { compressor.disconnect(); } catch (e) {}
+          }, 5200);
+        },
+      };
+    }
+
+    // Holtzman fuse: pre-blast ionization whine, start/stop semantics.
+    function createHoltzmanFuse() {
+      let ctx = null;
+      let nodes = null;
+      let active = false;
+
+      function build() {
+        if (nodes) return nodes;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        ctx = new AC();
+
+        const master = ctx.createGain();
+        master.gain.value = 0;
+        master.connect(ctx.destination);
+
+        // Rising sine — ionization pitch sweep
+        const osc = ctx.createOscillator();
+        osc.type = "sawtooth";
+        osc.frequency.value = 400;
+        const oscGain = ctx.createGain();
+        oscGain.gain.value = 0.22;
+        osc.connect(oscGain);
+        oscGain.connect(master);
+
+        // Bandpass noise — electrical hiss
+        const noiseLen = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, noiseLen, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < noiseLen; i += 1) data[i] = Math.random() * 2 - 1;
+        const noise = ctx.createBufferSource();
+        noise.buffer = buf;
+        noise.loop = true;
+        const bp = ctx.createBiquadFilter();
+        bp.type = "bandpass";
+        bp.frequency.value = 4200;
+        bp.Q.value = 3;
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.value = 0.18;
+        noise.connect(bp);
+        bp.connect(noiseGain);
+        noiseGain.connect(master);
+
+        osc.start();
+        noise.start();
+        nodes = { master, osc };
+        return nodes;
+      }
+
+      return {
+        start() {
+          if (!audioState.enabled) return;
+          const n = build();
+          if (!n) return;
+          active = true;
+          if (ctx.state === "suspended") ctx.resume();
+          const now = ctx.currentTime;
+          const peak = 0.28 * CONFIG.sfxMasterVolume;
+          n.master.gain.cancelScheduledValues(now);
+          n.master.gain.setValueAtTime(0, now);
+          n.master.gain.linearRampToValueAtTime(peak, now + 0.18);
+          n.osc.frequency.cancelScheduledValues(now);
+          n.osc.frequency.setValueAtTime(400, now);
+          n.osc.frequency.exponentialRampToValueAtTime(2800, now + 0.2);
+        },
+        stop() {
+          if (!nodes || !active) return;
+          active = false;
+          const now = ctx.currentTime;
+          nodes.master.gain.cancelScheduledValues(now);
+          nodes.master.gain.setValueAtTime(nodes.master.gain.value, now);
+          nodes.master.gain.linearRampToValueAtTime(0, now + 0.04);
+        },
+      };
+    }
+
 	    function createSfxBank() {
 	      return {
 	        sandStep: createAudioEffect([
@@ -5004,6 +5234,8 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         ], { volume: 0.28, poolSize: 3, playbackRateMin: 1.4, playbackRateMax: 1.8 }),
         lasgunFire: createAudioEffect("assets/audio/kenney/weapons/laserLarge_002.ogg", { volume: 0.44, poolSize: 2, playbackRateMin: 0.9, playbackRateMax: 1.02 }),
         lasgunHum: createLasgunHum(),
+        holtzmanBlast: createHoltzmanBlast(),
+        holtzmanFuse: createHoltzmanFuse(),
         shieldToggle: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.34, poolSize: 2, playbackRateMin: 0.82, playbackRateMax: 1.04 }),
         shieldHum: createAudioEffect("assets/audio/kenney/shield/forceField_001.ogg", { volume: 0.26, loop: true }),
         thumperPulse: createAudioEffect("assets/audio/kenney/shield/forceField_003.ogg", { volume: 0.3, poolSize: 2, playbackRateMin: 0.68, playbackRateMax: 0.82 }),
@@ -6437,10 +6669,11 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	      return { group, flash, fireball, shockwave, outerWave, stem, cap, capRing, smoke };
 	    }
 
-    function triggerHoltzmanDetonation(pos, { emitWormHotspot = true, emitNetwork = false } = {}) {
-			      state.holtzmanFuse = 0;
-		      state.lasgunFiring = false;
-		      sfx.lasgunHum.stop();
+	    function triggerHoltzmanDetonation(pos, { emitWormHotspot = true, emitNetwork = false } = {}) {
+				      resetHoltzmanFuse();
+			      state.lasgunFiring = false;
+			      sfx.lasgunHum.stop();
+			      sfx.holtzmanBlast.play();
 		      state.holtzmanExplosionTimer = 0;
 		      state.holtzmanExplosionDamageDealt = false;
 		      state.holtzmanExplosionPos.copy(pos);
@@ -10407,10 +10640,11 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       player.userData.jumpBuffer = CONFIG.playerJumpBuffer;
     }
 
-    function endPrimaryAttack() {
-      state.lasgunFiring = false;
-      sfx.lasgunHum.stop();
-    }
+	    function endPrimaryAttack() {
+	      state.lasgunFiring = false;
+	      sfx.lasgunHum.stop();
+	      resetHoltzmanFuse();
+	    }
 
     function startPrimaryAttack() {
       enableAudio();
@@ -10555,7 +10789,7 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	        IS_MOBILE ? "Tap to Play" : "Click to Play"
 	      );
       ui.resumeHint.textContent = IS_MOBILE ? "TAP TO RESUME" : "CLICK TO RESUME";
-      if (IS_MOBILE) setDevHudCollapsed(true);
+      setDevHudCollapsed(true);
 	    }
 
     function clearMovementInput() {
@@ -11646,10 +11880,15 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       try {
         if (mp.connecting || mp.connected || mp.socket) return;
         mp.connecting = true;
-        // SERVER_URL can be overridden by a global set before this script
-        const isLocal = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+        // In local dev, the Node server serves both the page and Socket.IO.
+        // On deployed hosts, SERVER_URL points to the hosted multiplayer API.
+        const localHosts = ["localhost", "127.0.0.1", "::1", ""];
+        const isLocal = localHosts.includes(window.location.hostname);
+        const pageOrigin = window.location.origin && window.location.origin !== "null"
+          ? window.location.origin
+          : null;
         const serverUrl = isLocal
-          ? "http://localhost:3001"
+          ? (pageOrigin || "http://localhost:3001")
           : (typeof SERVER_URL !== "undefined" ? SERVER_URL : null);
 
         if (!serverUrl) {
