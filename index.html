@@ -786,13 +786,14 @@
 
   <div id="overlay">
     <div class="panel">
-      <h1 id="overlayTitle">Spice Jam</h1>
-      <p id="overlayBody">Collect the glowing resource, called spice. Stand in bright patches to gather it, then return it to the bank. Stay on rock when the giant worm is near.</p>
-	      <p id="overlayHint">Click to start.
-Move: WASD. Jump: Space. Attack: click.
-Weapons: 1 knife, 2 dart pistol, 3 laser.
-Collect spice: stand in a glowing patch and hold E.
-Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
+	      <h1 id="overlayTitle">Spice Jam</h1>
+	      <p id="overlayBody">Harvest spice, bank it, and get back to rock before the worm finds you.</p>
+		      <p id="overlayHint">- Harvest: hold E in glowing patches
+- Bank spice at the Sietch
+- Rock is safe; sand wakes the worm
+- WASD move / click attack / 1-3 weapons
+- Q thumper / F shield
+- Laser + shield = atomic blast</p>
       <div id="overlayCta" class="cta">Click to Play</div>
     </div>
   </div>
@@ -845,6 +846,8 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
     } from "three-mesh-bvh";
 
     THREE.Mesh.prototype.raycast = acceleratedRaycast;
+
+    const MOON_RENDER_LAYER = 1;
 
     if (location.protocol !== "file:") {
       const jamWidgetScript = document.createElement("script");
@@ -1257,6 +1260,7 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
     const controls = IS_MOBILE
       ? createMobileControlsShim()
       : new PointerLockControls(camera, document.body);
+    camera.layers.enable(MOON_RENDER_LAYER);
     scene.add(camera);
 
     const hemiLight = new THREE.HemisphereLight(0xa0d8f8, 0xc49060, 0.6);
@@ -1282,6 +1286,16 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
     moonLight.castShadow = false;
     scene.add(moonLight);
     scene.add(moonLight.target);
+
+    const moonSurfaceLight = new THREE.DirectionalLight(0xfff1cf, 3.2);
+    moonSurfaceLight.castShadow = false;
+    moonSurfaceLight.layers.set(MOON_RENDER_LAYER);
+    scene.add(moonSurfaceLight);
+    scene.add(moonSurfaceLight.target);
+
+    const moonSurfaceFill = new THREE.HemisphereLight(0xdfe8ff, 0x4c3f35, 0.85);
+    moonSurfaceFill.layers.set(MOON_RENDER_LAYER);
+    scene.add(moonSurfaceFill);
 
     const skyDome = createSkyDome();
     const stars = createStarField();
@@ -1563,7 +1577,8 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       connecting: false,
       emit(...args) { if (this.socket) this.socket.emit(...args); },
     };
-    const remotePlayers = new Map(); // id → { mesh, data }
+    const remotePlayers = new Map(); // id -> { mesh, data }
+    const pendingRemoteCarry = new Map();
     let mpSendTimer = 0;
 
     ui.hudSeed.textContent = `Seed: ${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")}`;
@@ -5437,12 +5452,26 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       }
     }
 
-    function cancelHarvest() {
-      state.harvestNode = null;
-      state.harvestTimer = 0;
+	    function cancelHarvest() {
+	      state.harvestNode = null;
+	      state.harvestTimer = 0;
+	    }
+
+    function setSpiceCargoVisual(actorRoot, carrying) {
+      const ud = actorRoot?.userData;
+      if (!ud?.spiceCargoMesh) return;
+      ud.spiceCargoMesh.visible = carrying;
+      if (ud.spiceGlowMesh) ud.spiceGlowMesh.visible = carrying;
+      if (carrying) {
+        if (ud.spiceCargoMat) ud.spiceCargoMat.emissiveIntensity = 0.85;
+        if (ud.spiceGlowMat) ud.spiceGlowMat.opacity = 0.12;
+      } else {
+        if (ud.spiceCargoMat) ud.spiceCargoMat.emissiveIntensity = 0;
+        if (ud.spiceGlowMat) ud.spiceGlowMat.opacity = 0;
+      }
     }
 
-    function applyNetworkSpiceNodeState(serverNode) {
+	    function applyNetworkSpiceNodeState(serverNode) {
       if (!serverNode) return;
       const local = spiceObjective.nodes[serverNode.id];
       if (!local) return;
@@ -5515,33 +5544,35 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	      const nearDepot = (_dpDx * _dpDx) + (_dpDz * _dpDz) <= spiceDepot.depositRadius * spiceDepot.depositRadius;
 	      state.nearDepot = nearDepot;
 	      const ePressed = keyState.KeyE && !state.paused && controls.isLocked;
-      if (nearDepot && state.spiceCarry > 0 && state.wormPhase !== "devour" && ePressed && !state.depositKeyConsumed) {
-        const depositAmount = state.spiceCarry;
-        state.spiceScore += depositAmount;
-        state.spiceCarry = 0;
-        state.playerHealth = CONFIG.playerMaxHealth;
-        state.playerPoisonTimer = 0;
-        const maulaRefillCount = refillMaulaToFull();
-        state.depositKeyConsumed = true;
-        state.depositToastTimer = 2.8;
-        state.depositToastMessage = maulaRefillCount > 0
-          ? `Spice deposited  ✦  Bank: ${state.spiceScore}  ✦  Darts refilled`
-          : `Spice deposited  ✦  Bank: ${state.spiceScore}`;
-        ui.depositToast.classList.remove("show");
-        spiceDepot.triggerDeposit();
-        mp.emit("spiceDeposited", { amount: depositAmount });
-      }
+	      if (nearDepot && state.spiceCarry > 0 && state.wormPhase !== "devour" && ePressed && !state.depositKeyConsumed) {
+	        state.depositKeyConsumed = true;
+	        if (mp.connected) {
+	          mp.emit("spiceDeposited");
+	        } else {
+	          const depositAmount = state.spiceCarry;
+	          state.spiceScore += depositAmount;
+	          state.spiceCarry = 0;
+	          state.playerHealth = CONFIG.playerMaxHealth;
+	          state.playerPoisonTimer = 0;
+	          const maulaRefillCount = refillMaulaToFull();
+	          state.depositToastTimer = 2.8;
+	          state.depositToastMessage = maulaRefillCount > 0
+	            ? `Spice deposited  ✦  Bank: ${state.spiceScore}  ✦  Darts refilled`
+	            : `Spice deposited  ✦  Bank: ${state.spiceScore}`;
+	          ui.depositToast.classList.remove("show");
+	          spiceDepot.triggerDeposit();
+	        }
+	      }
       if (!keyState.KeyE) state.depositKeyConsumed = false;
 
-      // Spice cargo glow
-      const carrying = state.spiceCarry > 0;
-      const cargoMesh = player.userData.spiceCargoMesh;
-      if (cargoMesh) {
-        cargoMesh.visible = carrying;
-        player.userData.spiceGlowMesh.visible = carrying;
-        if (carrying) {
-          const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * 3.8);
-          player.userData.spiceCargoMat.emissiveIntensity = 0.7 + pulse * 0.8;
+	      // Spice cargo glow
+	      const carrying = state.spiceCarry > 0;
+	      const cargoMesh = player.userData.spiceCargoMesh;
+	      if (cargoMesh) {
+	        setSpiceCargoVisual(player, carrying);
+	        if (carrying) {
+	          const pulse = 0.5 + 0.5 * Math.sin(state.elapsed * 3.8);
+	          player.userData.spiceCargoMat.emissiveIntensity = 0.7 + pulse * 0.8;
           player.userData.spiceGlowMat.opacity = 0.07 + pulse * 0.13;
         }
       }
@@ -5687,10 +5718,11 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
               pocket.material.opacity = 0.24 + (harvestPulse * 0.16);
             }
             if (state.harvestTimer >= CONFIG.spiceHarvestDuration) {
-              const bagSpace = CONFIG.spiceMaxCarry - state.spiceCarry;
-              const take = Math.min(bagSpace, activeNode.remaining);
-              state.spiceCarry += take;
-              activeNode.remaining -= take;
+	              const bagSpace = CONFIG.spiceMaxCarry - state.spiceCarry;
+	              const take = Math.min(bagSpace, activeNode.remaining);
+	              state.spiceCarry += take;
+	              setSpiceCargoVisual(player, state.spiceCarry > 0);
+	              activeNode.remaining -= take;
               // Start decay timer on first successful harvest (>= 1 unit taken)
               if (!mp.connected && take > 0 && activeNode.decayTimer < 0) {
                 activeNode.decayTimer = activeNode.type === "plume"
@@ -6040,25 +6072,40 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	      packCap.rotation.x = Math.PI / 2;
 	      root.add(packCap);
 
-	      // Spice cargo indicator — only visible when carrying melange
+	      // Spice cargo indicator - only visible when carrying melange
 	      const spiceCargoMat = new THREE.MeshStandardMaterial({
-	        color: 0xc4780a,
-	        emissive: 0xff8800,
+	        color: 0xffb12d,
+	        emissive: 0xffb12d,
 	        emissiveIntensity: 0,
-	        roughness: 0.28,
-	        metalness: 0.18,
+	        roughness: 0.22,
+	        metalness: 0.12,
 	        flatShading: true,
 	      });
-	      const spiceCargo = makeMesh(new THREE.CylinderGeometry(0.19, 0.23, 0.34, 8), spiceCargoMat);
-	      spiceCargo.position.set(0, 2.9, -0.56);
+	      const spiceCargo = new THREE.Group();
+	      const cargoCellGeo = new THREE.BoxGeometry(0.2, 0.5, 0.13);
+	      for (const x of [-0.27, 0.27]) {
+	        const cell = makeMesh(cargoCellGeo, spiceCargoMat);
+	        cell.position.x = x;
+	        spiceCargo.add(cell);
+	      }
+	      const cargoTop = makeMesh(new THREE.BoxGeometry(0.6, 0.16, 0.13), spiceCargoMat);
+	      cargoTop.position.y = 0.32;
+	      spiceCargo.add(cargoTop);
+	      spiceCargo.position.set(0, 2.68, -0.86);
 	      spiceCargo.visible = false;
 	      root.add(spiceCargo);
 
 	      const spiceGlowMat = new THREE.MeshBasicMaterial({
-	        color: 0xff9900, transparent: true, opacity: 0, depthWrite: false, side: THREE.BackSide,
+	        color: 0xffb12d,
+	        transparent: true,
+	        opacity: 0,
+	        depthWrite: false,
+	        side: THREE.DoubleSide,
+	        blending: THREE.AdditiveBlending,
 	      });
 	      const spiceGlow = new THREE.Mesh(new THREE.SphereGeometry(0.52, 8, 6), spiceGlowMat);
-	      spiceGlow.position.set(0, 2.9, -0.56);
+	      spiceGlow.position.set(0, 2.72, -0.88);
+	      spiceGlow.scale.set(1.08, 0.9, 0.42);
 	      spiceGlow.visible = false;
 	      root.add(spiceGlow);
 
@@ -7090,18 +7137,115 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       scene.add(mesh);
 
       // Two Arrakis moons
-      const moonGeo = new THREE.SphereGeometry(1, 28, 20);
+      const moonGeo = new THREE.SphereGeometry(1, 48, 32);
+
+      function seededRandom(seed) {
+        let value = seed >>> 0;
+        return () => {
+          value += 0x6D2B79F5;
+          let t = value;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function makeMoonSurfaceTexture(seed, palette) {
+        const size = 512;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        const image = ctx.createImageData(size, size);
+        const base = new THREE.Color(palette.base);
+        const low = new THREE.Color(palette.low);
+        const high = new THREE.Color(palette.high);
+
+        for (let y = 0; y < size; y += 1) {
+          for (let x = 0; x < size; x += 1) {
+            const i = (y * size + x) * 4;
+            const ridge =
+              Math.sin((x * 0.035) + (seed * 0.17)) * 0.12 +
+              Math.sin((y * 0.052) + (x * 0.009) + seed) * 0.10 +
+              Math.sin(((x + y) * 0.021) + (seed * 0.43)) * 0.08;
+            const latitude = Math.abs((y / size) - 0.5) * 2;
+            const shade = THREE.MathUtils.clamp(0.52 + ridge - (latitude * 0.08), 0, 1);
+            const color = low.clone().lerp(high, shade).lerp(base, 0.42);
+            image.data[i] = Math.round(color.r * 255);
+            image.data[i + 1] = Math.round(color.g * 255);
+            image.data[i + 2] = Math.round(color.b * 255);
+            image.data[i + 3] = 255;
+          }
+        }
+        ctx.putImageData(image, 0, 0);
+
+        const rand = seededRandom(seed);
+        for (let i = 0; i < palette.craterCount; i += 1) {
+          const x = rand() * size;
+          const y = (0.08 + rand() * 0.84) * size;
+          const r = (palette.craterMin + rand() * (palette.craterMax - palette.craterMin)) * size;
+          const crater = ctx.createRadialGradient(x - r * 0.25, y - r * 0.22, r * 0.08, x, y, r);
+          crater.addColorStop(0.0, palette.craterHigh);
+          crater.addColorStop(0.38, palette.craterLow);
+          crater.addColorStop(0.72, palette.craterMid);
+          crater.addColorStop(1.0, "rgba(0,0,0,0)");
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = crater;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = palette.craterRim;
+          ctx.globalAlpha = 0.18 + rand() * 0.18;
+          ctx.lineWidth = Math.max(1, r * 0.09);
+          ctx.beginPath();
+          ctx.arc(x - r * 0.04, y - r * 0.04, r * 0.72, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        texture.needsUpdate = true;
+        return texture;
+      }
+
+      function makeMoonMaterial(palette) {
+        const surfaceMap = makeMoonSurfaceTexture(palette.seed, palette);
+        const material = new THREE.MeshStandardMaterial({
+          map: surfaceMap,
+          bumpMap: surfaceMap,
+          emissiveMap: surfaceMap,
+          color: palette.material,
+          emissive: palette.fill,
+          emissiveIntensity: palette.fillIntensity,
+          bumpScale: palette.bumpScale,
+          roughness: 0.72,
+          metalness: 0,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          depthTest: true,
+          fog: false,
+          toneMapped: false,
+        });
+        material.userData.fillIntensity = palette.fillIntensity;
+        return material;
+      }
+
       function makeMoonGlowTexture() {
         const canvas = document.createElement("canvas");
         canvas.width = 128;
         canvas.height = 128;
         const ctx = canvas.getContext("2d");
         const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
-        grad.addColorStop(0.00, "rgba(255,253,240,1.00)");
-        grad.addColorStop(0.18, "rgba(255,248,220,0.72)");
-        grad.addColorStop(0.42, "rgba(252,232,190,0.34)");
-        grad.addColorStop(0.72, "rgba(236,195,148,0.12)");
-        grad.addColorStop(1.00, "rgba(220,170,120,0.00)");
+        grad.addColorStop(0.00, "rgba(255,255,255,1.00)");
+        grad.addColorStop(0.20, "rgba(255,255,255,0.48)");
+        grad.addColorStop(0.48, "rgba(255,255,255,0.16)");
+        grad.addColorStop(0.76, "rgba(255,255,255,0.05)");
+        grad.addColorStop(1.00, "rgba(255,255,255,0.00)");
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, 128, 128);
         const tex = new THREE.CanvasTexture(canvas);
@@ -7119,7 +7263,8 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
             transparent: true,
             opacity: 0,
             depthWrite: false,
-            depthTest: false,
+            depthTest: true,
+            fog: false,
             blending: THREE.AdditiveBlending,
           })
         );
@@ -7130,28 +7275,64 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         return glow;
       }
 
-      function makeMoon(color, orbitPhase, orbitTilt, orbitRadius, size = 10, includeAura = false) {
-        const moonMat = new THREE.MeshBasicMaterial({
-          color,
-          transparent: true,
-          opacity: 0,
-          depthWrite: false,
-        });
+      function makeMoon(palette, orbitPhase, orbitTilt, orbitRadius, size = 10, includeAura = false) {
+        const moonMat = makeMoonMaterial(palette);
         const moon = new THREE.Mesh(moonGeo, moonMat);
         moon.scale.setScalar(size);
         moon.frustumCulled = false;
         moon.renderOrder = -1;
+        moon.layers.set(MOON_RENDER_LAYER);
         scene.add(moon);
-        const glowOuter = makeMoonGlow(color, size * 4.2);
-        const glowInner = makeMoonGlow(0xfff0c8, size * 2.4);
-        const aura = includeAura ? makeMoonGlow(color, size * 7.8) : null;
+        const glowOuter = makeMoonGlow(palette.glow, size * 3.8);
+        const glowInner = makeMoonGlow(palette.rim, size * 2.0);
+        const aura = includeAura ? makeMoonGlow(palette.glow, size * 6.2) : null;
         return { moon, glowOuter, glowInner, aura, orbitPhase, orbitTilt, orbitRadius, size };
       }
 
       // Krelln — "Hand of God" — primary moon, warm cream
-      const moonA = makeMoon(0xfff2d6, Math.PI * 0.12, 0.34, 480, 46, true);
+      const moonA = makeMoon({
+        seed: 0x5197c1,
+        base: 0x9f9a8d,
+        low: 0x56564f,
+        high: 0xd8d1bd,
+        tint: 0xd4cbb5,
+        material: 0xf4ead1,
+        fill: 0xc9bea2,
+        fillIntensity: 0.62,
+        bumpScale: 2.1,
+        rim: 0xf1ead2,
+        glow: 0xbcc0bd,
+        relief: 0.72,
+        craterCount: 92,
+        craterMin: 0.008,
+        craterMax: 0.055,
+        craterHigh: "rgba(232,226,205,0.34)",
+        craterMid: "rgba(118,113,101,0.28)",
+        craterLow: "rgba(42,41,39,0.34)",
+        craterRim: "rgba(248,241,218,0.5)",
+      }, Math.PI * 0.12, 0.34, 480, 46, true);
       // Arvon — "Muad'Dib" — smaller silvery companion
-      const moonB = makeMoon(0xdce8ff, Math.PI * 0.49, -0.18, 470, 15.5, false);
+      const moonB = makeMoon({
+        seed: 0x83bd4a,
+        base: 0x8796ad,
+        low: 0x354256,
+        high: 0xc7d2e7,
+        tint: 0xb9c9e6,
+        material: 0xe2ebff,
+        fill: 0x9eb4dd,
+        fillIntensity: 0.56,
+        bumpScale: 2.4,
+        rim: 0xe0e9ff,
+        glow: 0x8fa8d0,
+        relief: 0.82,
+        craterCount: 54,
+        craterMin: 0.01,
+        craterMax: 0.07,
+        craterHigh: "rgba(222,232,255,0.32)",
+        craterMid: "rgba(82,96,122,0.30)",
+        craterLow: "rgba(21,28,43,0.32)",
+        craterRim: "rgba(228,238,255,0.42)",
+      }, Math.PI * 0.49, -0.18, 470, 15.5, false);
 
       return { mesh, mat, moonA, moonB };
     }
@@ -9602,9 +9783,10 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
     function beginDevour() {
       state.wormDevourStart.copy(player.position);
       player.userData.velocity.set(0, 0, 0);
-      player.userData.grounded = false;
-      player.userData.jumpBuffer = 0;
-      state.spiceCarry = 0;
+	      player.userData.grounded = false;
+	      player.userData.jumpBuffer = 0;
+	      state.spiceCarry = 0;
+	      setSpiceCargoVisual(player, false);
       cancelHarvest();
       state.shieldActive = false;
       state.noiseLevel = 0;
@@ -9647,9 +9829,10 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       state.wormTarget.y = sampleGroundHeight(state.wormTarget.x, state.wormTarget.z);
       state.wormDevourStart.copy(player.position);
       player.userData.velocity.set(0, 0, 0);
-      player.userData.grounded = false;
-      player.userData.jumpBuffer = 0;
-      state.spiceCarry = 0;
+	      player.userData.grounded = false;
+	      player.userData.jumpBuffer = 0;
+	      state.spiceCarry = 0;
+	      setSpiceCargoVisual(player, false);
       cancelHarvest();
       state.noiseLevel = 0;
       state.signLevel = 0;
@@ -10180,15 +10363,25 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08, amount, dropId: serverDropId });
     }
 
-    function removeDropById(dropId) {
-      for (let i = droppedSpicePickups.length - 1; i >= 0; i--) {
-        if (droppedSpicePickups[i].dropId === dropId) {
-          scene.remove(droppedSpicePickups[i].mesh);
-          droppedSpicePickups[i].mat.dispose();
-          droppedSpicePickups.splice(i, 1);
-          return;
-        }
+	    function removeDropById(dropId) {
+	      for (let i = droppedSpicePickups.length - 1; i >= 0; i--) {
+	        if (droppedSpicePickups[i].dropId === dropId) {
+	          scene.remove(droppedSpicePickups[i].mesh);
+	          droppedSpicePickups[i].mat.dispose();
+	          droppedSpicePickups.splice(i, 1);
+	          return;
+	        }
+	      }
+	    }
+
+    function setDropAmountById(dropId, amount) {
+      for (const drop of droppedSpicePickups) {
+        if (drop.dropId !== dropId) continue;
+        drop.amount = Math.max(0, Math.floor(Number(amount) || 0));
+        drop.pickupPending = false;
+        return true;
       }
+      return false;
     }
 
     function triggerSpicePickupNumber(amount) {
@@ -10226,21 +10419,24 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         drop.mat.emissiveIntensity = 0.7 + Math.sin(state.elapsed * 3.5) * 0.4;
 
         // Pickup — if player has bag space
-        if (state.spiceCarry < CONFIG.spiceMaxCarry && drop.timer > 0) {
-          const dx = player.position.x - drop.mesh.position.x;
-          const dz = player.position.z - drop.mesh.position.z;
-          if (dx * dx + dz * dz <= DROPPED_SPICE_PICKUP_RADIUS_SQ) {
-            if (mp.connected && drop.dropId != null) {
-              // Ask server to validate pickup (only once)
-              if (!drop.pickupPending) {
-                drop.pickupPending = true;
-                mp.emit("pickupSpiceDrop", drop.dropId);
-              }
-            } else {
-              // Single-player: immediate pickup
-              const take = Math.min(drop.amount, CONFIG.spiceMaxCarry - state.spiceCarry);
-              state.spiceCarry += take;
-              triggerSpicePickupNumber(take);
+	        if (state.spiceCarry < CONFIG.spiceMaxCarry && drop.timer > 0) {
+	          const dx = player.position.x - drop.mesh.position.x;
+	          const dz = player.position.z - drop.mesh.position.z;
+	          if (dx * dx + dz * dz <= DROPPED_SPICE_PICKUP_RADIUS_SQ) {
+	            if (mp.connected) {
+	              if (drop.dropId != null) {
+	                // Ask server to validate pickup (only once)
+	                if (!drop.pickupPending) {
+	                  drop.pickupPending = true;
+	                  mp.emit("pickupSpiceDrop", drop.dropId);
+	                }
+	              }
+	            } else {
+	              // Single-player: immediate pickup
+	              const take = Math.min(drop.amount, CONFIG.spiceMaxCarry - state.spiceCarry);
+	              state.spiceCarry += take;
+	              setSpiceCargoVisual(player, state.spiceCarry > 0);
+	              triggerSpicePickupNumber(take);
               broadcastWormRadio("Spice recovered from fallen warrior.");
               scene.remove(drop.mesh);
               drop.mat.dispose();
@@ -10388,10 +10584,26 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         shieldSphere,
         shieldHitFlash: 0,
       };
-      npc.onKill = () => {
-        spawnDroppedSpice(npc.root.position.x, npc.root.position.z, 3);
-        broadcastWormRadio("Enemy slain — recover the melange!");
-      };
+		      npc.onKill = ({ deathKind } = {}) => {
+			        if (deathKind === "atomic") {
+			          broadcastWormRadio("Enemy atomized — nothing left but glass.");
+			          return;
+			        }
+		        if (deathKind === "worm") {
+		          broadcastWormRadio("Worm swallowed the enemy.");
+		          return;
+		        }
+			        if (!mp.connected) {
+		          spawnDroppedSpice(npc.root.position.x, npc.root.position.z, 1);
+	          broadcastWormRadio("Enemy slain — recover the melange!");
+	        } else {
+	          mp.emit("npcSpiceDrop", {
+	            x: npc.root.position.x,
+	            z: npc.root.position.z,
+	          });
+	          broadcastWormRadio("Enemy slain — recover the melange!");
+	        }
+	      };
       return npc;
     }
 
@@ -10566,9 +10778,10 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         spawnX, spawnZ
       ) + CONFIG.playerStandHeight;
       player.userData.velocity.set(0, 0, 0);
-      player.userData.grounded = true;
-      player.userData.jumpBuffer = 0;
-      state.spiceCarry = 0;
+	      player.userData.grounded = true;
+	      player.userData.jumpBuffer = 0;
+	      state.spiceCarry = 0;
+	      setSpiceCargoVisual(player, false);
       state.playerHealth = CONFIG.playerMaxHealth;
       state.surfaceType = getPlayerSurfaceType(player.position.y, 0);
       player.rotation.x = 0;
@@ -10776,12 +10989,12 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         ui.resumeHint.classList.add("visible");
       });
 
-      const portalBody = portalSystem.hasInboundPortal
-	        ? "You arrived through a portal from another game. Step into the return portal to go back, or find the Vibe Jam portal to continue."
-	        : "Collect the glowing resource, called spice. Stand in bright patches to gather it, then return it to the bank. Stay on rock when the giant worm is near.";
-      const hintText = IS_MOBILE
-        ? "Best with keyboard and mouse.\nMobile: left pad moves. Drag the right side to look.\nDart pistol: tap 2, hold AIM, drag to aim, release to shoot.\nCollect spice: stand in a glowing patch and hold the E button.\nTHUMP drops a noise decoy. SHIELD blocks damage. Do not fire lasers into shields."
-        : "Click to start.\nMove: WASD. Jump: Space. Attack: click.\nWeapons: 1 knife, 2 dart pistol, 3 laser.\nCollect spice: stand in a glowing patch and hold E.\nQ drops a noise decoy. F toggles shield. Do not fire lasers into shields.";
+	      const portalBody = portalSystem.hasInboundPortal
+		        ? "You arrived through a portal from another game. Step into the return portal to go back, or find the Vibe Jam portal to continue."
+		        : "Harvest spice, bank it, and get back to rock before the worm finds you.";
+	      const hintText = IS_MOBILE
+	        ? "- Harvest: hold E in glowing patches\n- Bank spice at the Sietch\n- Rock is safe; sand wakes the worm\n- Left pad moves / right side looks\n- Aim shoots darts or laser\n- Laser + shield = atomic blast"
+	        : "- Harvest: hold E in glowing patches\n- Bank spice at the Sietch\n- Rock is safe; sand wakes the worm\n- WASD move / click attack / 1-3 weapons\n- Q thumper / F shield\n- Laser + shield = atomic blast";
 	      setOverlay(
 	        "Spice Jam",
 	        portalBody,
@@ -11271,20 +11484,31 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       const moonPulseB = 0.90 + (Math.sin((worldClock * 0.55) + 1.7) * 0.06);
       moonA.moon.material.opacity = moonVis;
       moonB.moon.material.opacity = moonVis * 0.96;
+      moonA.moon.material.emissiveIntensity = moonA.moon.material.userData.fillIntensity * (0.92 + (nightFactor * 0.18));
+      moonB.moon.material.emissiveIntensity = moonB.moon.material.userData.fillIntensity * (0.92 + (nightFactor * 0.18));
+      moonSurfaceLight.position.copy(camera.position)
+        .addScaledVector(tempUp, 80)
+        .addScaledVector(moonDirA, -120);
+      moonSurfaceLight.target.position.copy(moonA.moon.position);
+      moonSurfaceLight.target.updateMatrixWorld();
+      moonSurfaceLight.intensity = moonVis * 3.2;
+      moonSurfaceFill.intensity = moonVis * 0.85;
+      moonA.moon.rotation.set(0.08, worldClock * 0.006, -0.05);
+      moonB.moon.rotation.set(-0.04, (worldClock * -0.01) + 1.2, 0.12);
       moonA.moon.visible = moonVis > 0.02;
       moonB.moon.visible = moonVis > 0.02;
       moonA.glowOuter.position.copy(moonA.moon.position);
       moonA.glowInner.position.copy(moonA.moon.position);
       moonB.glowOuter.position.copy(moonB.moon.position);
       moonB.glowInner.position.copy(moonB.moon.position);
-      moonA.glowOuter.material.opacity = moonVis * 1.0 * moonPulseA;
-      moonA.glowInner.material.opacity = moonVis * 0.92 * moonPulseA;
-      moonB.glowOuter.material.opacity = moonVis * 0.95 * moonPulseB;
-      moonB.glowInner.material.opacity = moonVis * 0.74 * moonPulseB;
-      const moonAOuterScale = moonA.size * (5.4 + (Math.sin(worldClock * 0.22) * 0.18));
-      const moonAInnerScale = moonA.size * (2.9 + (Math.sin(worldClock * 0.3) * 0.12));
-      const moonBOuterScale = moonB.size * (4.9 + (Math.sin((worldClock * 0.28) + 0.8) * 0.18));
-      const moonBInnerScale = moonB.size * (2.6 + (Math.sin((worldClock * 0.34) + 1.1) * 0.14));
+      moonA.glowOuter.material.opacity = moonVis * 0.34 * moonPulseA;
+      moonA.glowInner.material.opacity = moonVis * 0.2 * moonPulseA;
+      moonB.glowOuter.material.opacity = moonVis * 0.28 * moonPulseB;
+      moonB.glowInner.material.opacity = moonVis * 0.16 * moonPulseB;
+      const moonAOuterScale = moonA.size * (3.6 + (Math.sin(worldClock * 0.22) * 0.08));
+      const moonAInnerScale = moonA.size * (1.85 + (Math.sin(worldClock * 0.3) * 0.05));
+      const moonBOuterScale = moonB.size * (3.4 + (Math.sin((worldClock * 0.28) + 0.8) * 0.08));
+      const moonBInnerScale = moonB.size * (1.75 + (Math.sin((worldClock * 0.34) + 1.1) * 0.06));
       moonA.glowOuter.scale.set(moonAOuterScale, moonAOuterScale, 1);
       moonA.glowInner.scale.set(moonAInnerScale, moonAInnerScale, 1);
       moonB.glowOuter.scale.set(moonBOuterScale, moonBOuterScale, 1);
@@ -11297,8 +11521,8 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 
       if (moonA.aura) {
         moonA.aura.position.copy(moonA.moon.position);
-        moonA.aura.material.opacity = moonVis * 0.28 * moonPulseA;
-        const moonAAuraScale = moonA.size * (7.8 + (Math.sin(worldClock * 0.18) * 0.3));
+        moonA.aura.material.opacity = moonVis * 0.07 * moonPulseA;
+        const moonAAuraScale = moonA.size * (5.6 + (Math.sin(worldClock * 0.18) * 0.12));
         moonA.aura.scale.set(moonAAuraScale, moonAAuraScale, 1);
         moonA.aura.visible = moonGlowVisible;
       }
@@ -11678,28 +11902,78 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       // Weapon visibility
       if (ud.knifeRoot)  ud.knifeRoot.visible  = data.equipped === "knife";
       if (ud.maulaRoot)  ud.maulaRoot.visible   = data.equipped === "maula";
-      if (ud.lasgunRoot) ud.lasgunRoot.visible  = data.equipped === "lasgun";
-      // Spice cargo
-      if (ud.spiceCargoMesh) {
-        ud.spiceCargoMesh.visible = data.spiceCarry > 0;
-        ud.spiceGlowMesh.visible  = data.spiceCarry > 0;
+	      if (ud.lasgunRoot) ud.lasgunRoot.visible  = data.equipped === "lasgun";
+	      // Spice cargo
+	      const carryingSpice = (Number(data.spiceCarry) || 0) > 0;
+	      setSpiceCargoVisual(mesh, carryingSpice);
+	      if (carryingSpice) {
+	        const pulseOffset = rp.cargoPulseOffset ??= Math.random() * Math.PI * 2;
+	        const pulse = 0.5 + 0.5 * Math.sin((state.elapsed * 3.8) + pulseOffset);
+	        if (ud.spiceCargoMat) ud.spiceCargoMat.emissiveIntensity = 0.7 + pulse * 0.8;
+	        if (ud.spiceGlowMat) ud.spiceGlowMat.opacity = 0.07 + pulse * 0.13;
+	      }
+	    }
+
+	    function updatePlayerCount() {
+	      const count = remotePlayers.size + (mp.connected ? 1 : 0);
+	      const text = mp.connected ? `Players ${count}/20` : "";
+	      console.log("[MP] updatePlayerCount:", text, "connected:", mp.connected, "remote:", remotePlayers.size);
+	      ui.hudPlayerCount.textContent = text;
+	    }
+
+    function applyNetworkCarryUpdate({ id, spiceCarry }) {
+	      const carry = THREE.MathUtils.clamp(Math.floor(Number(spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
+	      if (mp.socket && id === mp.socket.id) {
+	        state.spiceCarry = carry;
+	        setSpiceCargoVisual(player, carry > 0);
+	        return;
+	      }
+	      const rp = remotePlayers.get(id);
+	      if (rp) {
+	        rp.data.spiceCarry = carry;
+	        setSpiceCargoVisual(rp.mesh, carry > 0);
+	      } else {
+	        pendingRemoteCarry.set(id, carry);
+	      }
+	    }
+
+    function applyDepositAccepted({ amount, spiceCarry, scores, health }) {
+      const depositedAmount = Math.max(0, Math.floor(Number(amount) || 0));
+	      if (Number.isFinite(Number(spiceCarry))) {
+	        state.spiceCarry = THREE.MathUtils.clamp(Math.floor(Number(spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
+	        setSpiceCargoVisual(player, state.spiceCarry > 0);
+	      }
+      if (mp.team && typeof scores?.[mp.team] === "number") {
+        state.spiceScore = scores[mp.team];
+      }
+      if (typeof health === "number") {
+        state.playerHealth = health;
+      }
+      state.playerPoisonTimer = 0;
+      const maulaRefillCount = refillMaulaToFull();
+      state.depositToastTimer = 2.8;
+      state.depositToastMessage = maulaRefillCount > 0
+        ? `Spice deposited  ✦  Bank: ${state.spiceScore}  ✦  Darts refilled`
+        : `Spice deposited  ✦  Bank: ${state.spiceScore}`;
+      if (depositedAmount > 0) {
+        ui.depositToast.classList.remove("show");
+        spiceDepot.triggerDeposit();
       }
     }
 
-    function updatePlayerCount() {
-      const count = remotePlayers.size + (mp.connected ? 1 : 0);
-      const text = mp.connected ? `Players ${count}/20` : "";
-      console.log("[MP] updatePlayerCount:", text, "connected:", mp.connected, "remote:", remotePlayers.size);
-      ui.hudPlayerCount.textContent = text;
-    }
-
-    function addRemotePlayer(data) {
+	    function addRemotePlayer(data) {
       if (remotePlayers.has(data.id)) return;
+      const carry = pendingRemoteCarry.get(data.id);
+      if (Number.isFinite(Number(carry))) {
+        data.spiceCarry = carry;
+        pendingRemoteCarry.delete(data.id);
+      }
       const mesh = createRemotePlayerMesh(data.team, data.id, data.name || "");
       mesh.position.set(data.x, data.y, data.z);
       mesh.rotation.y = data.rotY ?? 0;
       scene.add(mesh);
       remotePlayers.set(data.id, { mesh, data: { ...data }, hitFlash: 0, poisonTimer: 0 });
+      updateRemotePlayerState(remotePlayers.get(data.id));
       updatePlayerCount();
     }
 
@@ -11711,6 +11985,7 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
       if (nameplate?.material) nameplate.material.dispose();
       scene.remove(rp.mesh);
       remotePlayers.delete(id);
+      pendingRemoteCarry.delete(id);
       updatePlayerCount();
     }
 
@@ -11861,7 +12136,6 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 	          y: player.position.y,
 	          z: player.position.z,
 	          rotY: player.rotation.y,
-	          spiceCarry: state.spiceCarry,
 	          equipped: state.equippedWeapon,
 	          shieldActive: isShieldOperational(),
 	          surfaceType: state.surfaceType,
@@ -11994,12 +12268,16 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
           }
         }
         // Sync scores
-        state.spiceScore = snapshot.scores[team] ?? 0;
-        applyNetworkWormState(snapshot.worm);
-        const self = snapshot.players?.find((p) => p.id === id);
-        if (self && Number.isFinite(Number(self.spawnProtectedUntil))) {
-          applySpawnProtectionFromServer(self.spawnProtectedUntil);
-        }
+	        state.spiceScore = snapshot.scores[team] ?? 0;
+	        applyNetworkWormState(snapshot.worm);
+	        const self = snapshot.players?.find((p) => p.id === id);
+	        if (self && Number.isFinite(Number(self.spiceCarry))) {
+	          state.spiceCarry = THREE.MathUtils.clamp(Math.floor(Number(self.spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
+	          setSpiceCargoVisual(player, state.spiceCarry > 0);
+	        }
+	        if (self && Number.isFinite(Number(self.spawnProtectedUntil))) {
+	          applySpawnProtectionFromServer(self.spawnProtectedUntil);
+	        }
         // Do not force a second local spawn on initial join; this causes a
         // visible load-time teleport/lighting pop. Server spawn is still used
         // for real respawns via playerRespawned.
@@ -12011,7 +12289,12 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
 
       socket.on("playerMoved", (data) => {
         const rp = remotePlayers.get(data.id);
-        if (rp) Object.assign(rp.data, data);
+        if (rp) {
+          Object.assign(rp.data, data);
+          if (Number.isFinite(Number(data.spiceCarry))) {
+            setSpiceCargoVisual(rp.mesh, Number(data.spiceCarry) > 0);
+          }
+        }
       });
 
       socket.on("nodeHarvested", (nodeId) => {
@@ -12034,25 +12317,49 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         spawnDroppedSpice(x, z, amount, id);
       });
 
-      socket.on("spiceDropPickedUp", ({ dropId, playerId, taken }) => {
-        removeDropById(dropId);
-        if (playerId === socket.id && taken > 0) {
-          state.spiceCarry += taken;
-          triggerSpicePickupNumber(taken);
-          broadcastWormRadio("Spice recovered from fallen warrior.");
-        }
-      });
+	      socket.on("spiceDropPickedUp", ({ dropId, playerId, taken, remaining, spiceCarry }) => {
+	        const remainingAmount = Math.max(0, Math.floor(Number(remaining) || 0));
+	        if (remainingAmount > 0) {
+	          setDropAmountById(dropId, remainingAmount);
+	        } else {
+	          removeDropById(dropId);
+	        }
+	        if (playerId !== socket.id && Number.isFinite(Number(spiceCarry))) {
+	          applyNetworkCarryUpdate({ id: playerId, spiceCarry });
+	        }
+	        if (playerId === socket.id && taken > 0) {
+		            if (Number.isFinite(Number(spiceCarry))) {
+		              state.spiceCarry = THREE.MathUtils.clamp(Math.floor(Number(spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
+		            } else {
+		              state.spiceCarry = Math.min(CONFIG.spiceMaxCarry, state.spiceCarry + taken);
+		            }
+		            setSpiceCargoVisual(player, state.spiceCarry > 0);
+		          triggerSpicePickupNumber(taken);
+	          broadcastWormRadio("Spice recovered from fallen warrior.");
+	        }
+	      });
 
       socket.on("spiceDropExpired", (dropId) => {
         removeDropById(dropId);
       });
 
-      socket.on("scoreUpdate", (scores) => {
-        if (mp.team && typeof scores?.[mp.team] === "number") {
-          state.spiceScore = scores[mp.team];
-        }
-        console.log("[MP] Scores:", scores);
-      });
+	      socket.on("scoreUpdate", (scores) => {
+	        if (mp.team && typeof scores?.[mp.team] === "number") {
+	          state.spiceScore = scores[mp.team];
+	        }
+	        console.log("[MP] Scores:", scores);
+	      });
+
+      socket.on("playerCarryUpdated", applyNetworkCarryUpdate);
+
+      socket.on("spiceDepositAccepted", applyDepositAccepted);
+
+	      socket.on("spiceDepositRejected", ({ spiceCarry }) => {
+	        if (Number.isFinite(Number(spiceCarry))) {
+	          state.spiceCarry = THREE.MathUtils.clamp(Math.floor(Number(spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
+	          setSpiceCargoVisual(player, state.spiceCarry > 0);
+	        }
+	      });
 
 	      socket.on("wormSync", (wormState) => {
 	        applyNetworkWormState(wormState);
@@ -12117,9 +12424,10 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
             broadcastWormRadio("The worm has you.");
             return;
           }
-          // Server broadcasts spiceDrop to all clients — don't spawn locally
-          state.spiceCarry = 0;
-          cancelHarvest();
+	          // Server broadcasts spiceDrop to all clients — don't spawn locally
+	          state.spiceCarry = 0;
+	          setSpiceCargoVisual(player, false);
+	          cancelHarvest();
           state.shieldActive = false;
           state.playerPoisonTimer = 0;
           state.pvpDead = true;
@@ -12163,17 +12471,20 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
         else sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
       });
 
-	      socket.on("playerRespawned", ({ id, spawn, protectedUntil, worldTime }) => {
+	      socket.on("playerRespawned", ({ id, spawn, protectedUntil, spiceCarry, worldTime }) => {
 	        const rp = remotePlayers.get(id);
 	        if (rp) {
           if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
             rp.data.x = spawn.x;
             rp.data.z = spawn.z;
           }
-          if (Number.isFinite(Number(protectedUntil))) {
-            rp.data.spawnProtectedUntil = Number(protectedUntil);
+	          if (Number.isFinite(Number(protectedUntil))) {
+	            rp.data.spawnProtectedUntil = Number(protectedUntil);
+	          }
+          if (Number.isFinite(Number(spiceCarry))) {
+            rp.data.spiceCarry = THREE.MathUtils.clamp(Math.floor(Number(spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
           }
-          rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
+	          rp.data.health = 100; rp.hitFlash = 0; rp.dead = false; rp.deathTimer = 0;
           rp.mesh.rotation.x = 0; rp._lastEmissive = 0; rp._lasgunDmgAccum = 0;
           rp.mesh.traverse((obj) => {
             if (obj.isMesh && obj.material && obj.material.emissive) {
@@ -12186,7 +12497,11 @@ Q drops a noise decoy. F toggles shield. Do not fire lasers into shields.</p>
             state.serverWorldTimeBase = worldTime;
             state.serverWorldTimeStamp = performance.now() * 0.001;
           }
-          applySpawnProtectionFromServer(protectedUntil);
+	          applySpawnProtectionFromServer(protectedUntil);
+	          if (Number.isFinite(Number(spiceCarry))) {
+	            state.spiceCarry = THREE.MathUtils.clamp(Math.floor(Number(spiceCarry) || 0), 0, CONFIG.spiceMaxCarry);
+	            setSpiceCargoVisual(player, state.spiceCarry > 0);
+	          }
           const wasWormDeath = isLocalWormDeathPhase();
           if (wasWormDeath) {
             state.wormRecoveryTimer = CONFIG.wormDevourMessageDuration;

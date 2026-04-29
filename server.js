@@ -38,6 +38,12 @@ const PLAYER_SPAWN_CENTER_Z = -380;
 const PLAYER_SPAWN_RADIUS = 18;
 const PLAYER_SPAWN_MIN_SEPARATION = 6;
 const START_MESA_SAFE_RADIUS = 41;
+const SPICE_DEPOT_X = PLAYER_SPAWN_CENTER_X;
+const SPICE_DEPOT_Z = PLAYER_SPAWN_CENTER_Z - 10;
+const SPICE_DEPOSIT_RADIUS = 7.5;
+const SPICE_DEPOSIT_SERVER_PADDING = 2.5;
+const NPC_SPICE_DROP_AMOUNT = 1;
+const NPC_SPICE_DROP_MAX_DISTANCE = 240;
 const DEFAULT_MAP_SEED = Math.floor(Math.random() * 0x1000000) >>> 0;
 const SERVER_START_MS = Date.now();
 
@@ -320,6 +326,43 @@ function dist2(ax, az, bx, bz) {
   return (dx * dx) + (dz * dz);
 }
 
+function getPlayerSpiceCarry(player) {
+  if (!player) return 0;
+  return clamp(Math.floor(Number(player.spiceCarry) || 0), 0, SPICE_MAX_CARRY);
+}
+
+function setPlayerSpiceCarry(player, amount) {
+  if (!player) return 0;
+  player.spiceCarry = clamp(Math.floor(Number(amount) || 0), 0, SPICE_MAX_CARRY);
+  return player.spiceCarry;
+}
+
+function emitPlayerCarry(player, targetSocket = null) {
+  if (!player) return;
+  const payload = { id: player.id, spiceCarry: getPlayerSpiceCarry(player) };
+  if (targetSocket) {
+    targetSocket.emit("playerCarryUpdated", payload);
+  } else {
+    io.emit("playerCarryUpdated", payload);
+    io.emit("playerMoved", {
+      id: player.id,
+      x: player.x,
+      y: player.y,
+      z: player.z,
+      rotY: player.rotY,
+      spiceCarry: payload.spiceCarry,
+      equipped: player.equipped,
+      shieldActive: player.shieldActive,
+    });
+  }
+}
+
+function isPlayerNearSpiceDepot(player) {
+  if (!player) return false;
+  const radius = SPICE_DEPOSIT_RADIUS + SPICE_DEPOSIT_SERVER_PADDING;
+  return dist2(player.x, player.z, SPICE_DEPOT_X, SPICE_DEPOT_Z) <= radius * radius;
+}
+
 function isInsideWorldBounds(x, z, padding = 0) {
   const halfWorld = WORLD_HALF - padding;
   return x >= -halfWorld && x <= halfWorld && z >= -halfWorld && z <= halfWorld;
@@ -535,19 +578,21 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
   setTimeout(() => {
     const target = players.get(targetId);
     if (!target) return;
-    const spawn = pickPlayerSpawnPoint(targetId);
-    target.health = 100;
-    target.x = spawn.x;
-    target.z = spawn.z;
-    target.y = 0;
-    clearPlayerTransientState(target, { clearCarry: true });
-    grantSpawnProtection(target);
-    io.emit("playerRespawned", {
-      id: targetId,
-      spawn,
-      protectedUntil: target.spawnProtectedUntil,
-      worldTime: getWorldTimeSeconds(),
-    });
+	    const spawn = pickPlayerSpawnPoint(targetId);
+	    target.health = 100;
+	    target.x = spawn.x;
+	    target.z = spawn.z;
+	    target.y = 0;
+	    clearPlayerTransientState(target, { clearCarry: true });
+	    grantSpawnProtection(target);
+	    emitPlayerCarry(target);
+	    io.emit("playerRespawned", {
+	      id: targetId,
+	      spawn,
+	      protectedUntil: target.spawnProtectedUntil,
+	      spiceCarry: getPlayerSpiceCarry(target),
+	      worldTime: getWorldTimeSeconds(),
+	    });
   }, delayMs);
 }
 
@@ -579,10 +624,18 @@ function consumePlayerThumper(player) {
 }
 
 function spawnSpiceDrop(x, z, amount) {
+  amount = clamp(Math.floor(Number(amount) || 0), 0, SPICE_MAX_CARRY);
   if (amount <= 0) return;
   const id = nextDropId++;
   spiceDrops.set(id, { id, x, z, amount, timer: SPICE_DROP_LIFETIME });
   io.emit("spiceDrop", { id, x, z, amount });
+}
+
+function dropPlayerCarriedSpice(player) {
+  const amount = getPlayerSpiceCarry(player);
+  if (amount <= 0) return false;
+  spawnSpiceDrop(player.x, player.z, amount);
+  return true;
 }
 
 function clearPlayerTransientState(player, { clearCarry = true } = {}) {
@@ -677,7 +730,7 @@ function sampleStrongestWormHotspot() {
       Math.max(
         p.signLevel,
         (p.noiseLevel * 0.65)
-          + (p.spiceCarry > 0 ? 0.08 : 0)
+	          + (getPlayerSpiceCarry(p) > 0 ? 0.08 : 0)
           + (p.harvestActive ? 0.12 : 0),
         shieldStrength
       ),
@@ -692,9 +745,11 @@ function sampleStrongestWormHotspot() {
 
 function killPlayerByWorm(target) {
   if (!target || target.health <= 0 || isSpawnProtected(target)) return;
-  target.health = 0;
-  clearPlayerTransientState(target, { clearCarry: true });
-  io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
+	  target.health = 0;
+	  dropPlayerCarriedSpice(target);
+	  clearPlayerTransientState(target, { clearCarry: true });
+	  emitPlayerCarry(target);
+	  io.emit("playerDamaged", { id: target.id, health: target.health, attackerId: "worm" });
   io.emit("playerKilled", { id: target.id, killerId: "worm" });
   emitDeathEvent(
     target.id,
@@ -980,10 +1035,11 @@ setInterval(() => {
     const dmg = POISON_DPS * dt;
     p.health = Math.max(0, p.health - dmg);
     io.emit("playerDamaged", { id: p.id, health: p.health, attackerId: p.poisonAttackerId });
-    if (p.health <= 0) {
-      if (p.spiceCarry > 0) spawnSpiceDrop(p.x, p.z, p.spiceCarry);
-      clearPlayerTransientState(p, { clearCarry: true });
-      io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
+	    if (p.health <= 0) {
+			      dropPlayerCarriedSpice(p);
+	      clearPlayerTransientState(p, { clearCarry: true });
+	      emitPlayerCarry(p);
+	      io.emit("playerKilled", { id: p.id, killerId: p.poisonAttackerId });
       emitDeathEvent(p.id, p.poisonAttackerId, "poison");
       schedulePlayerRespawn(p.id, 3000);
     }
@@ -1107,10 +1163,11 @@ io.on("connection", (socket) => {
     const clampedDamage = Math.max(0, Math.min(Number(damage) || 0, 100));
     target.health = Math.max(0, target.health - clampedDamage);
     io.emit("playerDamaged", { id: targetId, health: target.health, attackerId });
-    if (target.health <= 0) {
-      if (target.spiceCarry > 0) spawnSpiceDrop(target.x, target.z, target.spiceCarry);
-      clearPlayerTransientState(target, { clearCarry: true });
-      io.emit("playerKilled", { id: targetId, killerId: attackerId });
+	    if (target.health <= 0) {
+			      dropPlayerCarriedSpice(target);
+	      clearPlayerTransientState(target, { clearCarry: true });
+	      emitPlayerCarry(target);
+	      io.emit("playerKilled", { id: targetId, killerId: attackerId });
       emitDeathEvent(targetId, attackerId, attackType);
       schedulePlayerRespawn(targetId, 3000);
     }
@@ -1133,12 +1190,11 @@ io.on("connection", (socket) => {
       p.vz = 0;
     }
     p.moveTime = nowSec;
-    p.x = x;
-    p.y = data.y;
-    p.z = z;
-    p.rotY = data.rotY;
-    p.spiceCarry = data.spiceCarry;
-    p.equipped = data.equipped;
+	    p.x = x;
+	    p.y = data.y;
+	    p.z = z;
+	    p.rotY = data.rotY;
+	    p.equipped = data.equipped;
     p.surfaceType = data.surfaceType === "rock" ? "rock" : "sand";
     p.noiseLevel = clamp(Number(data.noiseLevel) || 0, 0, 1);
     p.signLevel = clamp(Number(data.signLevel) || 0, 0, 1);
@@ -1152,13 +1208,13 @@ io.on("connection", (socket) => {
     p.thumperSignal = clamp(Number(data.thumperSignal) || 0, 0, 1);
     // Relay to everyone else — don't echo back to sender
     socket.broadcast.emit("playerMoved", {
-      id: socket.id,
-      x: p.x, y: p.y, z: p.z,
-      rotY: p.rotY,
-      spiceCarry: p.spiceCarry,
-      equipped: p.equipped,
-      shieldActive: p.shieldActive,
-    });
+	      id: socket.id,
+	      x: p.x, y: p.y, z: p.z,
+	      rotY: p.rotY,
+	      spiceCarry: getPlayerSpiceCarry(p),
+	      equipped: p.equipped,
+	      shieldActive: p.shieldActive,
+	    });
   });
 
   socket.on("noiseHotspot", (data) => {
@@ -1265,37 +1321,35 @@ io.on("connection", (socket) => {
     });
   });
 
-  // ── Spice harvested ──
-  socket.on("harvestNode", (data) => {
-    const nodeId = typeof data === "object" && data !== null ? data.id : data;
-    const node = spiceNodes[nodeId];
-    if (!node || !node.active) return;
-    const nextType = node.tutorial ? "small" : (data?.type === "plume" ? "plume" : "small");
-    const reportedTotalYield = Math.max(0, Math.floor(Number(data?.totalYield) || 0));
-    const takenAmount = Math.max(0, Math.floor(Number(data?.takenAmount) || 0));
-    const wasPristine = node.remaining === node.totalYield;
+	  // ── Spice harvested ──
+	  socket.on("harvestNode", (data) => {
+	    const p = players.get(socket.id);
+	    if (!p || p.health <= 0) return;
+	    const nodeId = typeof data === "object" && data !== null ? data.id : data;
+	    const node = spiceNodes[nodeId];
+	    if (!node || !node.active) {
+	      emitPlayerCarry(p, socket);
+	      return;
+	    }
+	    const requestedAmount = Math.max(0, Math.floor(Number(data?.takenAmount) || 0));
+	    const carry = getPlayerSpiceCarry(p);
+	    const bagSpace = Math.max(0, SPICE_MAX_CARRY - carry);
+	    const takenAmount = Math.min(
+	      node.remaining,
+	      bagSpace,
+	      requestedAmount > 0 ? requestedAmount : node.remaining
+	    );
+	    if (takenAmount <= 0) {
+	      emitPlayerCarry(p, socket);
+	      io.emit("spiceNodeSync", node);
+	      return;
+	    }
 
-    if (node.remaining === node.totalYield || node.type !== "plume") {
-      node.type = nextType;
-    }
-    if (reportedTotalYield > 0) {
-      if (wasPristine) {
-        node.totalYield = reportedTotalYield;
-        node.remaining = reportedTotalYield;
-      } else {
-        node.totalYield = Math.max(node.totalYield, reportedTotalYield);
-        node.remaining = Math.min(node.remaining, node.totalYield);
-      }
-    }
+	    setPlayerSpiceCarry(p, carry + takenAmount);
+	    node.remaining = Math.max(0, node.remaining - takenAmount);
 
-    if (takenAmount > 0) {
-      node.remaining = Math.max(0, node.remaining - takenAmount);
-    } else {
-      node.remaining = 0;
-    }
-
-    if (node.remaining <= 0) {
-      node.active = false;
+	    if (node.remaining <= 0) {
+	      node.active = false;
       node.decayTimer = -1;
       node.respawnTimer = SPICE_RESPAWN_SECONDS;
       if (node.type === "plume") {
@@ -1309,40 +1363,77 @@ io.on("connection", (socket) => {
       if (node.decayTimer < 0) {
         node.decayTimer = SPICE_DECAY_SECONDS;
       }
-    }
-    io.emit("spiceNodeSync", node);
-  });
+	    }
+	    io.emit("spiceNodeSync", node);
+	    emitPlayerCarry(p);
+	  });
 
-  // ── Spice deposited ──
-  socket.on("spiceDeposited", (data) => {
-    const p = players.get(socket.id);
-    if (!p) return;
-    const requestedAmount = Math.max(0, Math.floor(Number(data?.amount) || 0));
-    const depositedAmount = requestedAmount > 0
-      ? requestedAmount
-      : Math.max(0, Math.floor(Number(p.spiceCarry) || 0));
-    if (depositedAmount <= 0) return;
-    scores[p.team] += depositedAmount;
-    p.spiceCarry = Math.max(0, (Number(p.spiceCarry) || 0) - depositedAmount);
-    p.health = 100;
-    io.emit("scoreUpdate", scores);
-    io.emit("playerDamaged", { id: socket.id, health: p.health, attackerId: "bank" });
-  });
+	  // ── Spice deposited ──
+	  socket.on("spiceDeposited", () => {
+	    const p = players.get(socket.id);
+	    if (!p || p.health <= 0) return;
+	    if (!isPlayerNearSpiceDepot(p)) {
+	      emitPlayerCarry(p, socket);
+	      socket.emit("spiceDepositRejected", {
+	        reason: "not_at_depot",
+	        spiceCarry: getPlayerSpiceCarry(p),
+	      });
+	      return;
+	    }
+	    const depositedAmount = getPlayerSpiceCarry(p);
+	    if (depositedAmount <= 0) {
+	      emitPlayerCarry(p, socket);
+	      socket.emit("spiceDepositRejected", {
+	        reason: "no_spice",
+	        spiceCarry: getPlayerSpiceCarry(p),
+	      });
+	      return;
+	    }
+	    scores[p.team] += depositedAmount;
+	    setPlayerSpiceCarry(p, 0);
+	    p.health = 100;
+	    io.emit("scoreUpdate", scores);
+	    emitPlayerCarry(p);
+	    socket.emit("spiceDepositAccepted", {
+	      amount: depositedAmount,
+	      spiceCarry: getPlayerSpiceCarry(p),
+	      scores,
+	      health: p.health,
+	    });
+	    io.emit("playerDamaged", { id: socket.id, health: p.health, attackerId: "bank" });
+	  });
 
   // ── Spice drop pickup ──
   socket.on("pickupSpiceDrop", (dropId) => {
+	    const p = players.get(socket.id);
+	    if (!p || p.health <= 0) return;
+	    const drop = spiceDrops.get(dropId);
+	    if (!drop) return;
+	    const take = Math.min(drop.amount, SPICE_MAX_CARRY - getPlayerSpiceCarry(p));
+	    if (take <= 0) return;
+	    setPlayerSpiceCarry(p, getPlayerSpiceCarry(p) + take);
+	    drop.amount -= take;
+	    if (drop.amount <= 0) {
+	      spiceDrops.delete(dropId);
+	    }
+	    io.emit("spiceDropPickedUp", {
+	      dropId,
+	      playerId: socket.id,
+	      taken: take,
+	      remaining: drop.amount || 0,
+	      spiceCarry: getPlayerSpiceCarry(p),
+	    });
+		    emitPlayerCarry(p);
+		  });
+
+  socket.on("npcSpiceDrop", (data) => {
     const p = players.get(socket.id);
     if (!p || p.health <= 0) return;
-    const drop = spiceDrops.get(dropId);
-    if (!drop) return;
-    const take = Math.min(drop.amount, SPICE_MAX_CARRY - Math.max(0, p.spiceCarry));
-    if (take <= 0) return;
-    p.spiceCarry += take;
-    drop.amount -= take;
-    if (drop.amount <= 0) {
-      spiceDrops.delete(dropId);
-    }
-    io.emit("spiceDropPickedUp", { dropId, playerId: socket.id, taken: take, remaining: drop.amount || 0 });
+    const x = Number(data?.x);
+    const z = Number(data?.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    if (dist2(p.x, p.z, x, z) > NPC_SPICE_DROP_MAX_DISTANCE * NPC_SPICE_DROP_MAX_DISTANCE) return;
+    spawnSpiceDrop(x, z, NPC_SPICE_DROP_AMOUNT);
   });
 
   // ── Poison applied (maula dart) ──
