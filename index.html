@@ -787,24 +787,41 @@
   <div id="overlay">
     <div class="panel">
 	      <h1 id="overlayTitle">Spice Jam</h1>
-	      <p id="overlayBody">Harvest spice, bank it, and get back to rock before the worm finds you.</p>
-		      <p id="overlayHint">- Harvest: hold E in glowing patches
-- Bank spice at the Sietch
-- Rock is safe; sand wakes the worm
-- WASD move / click attack / 1-3 weapons
-- Q thumper / F shield
-- Laser + shield = atomic blast</p>
-      <div id="overlayCta" class="cta">Click to Play</div>
+	      <p id="overlayBody"></p>
+		      <p id="overlayHint"></p>
+      <div id="overlayCta" class="cta"></div>
     </div>
   </div>
 
   <script>
     (() => {
+      const defaultOverlayCopy = {
+        mobile: {
+          body: "Harvest spice and bring it back to the bank.",
+          hint: "Move: Left pad\nLook: Right side\nAttack: Attack button\nWeapons: 1–3\nInteract: Use E to harvest or deposit\nNoise attracts the giant worm\nWarning: lasgun + shield = huge explosion",
+          cta: "Tap to Play",
+        },
+        desktop: {
+          body: "Harvest glowing spice patches and bring the spice back to the bank.",
+          hint: "Move: WASD\nAttack: Click\nWeapons: 1–3\n\nHarvest: Stand on a spice patch and hold E.\nDeposit: Return to the Spice Bank and press E.\n\nNoise attracts the giant worm.\nRunning, harvesting, shields, explosions, and some weapons make noise.\nIf the noise meter gets too high, the worm will attack.\n\nWarning: shooting a shield with the lasgun causes a huge explosion.",
+          cta: "Click to Play",
+        },
+      };
       const hasTouch = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
       const coarsePointer = typeof window.matchMedia === "function"
         && window.matchMedia("(pointer: coarse)").matches;
       const mobileDevice = hasTouch && coarsePointer;
+      const overlayCopy = mobileDevice ? defaultOverlayCopy.mobile : defaultOverlayCopy.desktop;
       window.SPICE_MOBILE_DEVICE = mobileDevice;
+      window.SPICE_DEFAULT_OVERLAY = defaultOverlayCopy;
+
+      const overlayBody = document.getElementById("overlayBody");
+      const overlayHint = document.getElementById("overlayHint");
+      const overlayCta = document.getElementById("overlayCta");
+
+      if (overlayBody) overlayBody.textContent = overlayCopy.body;
+      if (overlayHint) overlayHint.textContent = overlayCopy.hint;
+      if (overlayCta) overlayCta.textContent = overlayCopy.cta;
 
       if (mobileDevice) {
         document.body.classList.add("spice-mobile-landing");
@@ -1253,6 +1270,23 @@
       return hasTouch && coarsePointer;
     }
 
+    function getDefaultOverlayCopy(isMobile) {
+      if (typeof window !== "undefined" && window.SPICE_DEFAULT_OVERLAY) {
+        return isMobile ? window.SPICE_DEFAULT_OVERLAY.mobile : window.SPICE_DEFAULT_OVERLAY.desktop;
+      }
+      return isMobile
+        ? {
+            body: "Harvest spice and bring it back to the bank.",
+            hint: "Move: Left pad\nLook: Right side\nAttack: Attack button\nWeapons: 1–3\nInteract: Use E to harvest or deposit\nNoise attracts the giant worm\nWarning: lasgun + shield = huge explosion",
+            cta: "Tap to Play",
+          }
+        : {
+            body: "Harvest glowing spice patches and bring the spice back to the bank.",
+            hint: "Move: WASD\nAttack: Click\nWeapons: 1–3\n\nHarvest: Stand on a spice patch and hold E.\nDeposit: Return to the Spice Bank and press E.\n\nNoise attracts the giant worm.\nRunning, harvesting, shields, explosions, and some weapons make noise.\nIf the noise meter gets too high, the worm will attack.\n\nWarning: shooting a shield with the lasgun causes a huge explosion.",
+            cta: "Click to Play",
+          };
+    }
+
     function createMobileControlsShim() {
       const emitter = new EventTarget();
       return {
@@ -1277,6 +1311,7 @@
     }
 
     const IS_MOBILE = isProbablyMobile();
+    const DEFAULT_OVERLAY_COPY = getDefaultOverlayCopy(IS_MOBILE);
     const controls = IS_MOBILE
       ? createMobileControlsShim()
       : new PointerLockControls(camera, document.body);
@@ -11122,15 +11157,12 @@
 
 	      const portalBody = portalSystem.hasInboundPortal
 		        ? "You arrived through a portal from another game. Step into the return portal to go back, or find the Vibe Jam portal to continue."
-		        : "Harvest spice, bank it, and get back to rock before the worm finds you.";
-	      const hintText = IS_MOBILE
-	        ? "- Harvest: hold E in glowing patches\n- Bank spice at the Sietch\n- Rock is safe; sand wakes the worm\n- Left pad moves / right side looks\n- Aim shoots darts or laser\n- Laser + shield = atomic blast"
-	        : "- Harvest: hold E in glowing patches\n- Bank spice at the Sietch\n- Rock is safe; sand wakes the worm\n- WASD move / click attack / 1-3 weapons\n- Q thumper / F shield\n- Laser + shield = atomic blast";
+		        : DEFAULT_OVERLAY_COPY.body;
 	      setOverlay(
 	        "Spice Jam",
 	        portalBody,
-	        hintText,
-	        IS_MOBILE ? "Tap to Play" : "Click to Play"
+	        DEFAULT_OVERLAY_COPY.hint,
+	        DEFAULT_OVERLAY_COPY.cta
 	      );
       ui.resumeHint.textContent = IS_MOBILE ? "TAP TO RESUME" : "CLICK TO RESUME";
       setDevHudCollapsed(true);
