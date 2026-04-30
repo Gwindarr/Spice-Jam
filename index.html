@@ -983,8 +983,8 @@
 	      trainingDummyOffsetX: 5.4,
 	      trainingDummyOffsetZ: -6.2,
 	      dummyMaxHealth: 100,
-	      dummyRespawnDelay: 5.0,
-	      npcRespawnDelay: 5.0,
+		      dummyRespawnDelay: 7.5,
+		      npcRespawnDelay: 7.5,
 	      playerMaxHealth: 100,
 
 	      critChance: 0.12,
@@ -1111,14 +1111,34 @@
         sunIntensity: 0.88,
       },
       {
+        t: 0.34,
+        name: "Night",
+        sky: 0x070711,
+        fog: 0x09080f,
+        hemiSky: 0x16213c,
+        hemiGround: 0x080706,
+        sunColor: 0x38486f,
+        sunIntensity: 0.14,
+      },
+      {
         t: 0.5,
         name: "Night",
-        sky: 0x0a1428,
-        fog: 0x0d1828,
-        hemiSky: 0x2a3a6a,
-        hemiGround: 0x181410,
-        sunColor: 0x8090c0,
-        sunIntensity: 0.20,
+        sky: 0x020309,
+        fog: 0x04050b,
+        hemiSky: 0x0c1428,
+        hemiGround: 0x050404,
+        sunColor: 0x26345f,
+        sunIntensity: 0.08,
+      },
+      {
+        t: 0.66,
+        name: "Night",
+        sky: 0x07050c,
+        fog: 0x09070d,
+        hemiSky: 0x12182f,
+        hemiGround: 0x070504,
+        sunColor: 0x38456e,
+        sunIntensity: 0.12,
       },
       {
         t: 0.75,
@@ -1572,11 +1592,12 @@
     const mp = {
       connected: false,
       team: null,
-      socket: null,
-      playerName: "",
-      connecting: false,
-      emit(...args) { if (this.socket) this.socket.emit(...args); },
-    };
+	      socket: null,
+	      playerName: "",
+	      connecting: false,
+	      lastWormStrikeId: 0,
+	      emit(...args) { if (this.socket) this.socket.emit(...args); },
+	    };
     const remotePlayers = new Map(); // id -> { mesh, data }
     const pendingRemoteCarry = new Map();
     let mpSendTimer = 0;
@@ -6850,8 +6871,8 @@
         for (const dummy of getAllTrainingDummies()) {
           if (!dummy || dummy.dead) continue;
           const dDist = ePos.distanceTo(dummy.group.position);
-          if (dDist < CONFIG.holtzmanExplosionLethalRadius) {
-            killHazardTarget(dummy, 2.0);
+	          if (dDist < CONFIG.holtzmanExplosionLethalRadius) {
+	            killHazardTarget(dummy, 2.0, "atomic", ePos);
           } else if (dDist < CONFIG.holtzmanExplosionDamageRadius) {
             const f = 1 - (dDist - CONFIG.holtzmanExplosionLethalRadius) /
               (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
@@ -6861,8 +6882,8 @@
 	        for (const sd of shieldedDummies) {
 	          if (!sd || sd.dead) continue;
 	          const sDist = ePos.distanceTo(sd.group.position);
-	          if (sDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            killHazardTarget(sd, 2.0);
+		          if (sDist < CONFIG.holtzmanExplosionLethalRadius) {
+		            killHazardTarget(sd, 2.0, "atomic", ePos);
 	          } else if (sDist < CONFIG.holtzmanExplosionDamageRadius) {
 	            const f = 1 - (sDist - CONFIG.holtzmanExplosionLethalRadius) /
 	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
@@ -6872,8 +6893,8 @@
 	        for (const npc of npcs) {
 	          if (!npc || npc.dead) continue;
 	          const nDist = ePos.distanceTo(npc.group.position);
-	          if (nDist < CONFIG.holtzmanExplosionLethalRadius) {
-	            killHazardTarget(npc, 2.0);
+		          if (nDist < CONFIG.holtzmanExplosionLethalRadius) {
+		            killHazardTarget(npc, 2.0, "atomic", ePos);
 	          } else if (nDist < CONFIG.holtzmanExplosionDamageRadius) {
 	            const f = 1 - (nDist - CONFIG.holtzmanExplosionLethalRadius) /
 	              (CONFIG.holtzmanExplosionDamageRadius - CONFIG.holtzmanExplosionLethalRadius);
@@ -8025,13 +8046,17 @@
 	        plateMaterial,
 	        healthBarGroup,
 	        hpFill,
-	        health: CONFIG.dummyMaxHealth,
-	        maxHealth: CONFIG.dummyMaxHealth,
-	        dead: false,
-	        respawnTimer: 0,
-	        deadFallTimer: 0,
-	        spawnPos: group.position.clone(),
-	        hitFlash: 0,
+		        health: CONFIG.dummyMaxHealth,
+		        maxHealth: CONFIG.dummyMaxHealth,
+		        dead: false,
+		        respawnTimer: 0,
+		        deadFallTimer: 0,
+		        deathKind: null,
+		        deathOrigin: null,
+		        deathScorch: null,
+		        deathSpinSeed: 0,
+		        spawnPos: group.position.clone(),
+		        hitFlash: 0,
 	        wobble: 0,
 	        respawnDelay: CONFIG.dummyRespawnDelay,
 	        colliderRadius: 0.72,
@@ -8066,9 +8091,9 @@
             triggerHitFeedback(target, damage, opts.headshot === true, opts.poison === true);
           }
         }
-        if (target.health <= 0) killTarget(target);
-      }
-    }
+	        if (target.health <= 0) killTarget(target, opts);
+	      }
+	    }
 
     // ── Hit feedback: crosshair pulse + floating damage number at hit world pos ──
     const tempHitProject = new THREE.Vector3();
@@ -8140,80 +8165,199 @@
       }
     }
 
-    function killTarget(target) {
-      target.dead = true;
-      target.deadFallTimer = 0;
-      target.respawnTimer = target.respawnDelay;
-      target.healthBarGroup.visible = false;
-      if (target.onKill) target.onKill();
-    }
+	    function getDeathVisualRoot(target) {
+	      return target?.group || target?.root || target?.mesh || null;
+	    }
 
-    function killHazardTarget(target, intensity = 1.8) {
-      if (!target || target.dead) return;
-      hitTarget(target, intensity, target.health, { silent: true, bypassShield: true });
-    }
+	    function removeDeathScorch(target) {
+	      if (!target?.deathScorch) return;
+	      scene.remove(target.deathScorch.group);
+	      target.deathScorch.group.traverse((obj) => {
+	        if (obj.geometry) obj.geometry.dispose();
+	        if (obj.material) obj.material.dispose();
+	      });
+	      target.deathScorch = null;
+	    }
 
-    function killTargetsInRadius(center, radius) {
+	    function createAtomicDeathScorch(target) {
+	      removeDeathScorch(target);
+	      const root = getDeathVisualRoot(target);
+	      if (!root) return;
+	      const px = root.position.x;
+	      const pz = root.position.z;
+	      const py = samplePlayerGroundHeight(px, pz) + 0.035;
+	      const mark = new THREE.Group();
+	      mark.position.set(px, py, pz);
+
+	      const diskMat = new THREE.MeshBasicMaterial({
+	        color: 0x140906,
+	        transparent: true,
+	        opacity: 0.58,
+	        depthWrite: false,
+	        side: THREE.DoubleSide,
+	      });
+	      const disk = new THREE.Mesh(new THREE.CircleGeometry(2.9, 28), diskMat);
+	      disk.rotation.x = -Math.PI / 2;
+	      mark.add(disk);
+
+	      const glassMat = new THREE.MeshBasicMaterial({
+	        color: 0xff9a32,
+	        transparent: true,
+	        opacity: 0.26,
+	        depthWrite: false,
+	        side: THREE.DoubleSide,
+	        blending: THREE.AdditiveBlending,
+	      });
+	      const glass = new THREE.Mesh(new THREE.RingGeometry(0.85, 3.45, 32), glassMat);
+	      glass.rotation.x = -Math.PI / 2;
+	      glass.position.y = 0.01;
+	      mark.add(glass);
+
+	      scene.add(mark);
+	      target.deathScorch = { group: mark, diskMat, glassMat, age: 0 };
+	    }
+
+	    function resetTargetDeathVisuals(target) {
+	      const root = getDeathVisualRoot(target);
+	      if (root) {
+	        root.visible = true;
+	        root.scale.set(1, 1, 1);
+	      }
+	      removeDeathScorch(target);
+	      target.deathKind = null;
+	      target.deathOrigin = null;
+	      target.deathSpinSeed = 0;
+	    }
+
+	    function resetDamageableTargetState(target, { showCargo = false } = {}) {
+	      if (!target) return;
+	      target.health = target.maxHealth ?? target.health;
+	      target.dead = false;
+	      target.deadFallTimer = 0;
+	      target.respawnTimer = 0;
+	      target.hitFlash = 0;
+	      target.wobble = 0;
+	      target.poisonTimer = 0;
+	      target.shieldHitFlash = 0;
+	      target._dpsAccum = undefined;
+	      target._dpsLastEmit = undefined;
+	      target._poisonAccum = undefined;
+	      target._poisonLastEmit = undefined;
+	      resetTargetDeathVisuals(target);
+	      if (target.shieldSphere) target.shieldSphere.visible = target.shieldActive;
+	      const root = getDeathVisualRoot(target);
+	      if (root?.userData?.spiceCargoMesh) {
+	        setSpiceCargoVisual(root, showCargo);
+	      }
+	    }
+
+	    function updateAtomicDeathTarget(target, delta) {
+	      const root = getDeathVisualRoot(target);
+	      if (!root) return true;
+	      target.deadFallTimer = Math.min(1, target.deadFallTimer + delta / 0.42);
+	      const blast = smoothstep(target.deadFallTimer);
+	      const crush = Math.max(0.035, 1 - blast);
+	      const spin = target.deathSpinSeed || 0;
+	      root.visible = target.deadFallTimer < 0.86;
+	      root.scale.setScalar(crush);
+	      root.position.y = (target.spawnPos?.y ?? root.position.y) + (blast * 1.15);
+	      root.rotation.x = blast * (Math.PI * 1.2);
+	      root.rotation.y += delta * (8 + spin * 5);
+	      root.rotation.z = Math.sin((blast + spin) * Math.PI * 2) * 0.7;
+
+	      if (target.deathScorch) {
+	        target.deathScorch.age += delta;
+	        const pulse = Math.max(0, 1 - target.deadFallTimer);
+	        target.deathScorch.group.scale.setScalar(1 + pulse * 0.24);
+	        target.deathScorch.diskMat.opacity = 0.42 + pulse * 0.18;
+	        target.deathScorch.glassMat.opacity = 0.16 + pulse * 0.28;
+	      }
+
+	      target.respawnTimer = Math.max(0, target.respawnTimer - delta);
+	      return target.respawnTimer <= 0;
+	    }
+
+	    function killTarget(target, opts = {}) {
+	      const deathKind = opts.deathKind === "atomic" || opts.deathKind === "worm"
+	        ? opts.deathKind
+	        : "fall";
+	      target.dead = true;
+	      target.deadFallTimer = 0;
+	      target.deathKind = deathKind;
+	      target.deathOrigin = opts.deathOrigin?.clone ? opts.deathOrigin.clone() : null;
+	      target.deathSpinSeed = Math.random();
+	      target.respawnTimer = target.respawnDelay;
+	      if (target.healthBarGroup) target.healthBarGroup.visible = false;
+	      if (target.shieldSphere) target.shieldSphere.visible = false;
+	      const root = getDeathVisualRoot(target);
+	      if (root?.userData?.spiceCargoMesh) root.userData.spiceCargoMesh.visible = false;
+	      if (root?.userData?.spiceGlowMesh) root.userData.spiceGlowMesh.visible = false;
+	      if (deathKind === "atomic") createAtomicDeathScorch(target);
+	      if (target.onKill) target.onKill({ deathKind });
+	    }
+
+	    function killHazardTarget(target, intensity = 1.8, deathKind = "hazard", deathOrigin = null) {
+	      if (!target || target.dead) return;
+	      hitTarget(target, intensity, target.health, {
+	        silent: true,
+	        bypassShield: true,
+	        deathKind,
+	        deathOrigin,
+	      });
+	    }
+
+    function killTargetsInRadius(center, radius, deathKind = "fall") {
       const radiusSq = radius * radius;
 
       for (const dummy of getAllTrainingDummies()) {
         if (!dummy || dummy.dead) continue;
         const dx = dummy.group.position.x - center.x;
         const dz = dummy.group.position.z - center.z;
-        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(dummy, 1.8);
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(dummy, 1.8, deathKind);
       }
 
       for (const sd of shieldedDummies) {
         if (!sd || sd.dead) continue;
         const dx = sd.group.position.x - center.x;
         const dz = sd.group.position.z - center.z;
-        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(sd, 1.8);
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(sd, 1.8, deathKind);
       }
 
       for (const npc of npcs) {
         if (!npc || npc.dead) continue;
         const dx = npc.group.position.x - center.x;
         const dz = npc.group.position.z - center.z;
-        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(npc, 1.8);
+        if ((dx * dx) + (dz * dz) <= radiusSq) killHazardTarget(npc, 1.8, deathKind);
       }
     }
 
-	    function respawnTrainingDummy(dummy = trainingDummy) {
-	      dummy.health = CONFIG.dummyMaxHealth;
-	      dummy.dead = false;
-	      dummy.deadFallTimer = 0;
-	      dummy.respawnTimer = 0;
-	      dummy.hitFlash = 0;
-	      dummy.wobble = 0;
-        dummy.poisonTimer = 0;
-	      dummy.group.position.copy(dummy.spawnPos);
-	      dummy.group.rotation.set(0, 0, 0);
-	    }
+			    function respawnTrainingDummy(dummy = trainingDummy) {
+		      dummy.group.position.copy(dummy.spawnPos);
+		      dummy.group.rotation.set(0, 0, 0);
+	      dummy.targetPivot.rotation.set(0, 0, 0);
+	      resetDamageableTargetState(dummy);
+		    }
 
 	    function updateShieldedDummy(delta, sd) {
 	      sd.hitFlash = Math.max(0, sd.hitFlash - (delta * 2.8));
 	      sd.wobble = Math.max(0, sd.wobble - (delta * 1.9));
 	      sd.shieldHitFlash = Math.max(0, sd.shieldHitFlash - (delta * 3.0));
 
-	      if (sd.dead) {
-	        sd.deadFallTimer = Math.min(1, sd.deadFallTimer + delta / 0.55);
-	        const fall = sd.deadFallTimer * sd.deadFallTimer;
-	        sd.group.rotation.x = fall * (Math.PI * 0.48);
-	        sd.group.position.y = sd.spawnPos.y - fall * 1.8;
-	        sd.respawnTimer = Math.max(0, sd.respawnTimer - delta);
-	        if (sd.respawnTimer <= 0) {
-	          sd.health = CONFIG.dummyMaxHealth;
-	          sd.dead = false;
-	          sd.deadFallTimer = 0;
-	          sd.respawnTimer = 0;
-	          sd.hitFlash = 0;
-	          sd.wobble = 0;
-	          sd.group.position.copy(sd.spawnPos);
-	          sd.group.rotation.set(0, 0, 0);
-	          if (sd.shieldSphere) sd.shieldSphere.visible = true;
+		      if (sd.dead) {
+	        if (sd.deathKind === "atomic") {
+	          if (updateAtomicDeathTarget(sd, delta)) respawnTrainingDummy(sd);
+	          return;
 	        }
-	        return;
-	      }
+		        sd.deadFallTimer = Math.min(1, sd.deadFallTimer + delta / 0.55);
+		        const fall = sd.deadFallTimer * sd.deadFallTimer;
+		        sd.group.rotation.x = fall * (Math.PI * 0.48);
+		        sd.group.position.y = sd.spawnPos.y - fall * 1.8;
+		        sd.respawnTimer = Math.max(0, sd.respawnTimer - delta);
+		        if (sd.respawnTimer <= 0) {
+	          respawnTrainingDummy(sd);
+		        }
+		        return;
+		      }
 
 	      const idleSway = Math.sin((state.elapsed * 1.6) + 2.4) * 0.018;
 	      const wobbleWave = Math.sin((1 - sd.wobble) * 15.5) * sd.wobble * 0.26;
@@ -9376,10 +9520,14 @@
 	      dummy.hitFlash = Math.max(0, dummy.hitFlash - (delta * 2.8));
 	      dummy.wobble = Math.max(0, dummy.wobble - (delta * 1.9));
 
-	      if (dummy.dead) {
-	        dummy.deadFallTimer = Math.min(1, dummy.deadFallTimer + delta / 0.55);
-	        const fall = dummy.deadFallTimer * dummy.deadFallTimer;
-	        dummy.group.rotation.x = fall * (Math.PI * 0.48);
+		      if (dummy.dead) {
+	        if (dummy.deathKind === "atomic") {
+	          if (updateAtomicDeathTarget(dummy, delta)) respawnTrainingDummy(dummy);
+	          return;
+	        }
+		        dummy.deadFallTimer = Math.min(1, dummy.deadFallTimer + delta / 0.55);
+		        const fall = dummy.deadFallTimer * dummy.deadFallTimer;
+		        dummy.group.rotation.x = fall * (Math.PI * 0.48);
 	        dummy.group.position.y = dummy.spawnPos.y - fall * 1.8;
 	        dummy.respawnTimer = Math.max(0, dummy.respawnTimer - delta);
 	        if (dummy.respawnTimer <= 0) respawnTrainingDummy(dummy);
@@ -10073,7 +10221,8 @@
               broadcastWormRadio("Worm consumed the thumper.");
             }
           }
-          killTargetsInRadius(state.wormTarget, CONFIG.wormKillRadius);
+	          // Multiplayer target deaths are driven by the server's wormStrike event
+	          // so every client applies the same strike once.
 	        }
 		        return;
         } catch (error) {
@@ -10331,7 +10480,7 @@
           beginDevour();
           return;
         }
-        killTargetsInRadius(state.wormTarget, CONFIG.wormKillRadius);
+        killTargetsInRadius(state.wormTarget, CONFIG.wormKillRadius, "worm");
       }
 
       state.wormTimer = Math.max(0, state.wormTimer - delta);
@@ -10570,10 +10719,11 @@
         healthBarGroup, hpFill,
         cargoMat: root.userData.spiceCargoMat,
         glowMat:  root.userData.spiceGlowMat,
-        armorMat, mohawkMat, flashMats,
-        health: 100, maxHealth: 100,
-        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0, wobble: 0, poisonTimer: 0,
-        respawnDelay: CONFIG.npcRespawnDelay,
+	        armorMat, mohawkMat, flashMats,
+	        health: 100, maxHealth: 100,
+	        dead: false, respawnTimer: 0, deadFallTimer: 0, hitFlash: 0, wobble: 0, poisonTimer: 0,
+	        deathKind: null, deathOrigin: null, deathScorch: null, deathSpinSeed: 0,
+	        respawnDelay: CONFIG.npcRespawnDelay,
         colliderRadius: 0.5,
         colliderHeight: 2.2,
         bodyHitRadius: 1.4,
@@ -10607,33 +10757,25 @@
       return npc;
     }
 
-    function respawnNpcAtRandom(npc) {
-      if (npc.patrol?.origin) {
-        const ox = npc.patrol.origin.x;
-        const oz = npc.patrol.origin.z;
-        const oy = samplePlayerGroundHeight(ox, oz);
-        npc.root.position.set(ox, oy, oz);
-        npc.root.rotation.set(0, Math.random() * Math.PI * 2, 0);
-        npc.spawnPos.set(ox, oy, oz);
-        npc.health = npc.maxHealth;
-        npc.dead = false;
-        npc.deadFallTimer = 0;
-        npc.respawnTimer = 0;
-        npc.hitFlash = 0;
-        npc.shieldHitFlash = 0;
-        npc.poisonTimer = 0;
-        npc._dpsAccum = undefined; npc._dpsLastEmit = undefined;
-        npc._poisonAccum = undefined; npc._poisonLastEmit = undefined;
-        if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
-        if (npc.root.userData.spiceGlowMesh) npc.root.userData.spiceGlowMesh.visible = true;
-        if (npc.shieldSphere) npc.shieldSphere.visible = npc.shieldActive;
-        return;
-      }
+	    function applyNpcRespawn(npc, x, y, z) {
+	      npc.root.position.set(x, y, z);
+	      npc.root.rotation.set(0, Math.random() * Math.PI * 2, 0);
+	      npc.spawnPos.set(x, y, z);
+	      resetDamageableTargetState(npc, { showCargo: true });
+	    }
 
-      // Try up to 12 candidate spots; reject any that intersect rock geometry
-      const radius = npc.colliderRadius ?? 0.5;
-      const height = npc.colliderHeight ?? 2.2;
-      let nx = 0, nz = 0, ny = 0;
+	    function respawnNpcAtRandom(npc) {
+	      if (npc.patrol?.origin) {
+	        const ox = npc.patrol.origin.x;
+	        const oz = npc.patrol.origin.z;
+	        applyNpcRespawn(npc, ox, samplePlayerGroundHeight(ox, oz), oz);
+	        return;
+	      }
+
+	      // Try up to 12 candidate spots; reject any that intersect rock geometry
+	      const radius = npc.colliderRadius ?? 0.5;
+	      const height = npc.colliderHeight ?? 2.2;
+	      let nx = 0, nz = 0, ny = 0;
       for (let attempt = 0; attempt < 12; attempt++) {
         const angle = Math.random() * Math.PI * 2;
         const dist = 25 + Math.random() * 60;
@@ -10648,23 +10790,8 @@
         if (!intersectWorldCapsule(tempPlayerCapsule, tempCapsuleHit)) break;
       }
 
-      npc.root.position.set(nx, ny, nz);
-      npc.root.rotation.set(0, Math.random() * Math.PI * 2, 0);
-      npc.spawnPos.set(nx, ny, nz);
-      npc.health = npc.maxHealth;
-      npc.dead = false;
-      npc.deadFallTimer = 0;
-      npc.respawnTimer = 0;
-      npc.hitFlash = 0;
-      npc.shieldHitFlash = 0;
-      npc.poisonTimer = 0;
-      npc._dpsAccum = undefined; npc._dpsLastEmit = undefined;
-      npc._poisonAccum = undefined; npc._poisonLastEmit = undefined;
-      // Re-show spice cargo on respawn
-      if (npc.root.userData.spiceCargoMesh) npc.root.userData.spiceCargoMesh.visible = true;
-      if (npc.root.userData.spiceGlowMesh)  npc.root.userData.spiceGlowMesh.visible  = true;
-      if (npc.shieldSphere) npc.shieldSphere.visible = npc.shieldActive;
-    }
+	      applyNpcRespawn(npc, nx, ny, nz);
+	    }
 
     function updateNpcPatrol(npc) {
       if (!npc.patrol) return;
@@ -10709,9 +10836,13 @@
         npc.wobble = Math.max(0, npc.wobble - delta * 2.4);
         npc.shieldHitFlash = Math.max(0, (npc.shieldHitFlash || 0) - (delta * 3.0));
 
-        if (npc.dead) {
-          npc.deadFallTimer = Math.min(1, npc.deadFallTimer + delta / 0.6);
-          const fall = npc.deadFallTimer * npc.deadFallTimer;
+	        if (npc.dead) {
+	          if (npc.deathKind === "atomic") {
+	            if (updateAtomicDeathTarget(npc, delta)) respawnNpcAtRandom(npc);
+	            continue;
+	          }
+	          npc.deadFallTimer = Math.min(1, npc.deadFallTimer + delta / 0.6);
+	          const fall = npc.deadFallTimer * npc.deadFallTimer;
           npc.root.rotation.x = fall * (Math.PI * 0.48);
           npc.root.position.y = npc.spawnPos.y - fall * 1.8;
           npc.respawnTimer = Math.max(0, npc.respawnTimer - delta);
@@ -11417,11 +11548,11 @@
       copyLerpedColor(hemiLight.groundColor, current.a.hemiGround, current.b.hemiGround, amount);
       copyLerpedColor(sun.color, current.a.sunColor, current.b.sunColor, amount);
       sun.intensity = THREE.MathUtils.lerp(current.a.sunIntensity, current.b.sunIntensity, amount);
-      const nightFactor = THREE.MathUtils.clamp((0.62 - sun.intensity) / 0.62, 0, 1);
-      hemiLight.intensity = 0.6 + (nightFactor * 0.38);
-      fillLight.intensity = THREE.MathUtils.lerp(0.08, 0.5, nightFactor);
-      renderer.toneMappingExposure = THREE.MathUtils.lerp(1.05, 1.22, nightFactor);
-	      rockMaterial.emissiveIntensity = 0.08 + (nightFactor * 0.26);
+      const nightFactor = THREE.MathUtils.clamp((0.86 - sun.intensity) / 0.66, 0, 1);
+      hemiLight.intensity = THREE.MathUtils.lerp(0.6, 0.22, nightFactor);
+      fillLight.intensity = THREE.MathUtils.lerp(0.08, 0.1, nightFactor);
+      renderer.toneMappingExposure = THREE.MathUtils.lerp(1.05, 0.72, nightFactor);
+	      rockMaterial.emissiveIntensity = THREE.MathUtils.lerp(0.08, 0.035, nightFactor);
 	      const eyeGlow = THREE.MathUtils.lerp(0.9, 2.2, nightFactor);
 	      if (player.userData.eyeMaterial) {
 	        player.userData.eyeMaterial.emissiveIntensity = eyeGlow;
@@ -12121,10 +12252,24 @@
 	          state.serverWorldTimeBase = data.worldTime;
 	          state.serverWorldTimeStamp = performance.now() * 0.001;
 	        }
-      }
-    }
+	      }
+	    }
 
-    // Send position to server at ~20hz
+	    function applyNetworkWormStrike(data) {
+	      if (!data) return;
+	      const strikeId = Number(data.id);
+	      if (Number.isFinite(strikeId)) {
+	        if (strikeId <= mp.lastWormStrikeId) return;
+	        mp.lastWormStrikeId = strikeId;
+	      }
+	      const x = Number(data.x);
+	      const z = Number(data.z);
+	      const radius = Number(data.radius);
+	      if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(radius)) return;
+	      killTargetsInRadius({ x, z }, Math.max(0, radius), data.deathKind === "worm" ? "worm" : "fall");
+	    }
+
+	    // Send position to server at ~20hz
     function tickMultiplayer(delta) {
       updateRemotePlayers(delta);
       if (!mp.connected) return;
@@ -12209,9 +12354,10 @@
       mp.socket = socket;
 
       socket.on("connect", () => {
-        mp.connecting = false;
-        mp.connected = true;
-        console.log("[MP] Connected:", socket.id);
+	        mp.connecting = false;
+	        mp.connected = true;
+	        mp.lastWormStrikeId = 0;
+	        console.log("[MP] Connected:", socket.id);
         updatePlayerCount();
       });
 
@@ -12365,7 +12511,9 @@
 	        applyNetworkWormState(wormState);
 	      });
 
-      socket.on("wormDevourStart", (data) => {
+	      socket.on("wormStrike", applyNetworkWormStrike);
+
+	      socket.on("wormDevourStart", (data) => {
         if (!data || data.victimId !== socket.id) return;
         startNetworkWormDevour(data);
       });

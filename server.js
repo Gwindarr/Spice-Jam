@@ -180,11 +180,13 @@ const worm = {
   cooldown: 0,
   noisePressure: 0,
   target: { x: 0, z: 0 },
-  targetHotspot: null,
-  targetSource: null,
-  targetOwnerId: null,
-  lastSpawnTime: -Infinity,
-};
+	  targetHotspot: null,
+	  targetSource: null,
+	  targetOwnerId: null,
+	  lastSpawnTime: -Infinity,
+	  strikeEventSent: false,
+	  strikeId: 0,
+	};
 let lastHoltzmanDetonationMs = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -564,7 +566,22 @@ function beginWormWarning() {
   worm.velocity.z = 0;
   worm.phase = "warning";
   worm.timer = WORM_CFG.warningDuration;
+  worm.strikeEventSent = false;
   worm.noisePressure *= 0.72;
+}
+
+function emitWormStrikeEvent() {
+  if (worm.strikeEventSent) return;
+  worm.strikeEventSent = true;
+  worm.strikeId += 1;
+  io.emit("wormStrike", {
+    id: worm.strikeId,
+    x: worm.target.x,
+    z: worm.target.z,
+    radius: WORM_CFG.killRadius,
+    deathKind: "worm",
+    worldTime: getWorldTimeSeconds(),
+  });
 }
 
 function anchorWormAtStrikeTarget() {
@@ -878,10 +895,11 @@ function tickWorm(dt) {
 
   if (worm.phase === "breach") {
     const breachElapsed = WORM_CFG.breachDuration - worm.timer;
-    const strikeActive = breachElapsed >= WORM_CFG.strikeDelay
-      && breachElapsed <= (WORM_CFG.strikeDelay + WORM_CFG.strikeWindow);
-    if (strikeActive) {
-      const victims = [];
+	    const strikeActive = breachElapsed >= WORM_CFG.strikeDelay
+	      && breachElapsed <= (WORM_CFG.strikeDelay + WORM_CFG.strikeWindow);
+	    if (strikeActive) {
+	      emitWormStrikeEvent();
+	      const victims = [];
       const killR2 = WORM_CFG.killRadius * WORM_CFG.killRadius;
       for (const p of players.values()) {
         if (p.thumperActive && dist2(p.thumperX ?? p.x, p.thumperZ ?? p.z, worm.target.x, worm.target.z) <= killR2) {
