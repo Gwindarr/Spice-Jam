@@ -798,12 +798,12 @@
       const defaultOverlayCopy = {
         mobile: {
           body: "Harvest spice and bring it back to the bank.",
-          hint: "Move: Left pad\nLook: Right side\nAttack: Attack button\nWeapons: 1–3\nInteract: Use E to harvest or deposit\nNoise attracts the giant worm\nWarning: lasgun + shield = huge explosion",
+          hint: "Move: Left pad\nLook: Right side\nAttack: Attack button\nWeapons: 1–3\nHarvest: Hold E on spice\nDeposit: Tap E at the bank\nNoise attracts the giant worm\nWarning: lasgun + shield = huge explosion",
           cta: "Tap to Play",
         },
         desktop: {
           body: "Harvest glowing spice patches and bring the spice back to the bank.",
-          hint: "Move: WASD\nAttack: Click\nWeapons: 1–3\n\nHarvest: Stand on a spice patch and hold E.\nDeposit: Return to the Spice Bank and press E.\n\nNoise attracts the giant worm.\nRunning, harvesting, shields, explosions, and some weapons make noise.\nIf the noise meter gets too high, the worm will attack.\n\nWarning: shooting a shield with the lasgun causes a huge explosion.",
+          hint: "Move: WASD\nAttack: Click\nWeapons: 1–3\nThumper: Q · Shield: F\nJump: Space · Run: Shift\n\nHarvest: Stand on a spice patch and hold E.\nDeposit: Return to the Spice Bank and press E.\n\nNoise attracts the giant worm.\nRunning, harvesting, shields, explosions, and some weapons make noise.\nIf the noise meter gets too high, the worm will attack.\n\nWarning: shooting a shield with the lasgun causes a huge explosion.",
           cta: "Click to Play",
         },
       };
@@ -839,8 +839,9 @@
   <div id="explosionFlash" style="position:fixed;inset:0;z-index:24;background:radial-gradient(circle,#ffffff,#ffe066 30%,#ff8800 65%,#cc2200 100%);pointer-events:none;opacity:0;transition:none;"></div>
   <!-- Server -->
   <script>window.SERVER_URL = "https://api.bananatriangles.com";</script>
+  <script src="world.js"></script>
   <!-- Socket.io client — loaded before the module script so `io` is global -->
-  <script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script defer src="vendor/socket.io.min.js"></script>
 
   <script type="importmap">
   {
@@ -866,13 +867,8 @@
 
     const MOON_RENDER_LAYER = 1;
 
-    if (location.protocol !== "file:") {
-      const jamWidgetScript = document.createElement("script");
-      jamWidgetScript.async = true;
-      jamWidgetScript.src = "https://vibejam.cc/2026/widget.js";
-      document.head.appendChild(jamWidgetScript);
-    } else {
-      console.warn("Serve this project over http://localhost:8000 instead of opening index.html via file://");
+    if (location.protocol === "file:") {
+      console.warn("Run npm start and open http://localhost:3001 to play.");
     }
 
     const CONFIG = {
@@ -1277,12 +1273,12 @@
       return isMobile
         ? {
             body: "Harvest spice and bring it back to the bank.",
-            hint: "Move: Left pad\nLook: Right side\nAttack: Attack button\nWeapons: 1–3\nInteract: Use E to harvest or deposit\nNoise attracts the giant worm\nWarning: lasgun + shield = huge explosion",
+            hint: "Move: Left pad\nLook: Right side\nAttack: Attack button\nWeapons: 1–3\nHarvest: Hold E on spice\nDeposit: Tap E at the bank\nNoise attracts the giant worm\nWarning: lasgun + shield = huge explosion",
             cta: "Tap to Play",
           }
         : {
             body: "Harvest glowing spice patches and bring the spice back to the bank.",
-            hint: "Move: WASD\nAttack: Click\nWeapons: 1–3\n\nHarvest: Stand on a spice patch and hold E.\nDeposit: Return to the Spice Bank and press E.\n\nNoise attracts the giant worm.\nRunning, harvesting, shields, explosions, and some weapons make noise.\nIf the noise meter gets too high, the worm will attack.\n\nWarning: shooting a shield with the lasgun causes a huge explosion.",
+            hint: "Move: WASD\nAttack: Click\nWeapons: 1–3\nThumper: Q · Shield: F\nJump: Space · Run: Shift\n\nHarvest: Stand on a spice patch and hold E.\nDeposit: Return to the Spice Bank and press E.\n\nNoise attracts the giant worm.\nRunning, harvesting, shields, explosions, and some weapons make noise.\nIf the noise meter gets too high, the worm will attack.\n\nWarning: shooting a shield with the lasgun causes a huge explosion.",
             cta: "Click to Play",
           };
     }
@@ -1427,20 +1423,7 @@
       window.history.replaceState(null, "", next || "/");
     }
 
-    // Each dune layer: random ridge direction and phase offset, fixed amplitude and frequency magnitude.
-    const DUNE_LAYERS = [
-      { amp: 30,  mag: 0.016 },
-      { amp: 26,  mag: 0.010 },
-      { amp: 20,  mag: 0.013 },
-      { amp:  9,  mag: 0.038 },
-      { amp:  7,  mag: 0.042 },
-      { amp:  1.8, mag: 0.13 },
-    ].map(({ amp, mag }) => {
-      const angle = rng() * Math.PI * 2;
-      return { amp, xf: Math.cos(angle) * mag, zf: Math.sin(angle) * mag, phase: rng() * Math.PI * 2 };
-    });
-
-	    const ROCK_PATCHES = createRockPatches();
+    const { duneLayers: DUNE_LAYERS, rockPatches: ROCK_PATCHES } = GameWorld.createTerrain(MAP_SEED, rng);
 	    const ROCK_PLATFORMS = [];
 	    const ROCK_COLLIDERS = [];
 
@@ -1631,7 +1614,7 @@
 	      playerName: "",
 	      connecting: false,
 	      lastWormStrikeId: 0,
-	      emit(...args) { if (this.socket) this.socket.emit(...args); },
+	      emit(...args) { if (this.connected && this.socket) this.socket.emit(...args); },
 	    };
     const remotePlayers = new Map(); // id -> { mesh, data }
     const pendingRemoteCarry = new Map();
@@ -1795,131 +1778,6 @@
     function shortestAngleDelta(a, b) {
       return Math.atan2(Math.sin(a - b), Math.cos(a - b));
     }
-
-	    function createRockPatches() {
-	      const patches = [];
-	      const halfWorld = (CONFIG.worldSize * 0.5) - 90;
-
-	      function canPlacePatch(x, z, radius, gap = 12) {
-	        if (Math.abs(x) > halfWorld || Math.abs(z) > halfWorld) return false;
-	        for (const patch of patches) {
-	          const dx = x - patch.x;
-	          const dz = z - patch.z;
-	          const minDist = patch.radius + radius + gap;
-	          if ((dx * dx) + (dz * dz) < minDist * minDist) return false;
-	        }
-	        return true;
-	      }
-
-	      function pushPatch(x, z, radius, plateauRadius, rise, major, approachAngle, gap = 12) {
-	        if (!canPlacePatch(x, z, radius, gap)) return false;
-	        patches.push({
-	          x,
-	          z,
-	          radius,
-	          plateauRadius,
-	          rise,
-	          major,
-	          approachAngle,
-	          seed: Math.floor(rng() * 0x7fffffff),
-	        });
-	        return true;
-	      }
-
-	      pushPatch(
-	        CONFIG.playerStart.x,
-	        CONFIG.playerStart.z,
-	        39,
-	        21,
-	        12,
-	        true,
-	        rng() * Math.PI * 2,
-	        0
-	      );
-
-	      // Sparse mid-distance ring: only a couple reachable safe spots after leaving spawn.
-	      let nearStartPlaced = 0;
-	      for (let attempt = 0; attempt < 180 && nearStartPlaced < 2; attempt += 1) {
-	        const slot = attempt % 8;
-	        const angle = ((slot / 8) * Math.PI * 2) + randomRange(-0.2, 0.2, rng);
-	        const dist = randomRange(80, 160, rng);
-	        const x = Math.cos(angle) * dist;
-	        const z = Math.sin(angle) * dist;
-	        if (isInStartZone(x, z)) continue;
-	        if (
-	          pushPatch(
-	            x,
-	            z,
-	            randomRange(10.5, 16.5, rng),
-	            randomRange(4.2, 7.8, rng),
-	            randomRange(3.4, 5.8, rng),
-	            false,
-	            angle + Math.PI + randomRange(-0.55, 0.55, rng),
-	            16
-	          )
-	        ) {
-	          nearStartPlaced += 1;
-	        }
-	      }
-
-	      // Far landmarks: visible on the horizon and rare.
-	      let landmarkPlaced = 0;
-	      for (let attempt = 0; attempt < 140 && landmarkPlaced < 2; attempt += 1) {
-	        const angle = rng() * Math.PI * 2;
-	        const dist = randomRange(420, halfWorld - 16, rng);
-	        const x = Math.cos(angle) * dist;
-	        const z = Math.sin(angle) * dist;
-	        if (
-	          pushPatch(
-	            x,
-	            z,
-	            randomRange(27, 38, rng),
-	            randomRange(12, 18, rng),
-	            randomRange(8.4, 12.8, rng),
-	            true,
-	            angle + Math.PI + randomRange(-0.4, 0.4, rng),
-	            18
-	          )
-	        ) {
-	          landmarkPlaced += 1;
-	        }
-	      }
-
-	      // Sparse outposts: long dangerous sand stretches between safe positions.
-	      let outpostPlaced = 0;
-	      for (let attempt = 0; attempt < 260 && outpostPlaced < 5; attempt += 1) {
-	        const angle = rng() * Math.PI * 2;
-	        const dist = randomRange(320, halfWorld - 24, rng);
-	        const x = Math.cos(angle) * dist;
-	        const z = Math.sin(angle) * dist;
-	        const major = rng() < 0.16;
-	        const radius = major
-	          ? randomRange(18, 28, rng)
-	          : randomRange(10.5, 17.5, rng);
-	        const plateauRadius = major
-	          ? randomRange(8, 12.5, rng)
-	          : randomRange(4.2, 7.4, rng);
-	        const rise = major
-	          ? randomRange(6, 8.8, rng)
-	          : randomRange(3.2, 5.4, rng);
-	        if (
-	          pushPatch(
-	            x,
-	            z,
-	            radius,
-	            plateauRadius,
-	            rise,
-	            major,
-	            angle + Math.PI + randomRange(-0.55, 0.55, rng),
-	            major ? 18 : 14
-	          )
-	        ) {
-	          outpostPlaced += 1;
-	        }
-	      }
-
-	      return patches;
-	    }
 
 	    function createRockMaterial() {
 	      const diffuseMap = textureLoader.load("assets/textures/rock_01/rock_01_diff_1k.jpg");
@@ -3236,6 +3094,7 @@
 	      }
 
 	      state.equippedWeapon = weapon;
+      mp.emit("equipWeapon", { weapon });
 	      state.knifeTimer = 0;
 	      state.knifeHasHit = false;
 	      state.maulaFireTimer = 0;
@@ -3468,6 +3327,7 @@
 	    }
 
 	    function spawnMaulaProjectile(strikeDir) {
+      mp.emit("weaponFired", { direction: { x: strikeDir.x, y: strikeDir.y, z: strikeDir.z } });
 	      const muzzle = player.userData.maulaMuzzle;
 	      if (muzzle) {
 	        muzzle.getWorldPosition(tempMaulaOrigin);
@@ -4594,7 +4454,7 @@
         state.holtzmanFuse += delta;
         triggerRemoteShieldBlockFeedback(bestShieldedRemote, bestShieldedRemote.mesh.position);
         if (state.holtzmanFuse >= CONFIG.holtzmanWarningTime) {
-          triggerHoltzmanDetonation(bestShieldedRemote.mesh.position.clone(), { emitNetwork: true });
+          triggerHoltzmanDetonation(bestShieldedRemote.mesh.position.clone(), { emitNetwork: true, targetId: bestShieldedRemote.data.id });
         }
 		      }
 		      if (bestType !== "shielded" && bestType !== "shielded_npc" && bestType !== "shielded_remote") {
@@ -5508,7 +5368,8 @@
       }
     }
 
-	    function cancelHarvest() {
+	    function cancelHarvest(notify = true) {
+      if (notify && state.harvestNode) mp.emit("cancelHarvest");
 	      state.harvestNode = null;
 	      state.harvestTimer = 0;
 	    }
@@ -5554,10 +5415,15 @@
       local.remaining = nextRemaining;
       local.decayTimer = -1;
 
-      // Relocate when respawnCount advances (node respawned at a new position)
-      if (serverNode.active && nextRespawnCount > prevRespawnCount) {
-        spiceObjective.relocateNodeSeeded(local, nextRespawnCount);
+      // Apply authoritative placement before yield; visual rebuilding must not overwrite yield.
+      if (Number.isFinite(serverNode.x) && Number.isFinite(serverNode.z)) {
+        local.x = serverNode.x;
+        local.z = serverNode.z;
+        local.group.position.set(local.x, sampleGroundHeight(local.x, local.z), local.z);
+        spiceObjective.refreshNodeVisual(local);
       }
+      local.totalYield = nextTotalYield;
+      local.remaining = nextRemaining;
 
       if (serverNode.active) {
         setSpiceNodeActive(local, true, 0);
@@ -5776,7 +5642,8 @@
             if (state.harvestTimer >= CONFIG.spiceHarvestDuration) {
 	              const bagSpace = CONFIG.spiceMaxCarry - state.spiceCarry;
 	              const take = Math.min(bagSpace, activeNode.remaining);
-	              state.spiceCarry += take;
+	              if (!mp.connected) {
+              state.spiceCarry += take;
 	              setSpiceCargoVisual(player, state.spiceCarry > 0);
 	              activeNode.remaining -= take;
               // Start decay timer on first successful harvest (>= 1 unit taken)
@@ -5791,7 +5658,8 @@
                   state.plumeCooldownTimer = CONFIG.spicePlumeCooldown;
                 }
               }
-              cancelHarvest();
+              }
+              cancelHarvest(false);
               emitNoiseImpulse(0.2);
               mp.emit("harvestNode", {
                 id: activeNode.id,
@@ -5810,6 +5678,7 @@
 	        horizontalSpeed <= CONFIG.spiceHarvestMoveCancelSpeed
 	      ) {
 	        state.harvestNode = nearbyHarvestNode;
+        mp.emit("beginHarvest", { id: nearbyHarvestNode.id });
 	        state.harvestTimer = 0;
 	        emitNoiseImpulse(0.12);
 	      }
@@ -6772,7 +6641,7 @@
 	      return { group, flash, fireball, shockwave, outerWave, stem, cap, capRing, smoke };
 	    }
 
-	    function triggerHoltzmanDetonation(pos, { emitWormHotspot = true, emitNetwork = false } = {}) {
+	    function triggerHoltzmanDetonation(pos, { emitWormHotspot = true, emitNetwork = false, targetId = null } = {}) {
 				      resetHoltzmanFuse();
 			      state.lasgunFiring = false;
 			      sfx.lasgunHum.stop();
@@ -6798,6 +6667,7 @@
           y: pos.y,
           z: pos.z,
           surfaceType: detonationSurface,
+          targetId,
         });
       }
 		      emitNoiseImpulse(0.2);
@@ -8807,46 +8677,14 @@
         };
       }
 
-      const tutorialSpawn = findTutorialSpiceSpawn();
-      if (tutorialSpawn) {
-        const tutorialNode = makeNode("small", nodes.length);
-        placeSpiceNode(tutorialNode, tutorialSpawn.x, tutorialSpawn.z);
-        tutorialNode.active = true;
-        tutorialNode.group.visible = true;
-        nodes.push(tutorialNode);
-      }
-
-      // Roll for initial plume (15% chance, uses world seed)
-      const initialPlume = rng() < CONFIG.spicePlumeInitialChance;
-      if (initialPlume) {
-        reservedInitialPlumeSpawn = findSpiceNodeSpawnNearStart();
-      }
-      const smallCount = initialPlume ? CONFIG.spiceNodeCount - 1 : CONFIG.spiceNodeCount;
-
-      // Create small patches
-      while (nodes.length < smallCount) {
-        const spawn = findSpiceNodeSpawn();
-        if (!spawn) break;
-        const node = makeNode("small", nodes.length);
-        placeSpiceNode(node, spawn.x, spawn.z);
+      let pendingInitialPlumeNode = null;
+      for (const initial of GameWorld.initialNodes(MAP_SEED)) {
+        const node = makeNode(initial.type, initial.id);
+        placeSpiceNode(node, initial.x, initial.z);
         node.active = true;
         node.group.visible = true;
         nodes.push(node);
-      }
-
-      // If initial roll succeeded, spawn a plume as the last slot
-      // Event is deferred — firing during init plays behind the overlay with no audio
-      let pendingInitialPlumeNode = null;
-      if (initialPlume) {
-        const spawn = reservedInitialPlumeSpawn || findSpiceNodeSpawn();
-        if (spawn) {
-          const node = makeNode("plume", nodes.length);
-          placeSpiceNode(node, spawn.x, spawn.z);
-          node.active = true;
-          node.group.visible = true;
-          nodes.push(node);
-          pendingInitialPlumeNode = node;
-        }
+        if (initial.type === "plume") pendingInitialPlumeNode = node;
       }
 
       return {
@@ -10782,11 +10620,7 @@
 		          spawnDroppedSpice(npc.root.position.x, npc.root.position.z, 1);
 	          broadcastWormRadio("Enemy slain — recover the melange!");
 	        } else {
-	          mp.emit("npcSpiceDrop", {
-	            x: npc.root.position.x,
-	            z: npc.root.position.z,
-	          });
-	          broadcastWormRadio("Enemy slain — recover the melange!");
+	          broadcastWormRadio("Training enemy defeated.");
 	        }
 	      };
       return npc;
@@ -12356,7 +12190,7 @@
         // Probe the server first — only connect if it's actually up.
         // Keep this fully isolated from local rendering startup.
         fetch(serverUrl, probeOptions)
-          .then(() => connectMultiplayer(serverUrl))
+          .then(response => { if (!response.ok) throw new Error("Server unavailable"); connectMultiplayer(serverUrl); })
           .catch(() => {
             mp.connecting = false;
             console.log("[MP] Server not reachable — running offline");
@@ -12386,6 +12220,7 @@
       mp.socket = socket;
 
       socket.on("connect", () => {
+        mp.socket = socket;
 	        mp.connecting = false;
 	        mp.connected = true;
 	        mp.lastWormStrikeId = 0;
@@ -12397,7 +12232,8 @@
         mp.connecting = false;
         mp.connected = false;
         mp.team = null;
-        mp.socket = null;
+        for (const id of [...remotePlayers.keys()]) removeRemotePlayer(id);
+        pendingRemoteCarry.clear();
         console.log("[MP] Disconnected", reason, details?.description || "");
         updatePlayerCount();
       });
@@ -12431,6 +12267,9 @@
           rememberServerSeed(snapshot.seed);
         }
         stripSeedFromUrl();
+        for (const id of [...remotePlayers.keys()]) removeRemotePlayer(id);
+        pendingRemoteCarry.clear();
+        for (const drop of [...droppedSpicePickups]) removeDropById(drop.dropId);
         // Spawn existing players
         for (const p of snapshot.players) {
           if (p.id !== id) addRemotePlayer(p);
@@ -12456,9 +12295,22 @@
 	        if (self && Number.isFinite(Number(self.spawnProtectedUntil))) {
 	          applySpawnProtectionFromServer(self.spawnProtectedUntil);
 	        }
-        // Do not force a second local spawn on initial join; this causes a
-        // visible load-time teleport/lighting pop. Server spawn is still used
-        // for real respawns via playerRespawned.
+        if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
+          respawnAtBase({ spawnX: spawn.x, spawnZ: spawn.z });
+          state.maulaLoaded = (self?.darts ?? 4) > 0;
+          state.maulaReserveAmmo = Math.max(0, (self?.darts ?? 4) - 1);
+          mp.emit("equipWeapon", { weapon: state.equippedWeapon });
+          state.playerHealth = self?.health ?? CONFIG.playerMaxHealth;
+          state.spiceCarry = self?.spiceCarry ?? 0;
+        }
+
+      });
+
+      socket.on("positionCorrection", ({ x, y, z }) => {
+        if (![x, y, z].every(Number.isFinite)) return;
+        player.position.set(x, y, z);
+        player.userData.velocity.set(0, 0, 0);
+        cancelHarvest();
       });
 
       socket.on("playerJoined", (data) => addRemotePlayer(data));

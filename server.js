@@ -1,9 +1,11 @@
 const { createServer } = require("http");
 const { Server } = require("socket.io");
-const fs = require("fs");
-const path = require("path");
+const World = require("./world");
+const Rules = require("./game-rules");
+const staticFiles = require("./static-files");
 
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || "127.0.0.1";
 const SPICE_RESPAWN_SECONDS = 32;
 const SPICE_NODE_COUNT = 8;
 const SPICE_SMALL_YIELD_MIN = 6;
@@ -47,20 +49,14 @@ const NPC_SPICE_DROP_MAX_DISTANCE = 240;
 const DEFAULT_MAP_SEED = Math.floor(Math.random() * 0x1000000) >>> 0;
 const SERVER_START_MS = Date.now();
 
-function mulberry32(seed) {
-  return function next() {
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+const mulberry32 = World.mulberry32;
 
 function randomRange(min, max, rand = Math.random) {
   return min + ((max - min) * rand());
 }
 
 function parseMapSeed(value) {
-  if (value === null || value === undefined) return null;
+  if (!["string", "number"].includes(typeof value)) return null;
   const raw = String(value).trim();
   if (!raw) return null;
 
@@ -78,6 +74,8 @@ function parseMapSeed(value) {
 }
 
 const MAP_SEED = parseMapSeed(process.env.MAP_SEED) ?? DEFAULT_MAP_SEED;
+const terrain = World.createTerrain(MAP_SEED);
+const initialNodes = World.initialNodes(MAP_SEED, terrain);
 
 function rollSpiceYield(type, nodeId, cycle = 0) {
   const seed = (
@@ -142,7 +140,7 @@ const playerSessions = new Map(); // playerToken -> { name, team, socketId, last
 const socketSessionTokens = new Map(); // socketId -> playerToken
 
 // Spice nodes: server owns active state, remaining yield, type, and respawn timers.
-// Positions are still determined client-side from MAP_SEED for now.
+// The server owns patch positions and clients render the coordinates in snapshots.
 const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => {
   const tutorial = i === SPICE_TUTORIAL_NODE_ID;
   const type = tutorial
@@ -150,6 +148,7 @@ const spiceNodes = Array.from({ length: SPICE_NODE_COUNT }, (_, i) => {
     : (hasInitialSpicePlume && i === (SPICE_NODE_COUNT - 1) ? "plume" : "small");
   const totalYield = tutorial ? rollTutorialSpiceYield(0) : rollSpiceYield(type, i, 0);
   return {
+    ...initialNodes[i],
     id: i,
     tutorial,
     active: true,
@@ -599,7 +598,9 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
 	    target.health = 100;
 	    target.x = spawn.x;
 	    target.z = spawn.z;
-	    target.y = 0;
+	    target.y = World.groundHeight(terrain, spawn.x, spawn.z);
+    Rules.reset(target);
+    target.darts = 1;
 	    clearPlayerTransientState(target, { clearCarry: true });
 	    grantSpawnProtection(target);
 	    emitPlayerCarry(target);
@@ -661,6 +662,7 @@ function clearPlayerTransientState(player, { clearCarry = true } = {}) {
   player.poisonAttackerId = null;
   player.shieldActive = false;
   player.harvestActive = false;
+  player.harvest = null;
   player.noiseLevel = 0;
   player.signLevel = 0;
   player.vx = 0;
@@ -972,6 +974,7 @@ setInterval(() => {
           ? rollTutorialSpiceYield(node.respawnCount)
           : rollSpiceYield(node.type, node.id, node.respawnCount);
         node.remaining = node.totalYield;
+        Object.assign(node, World.spicePosition(MAP_SEED, node.id, node.respawnCount, node.type, spiceNodes, terrain));
         changed = true;
       }
     } else if (node.decayTimer > 0) {
@@ -1004,6 +1007,7 @@ setInterval(() => {
           slot.respawnCount += 1;
           slot.totalYield = rollSpiceYield("plume", slot.id, slot.respawnCount);
           slot.remaining = slot.totalYield;
+          Object.assign(slot, World.spicePosition(MAP_SEED, slot.id, slot.respawnCount, slot.type, spiceNodes, terrain));
           slot.active = true;
           slot.respawnTimer = 0;
           changed = true;
@@ -1025,6 +1029,9 @@ setInterval(() => {
 }, TICK_MS);
 
 setInterval(() => {
+  for (const p of players.values()) {
+    if (p.thumperActive && Date.now() >= p.thumperUntil) { p.thumperActive = false; p.thumperSignal = 0; }
+  }
   tickWorm(WORM_TICK_MS / 1000);
   io.emit("wormSync", {
     position: { x: worm.position.x, z: worm.position.z },
@@ -1066,33 +1073,11 @@ setInterval(() => {
 
 // ── Socket.io ─────────────────────────────────────────────────────────────────
 
-const httpServer = createServer((req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-  // Serve static files for local dev
-  const url = req.url.split("?")[0];
-  const filePath = url === "/" ? "/index.html" : url;
-  const fullPath = path.join(__dirname, filePath);
-  const ext = path.extname(fullPath).toLowerCase();
-  const mimeTypes = { ".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".png": "image/png", ".jpg": "image/jpeg", ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".svg": "image/svg+xml" };
-  try {
-    const data = fs.readFileSync(fullPath);
-    res.writeHead(200, { "Content-Type": mimeTypes[ext] || "application/octet-stream" });
-    res.end(data);
-  } catch {
-    res.writeHead(200);
-    res.end("Spice Jam server running");
-  }
-});
+const httpServer = createServer(staticFiles(__dirname));
 
 const io = new Server(httpServer, {
   cors: { origin: "*" },
+  maxHttpBufferSize: 8192,
   // Prefer WebSocket, fall back to polling
   transports: ["websocket", "polling"],
 });
@@ -1111,7 +1096,7 @@ io.on("connection", (socket) => {
     return;
   }
 
-  const sessionToken = sanitizePlayerToken(String(socket.handshake.auth?.playerToken || ""));
+  const sessionToken = sanitizePlayerToken(typeof socket.handshake.auth?.playerToken === "string" ? socket.handshake.auth.playerToken : "");
   const session = sessionToken ? (playerSessions.get(sessionToken) || null) : null;
   if (session?.socketId && session.socketId !== socket.id) {
     const prevSocket = io.sockets.sockets.get(session.socketId);
@@ -1120,13 +1105,13 @@ io.on("connection", (socket) => {
 
   const team = session?.team || assignTeam();
   const spawn = pickPlayerSpawnPoint(socket.id);
-  const rawName = sanitizePlayerName(String(socket.handshake.auth?.name || ""));
+  const rawName = sanitizePlayerName(socket.handshake.auth?.name);
   const name = rawName || session?.name || fallbackPlayerName(socket.id, sessionToken);
   const player = {
     id: socket.id,
     name,
     team,
-    x: spawn.x, y: 0, z: spawn.z,
+    x: spawn.x, y: World.groundHeight(terrain, spawn.x, spawn.z), z: spawn.z,
     rotY: 0,
     spiceCarry: 0,
     health: 100,
@@ -1147,7 +1132,32 @@ io.on("connection", (socket) => {
     vz: 0,
     moveTime: 0,
   };
+  Rules.reset(player);
   players.set(socket.id, player);
+  // Drop malformed and excessive events before any handler dereferences input.
+  const objectEvents = new Set(["move", "noiseHotspot", "holtzmanDetonation", "harvestNode", "beginHarvest", "hitPlayer", "maulaHitPlayer", "weaponFired", "equipWeapon"]);
+  const limits = new Map();
+  socket.use(([event, data], next) => {
+    if (objectEvents.has(event) && !Rules.record(data)) return;
+    if (![...objectEvents, "spiceDeposited", "pickupSpiceDrop", "cancelHarvest"].includes(event)) return;
+    const now = Date.now();
+    let limit = limits.get(event);
+    if (!limit || now - limit.at >= 1000) { limit = { at: now, count: 0 }; limits.set(event, limit); }
+    const cap = event === "move" || event === "hitPlayer" ? 100 : 15;
+    if (++limit.count > cap) return;
+    next();
+  });
+  socket.on("equipWeapon", ({ weapon }) => {
+    if (player.health > 0 && Rules.WEAPONS.has(weapon)) player.equipped = weapon;
+  });
+  socket.on("weaponFired", data => Rules.fireDart(player, data));
+  socket.on("beginHarvest", ({ id }) => {
+    const node = Number.isInteger(id) ? spiceNodes[id] : null;
+    if (player.health <= 0 || !node?.active || Rules.distance(player, node) > 9) return;
+    if (player.harvest?.id === id) return;
+    player.harvest = { id, x: player.x, z: player.z, at: Date.now() };
+  });
+  socket.on("cancelHarvest", () => { player.harvest = null; });
   if (sessionToken) {
     playerSessions.set(sessionToken, {
       name,
@@ -1196,6 +1206,14 @@ io.on("connection", (socket) => {
   socket.on("move", (data) => {
     const p = players.get(socket.id);
     if (!p) return;
+    const pullSpeed = ["warning", "breach"].includes(worm.phase) && Rules.distance(p, worm.target) < WORM_CFG.pullRadius ? 22 : 0;
+    if (!Rules.move(p, data, terrain, Date.now(), pullSpeed)) {
+      if (!p.lastCorrectionAt || Date.now() - p.lastCorrectionAt > 200) {
+        p.lastCorrectionAt = Date.now();
+        socket.emit("positionCorrection", { x: p.x, y: p.y, z: p.z });
+      }
+      return;
+    }
     const x = Number(data.x) || 0;
     const z = Number(data.z) || 0;
     const nowSec = getWorldTimeSeconds();
@@ -1213,17 +1231,15 @@ io.on("connection", (socket) => {
 	    p.z = z;
 	    p.rotY = data.rotY;
 	    p.equipped = data.equipped;
-    p.surfaceType = data.surfaceType === "rock" ? "rock" : "sand";
-    p.noiseLevel = clamp(Number(data.noiseLevel) || 0, 0, 1);
-    p.signLevel = clamp(Number(data.signLevel) || 0, 0, 1);
+    p.surfaceType = terrain.rockPatches.some(patch => Math.hypot(x-patch.x,z-patch.z) <= patch.radius + 6) ? "rock" : "sand";
+    p.noiseLevel = Rules.finite(data.noiseLevel) ? clamp(data.noiseLevel, 0, 1) : 0;
+    p.signLevel = Rules.finite(data.signLevel) ? clamp(data.signLevel, 0, 1) : 0;
     p.shieldActive = Boolean(data.shieldActive);
-    p.harvestActive = Boolean(data.harvestActive);
-    p.thumperActive = Boolean(data.thumperActive);
-    const thumperX = Number(data.thumperX);
-    const thumperZ = Number(data.thumperZ);
-    p.thumperX = Number.isFinite(thumperX) ? thumperX : p.x;
-    p.thumperZ = Number.isFinite(thumperZ) ? thumperZ : p.z;
-    p.thumperSignal = clamp(Number(data.thumperSignal) || 0, 0, 1);
+    p.harvestActive = Boolean(p.harvest);
+    if (!data.thumperActive || Date.now() > p.thumperUntil) {
+      p.thumperActive = false;
+      p.thumperSignal = 0;
+    }
     // Relay to everyone else — don't echo back to sender
     socket.broadcast.emit("playerMoved", {
 	      id: socket.id,
@@ -1238,12 +1254,21 @@ io.on("connection", (socket) => {
   socket.on("noiseHotspot", (data) => {
     if (!data) return;
     const p = players.get(socket.id);
-    const kind = String(data.kind || "generic");
-    if (kind === "atomic_holtzman") return;
-    const x = Number(data.x);
-    const z = Number(data.z);
-    const strength = clamp(Number(data.strength) || 0, 0, 1);
-    if (kind === "thumper" && p) {
+    const kind = typeof data.kind === "string" ? data.kind : "generic";
+    if (!p || p.health <= 0 || !["thumper", "battle", "generic"].includes(kind)) return;
+    const x = data.x;
+    const z = data.z;
+    const strength = Rules.finite(data.strength) ? clamp(data.strength, 0, 1) : 0;
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !isInsideWorldBounds(x,z)) return;
+    if (kind !== "thumper" && Math.hypot(p.x-x,p.z-z) > 15) return;
+    if (kind === "thumper") {
+      const existing = p.thumperActive && Date.now() < p.thumperUntil;
+      if (existing && Math.hypot(p.thumperX-x,p.thumperZ-z) > 1) return;
+      if (!existing) {
+        if (Date.now() < p.thumperUntil || Math.hypot(p.x-x,p.z-z) > 15 || terrain.rockPatches.some(patch => Math.hypot(x-patch.x,z-patch.z) <= patch.radius)) return;
+        p.thumperUntil = Date.now() + 24000;
+      }
+
       p.thumperActive = true;
       p.thumperX = Number.isFinite(x) ? x : p.x;
       p.thumperZ = Number.isFinite(z) ? z : p.z;
@@ -1255,9 +1280,9 @@ io.on("connection", (socket) => {
       z,
       strength,
       {
-        radius: data.radius,
-        ttl: data.ttl,
-        signLevel: data.signLevel,
+        radius: kind === "thumper" ? 240 : 120,
+        ttl: kind === "thumper" ? 2 : 4,
+        signLevel: strength,
       }
     );
     if (kind === "thumper" && Number.isFinite(x) && Number.isFinite(z)) {
@@ -1280,16 +1305,18 @@ io.on("connection", (socket) => {
     if (!data) return;
     const p = players.get(socket.id);
     const now = Date.now();
+    if (!p || p.health <= 0 || p.equipped !== "lasgun") return;
+    const shieldTarget = players.get(data.targetId);
+    if (!shieldTarget || !shieldTarget.shieldActive || shieldTarget.health <= 0) return;
+    if (shieldTarget !== p && !Rules.hit(p, shieldTarget, "lasgun", terrain, now)) return;
+    if (!Rules.finite(data.x) || !Rules.finite(data.z) || Math.hypot(data.x-shieldTarget.x,data.z-shieldTarget.z) > 5) return;
     if (now - lastHoltzmanDetonationMs < HOLTZMAN_EVENT_COOLDOWN_MS) return;
     lastHoltzmanDetonationMs = now;
-    const x = Number(data.x);
-    const y = Number(data.y);
-    const z = Number(data.z);
+    const x = shieldTarget.x;
+    const y = shieldTarget.y;
+    const z = shieldTarget.z;
     if (!Number.isFinite(x) || !Number.isFinite(z)) return;
-    const reportedSurface = data.surfaceType === "rock"
-      ? "rock"
-      : (data.surfaceType === "sand" ? "sand" : null);
-    const detonationSurface = reportedSurface || (p?.surfaceType === "sand" ? "sand" : "rock");
+    const detonationSurface = shieldTarget.surfaceType;
     const wormEligible = detonationSurface === "sand";
 
     // Server-side atomic hotspot fallback so worm reaction does not depend on
@@ -1343,19 +1370,22 @@ io.on("connection", (socket) => {
 	  socket.on("harvestNode", (data) => {
 	    const p = players.get(socket.id);
 	    if (!p || p.health <= 0) return;
-	    const nodeId = typeof data === "object" && data !== null ? data.id : data;
-	    const node = spiceNodes[nodeId];
-	    if (!node || !node.active) {
+	    const nodeId = data.id;
+	    const node = Number.isInteger(nodeId) ? spiceNodes[nodeId] : null;
+	    const harvest = p.harvest;
+    p.harvest = null;
+    if (!node || !node.active || !harvest || harvest.id !== nodeId || Date.now() - harvest.at < 4350
+        || Rules.distance(p, node) > 9 || Rules.distance(p, harvest) > 1.2) {
+      if (node) socket.emit("spiceNodeSync", node);
 	      emitPlayerCarry(p, socket);
 	      return;
 	    }
-	    const requestedAmount = Math.max(0, Math.floor(Number(data?.takenAmount) || 0));
+
 	    const carry = getPlayerSpiceCarry(p);
 	    const bagSpace = Math.max(0, SPICE_MAX_CARRY - carry);
 	    const takenAmount = Math.min(
 	      node.remaining,
-	      bagSpace,
-	      requestedAmount > 0 ? requestedAmount : node.remaining
+	      bagSpace
 	    );
 	    if (takenAmount <= 0) {
 	      emitPlayerCarry(p, socket);
@@ -1410,6 +1440,9 @@ io.on("connection", (socket) => {
 	    scores[p.team] += depositedAmount;
 	    setPlayerSpiceCarry(p, 0);
 	    p.health = 100;
+    p.poisonTimer = 0;
+    p.darts = 4;
+    io.emit("playerPoisoned", { id: p.id, duration: 0 });
 	    io.emit("scoreUpdate", scores);
 	    emitPlayerCarry(p);
 	    socket.emit("spiceDepositAccepted", {
@@ -1426,7 +1459,7 @@ io.on("connection", (socket) => {
 	    const p = players.get(socket.id);
 	    if (!p || p.health <= 0) return;
 	    const drop = spiceDrops.get(dropId);
-	    if (!drop) return;
+	    if (!drop || Rules.distance(p, drop) > 5) return;
 	    const take = Math.min(drop.amount, SPICE_MAX_CARRY - getPlayerSpiceCarry(p));
 	    if (take <= 0) return;
 	    setPlayerSpiceCarry(p, getPlayerSpiceCarry(p) + take);
@@ -1444,46 +1477,26 @@ io.on("connection", (socket) => {
 		    emitPlayerCarry(p);
 		  });
 
-  socket.on("npcSpiceDrop", (data) => {
-    const p = players.get(socket.id);
-    if (!p || p.health <= 0) return;
-    const x = Number(data?.x);
-    const z = Number(data?.z);
-    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
-    if (dist2(p.x, p.z, x, z) > NPC_SPICE_DROP_MAX_DISTANCE * NPC_SPICE_DROP_MAX_DISTANCE) return;
-    spawnSpiceDrop(x, z, NPC_SPICE_DROP_AMOUNT);
-  });
-
-  // ── Poison applied (maula dart) ──
-  socket.on("poisonPlayer", ({ targetId, attackType = "maula" }) => {
+  // Local NPCs have no authoritative health/death state and cannot mint shared spice.
+  // Maula poison is applied only alongside a validated, server-tracked projectile hit.
+  function handleHit({ targetId, attackType }) {
+    const attacker = players.get(socket.id);
     const target = players.get(targetId);
-    if (!target || target.health <= 0) return;
-    if (isSpawnProtected(target)) return;
-    if (target.shieldActive && isShieldBlockedAttack(attackType)) {
+    const damage = Rules.hit(attacker, target, attackType, terrain);
+    if (!damage) return;
+    if (attackType === "lasgun" && target.shieldActive) {
       socket.emit("shieldBlocked", { targetId, attackType });
       return;
     }
-    target.poisonTimer = POISON_DURATION;
-    target.poisonAttackerId = socket.id;
-    io.emit("playerPoisoned", { id: targetId, duration: POISON_DURATION });
-  });
-
-  // ── Combined maula PvP hit (damage + poison) ──
-  socket.on("maulaHitPlayer", ({ targetId, damage, applyPoison = true }) => {
-    const applied = applyPlayerDamage(targetId, damage, socket.id, "maula");
-    if (!applied || !applyPoison) return;
-    const target = players.get(targetId);
-    if (!target || target.health <= 0) return;
-    if (target.shieldActive) return;
-    target.poisonTimer = POISON_DURATION;
-    target.poisonAttackerId = socket.id;
-    io.emit("playerPoisoned", { id: targetId, duration: POISON_DURATION });
-  });
-
-  // ── Hit / damage ──
-  socket.on("hitPlayer", ({ targetId, damage, attackType = "generic" }) => {
-    applyPlayerDamage(targetId, damage, socket.id, attackType);
-  });
+    if (!applyPlayerDamage(targetId, damage, socket.id, attackType)) return;
+    if (attackType === "maula" && target.health > 0 && !target.shieldActive) {
+      target.poisonTimer = POISON_DURATION;
+      target.poisonAttackerId = socket.id;
+      io.emit("playerPoisoned", { id: targetId, duration: POISON_DURATION });
+    }
+  }
+  socket.on("hitPlayer", handleHit);
+  socket.on("maulaHitPlayer", data => handleHit({ ...data, attackType: "maula" }));
 
   // ── Disconnect ──
   socket.on("disconnect", (reason) => {
@@ -1505,8 +1518,8 @@ io.on("connection", (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, HOST, () => {
   console.log(
-    `Spice Jam server listening on :${PORT} (seed=${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")})`
+    `Spice Jam server listening on :${httpServer.address().port} (seed=${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")})`
   );
 });

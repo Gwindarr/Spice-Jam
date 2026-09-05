@@ -1,0 +1,24 @@
+[Unit]
+Description=Spice Jam multiplayer game
+After=network.target
+
+[Service]
+Type=simple
+User=spice-jam
+Group=spice-jam
+WorkingDirectory=/opt/spice-jam/current
+ExecStart=/opt/node-v22/bin/node /opt/spice-jam/current/server.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3001
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
