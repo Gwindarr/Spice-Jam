@@ -846,9 +846,9 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-      "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.7.3/build/index.module.js"
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/",
+      "three-mesh-bvh": "./vendor/three-mesh-bvh/index.module.js"
     }
   }
   </script>
@@ -1622,6 +1622,19 @@
 	    };
     const remotePlayers = new Map(); // id -> { mesh, data }
     const pendingRemoteCarry = new Map();
+    const remoteDarts = [];
+    const remoteFxParts = {
+      beamCoreGeo: new THREE.CylinderGeometry(0.05, 0.05, 1, 8),
+      beamGlowGeo: new THREE.CylinderGeometry(0.11, 0.11, 1, 8),
+      beamCoreMat: new THREE.MeshBasicMaterial({ color: 0x9cf2ff, transparent: true, opacity: 0.85, depthWrite: false }),
+      beamGlowMat: new THREE.MeshBasicMaterial({ color: 0x5ed3ff, transparent: true, opacity: 0.24, depthWrite: false }),
+      postGeo: new THREE.CylinderGeometry(0.22, 0.32, 3.2, 8),
+      postMat: new THREE.MeshStandardMaterial({ color: 0x6b5a44, roughness: 0.8, metalness: 0.3, flatShading: true }),
+      ringGeo: new THREE.RingGeometry(0.86, 1, 40),
+      ringMat: new THREE.MeshBasicMaterial({ color: 0xffcf70, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
+    };
+    const tempRemoteFxA = new THREE.Vector3();
+    const tempRemoteFxB = new THREE.Vector3();
     let mpSendTimer = 0;
 
     ui.hudSeed.textContent = `Seed: ${MAP_SEED.toString(16).toUpperCase().padStart(6, "0")}`;
@@ -3224,6 +3237,8 @@
 	              break;
 	            }
 	            const knifeResult = resolveImpactDamage(CONFIG.knifeDamage);
+            player.rotation.y = Math.atan2(strikeDir.x, strikeDir.z);
+            sendMoveUpdate();
             mp.emit("hitPlayer", { targetId: rp.data.id, damage: knifeResult.damage, attackType: "knife" });
 	            rp.hitFlash = 1.0;
 	            triggerDamageNumberAtPosition(tempProjectileCenter, knifeResult.damage, knifeResult.isCritical);
@@ -3280,51 +3295,52 @@
 	      return tempProjectileClosest.distanceToSquared(center) <= radius * radius;
 	    }
 
+	    let maulaDartParts = null;
+	    function getMaulaDartParts() {
+	      if (maulaDartParts) return maulaDartParts;
+	      maulaDartParts = {
+	        shaftGeo: new THREE.CylinderGeometry(0.04, 0.05, 0.9, 6),
+	        shaftMat: new THREE.MeshStandardMaterial({ color: 0xd8e4dc, roughness: 0.38, metalness: 0.18, flatShading: true }),
+	        tipGeo: new THREE.ConeGeometry(0.07, 0.22, 6),
+	        tipMat: new THREE.MeshStandardMaterial({
+	          color: 0x3d6e2a, emissive: 0x44bb22, emissiveIntensity: 0.6, roughness: 0.6, metalness: 0.0, flatShading: true,
+	        }),
+	        finGeo: new THREE.BoxGeometry(0.02, 0.18, 0.12),
+	        finMat: new THREE.MeshLambertMaterial({ color: 0x7f9186, flatShading: true }),
+	        glowGeo: new THREE.SphereGeometry(0.42, 8, 8),
+	        glowMat: new THREE.MeshBasicMaterial({
+	          color: 0x66ff44, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending,
+	        }),
+	      };
+	      return maulaDartParts;
+	    }
+
+	    // Darts share geometry and materials, so removing one from the scene leaks nothing.
 	    function createMaulaProjectileMesh() {
+	      const parts = getMaulaDartParts();
 	      const group = new THREE.Group();
-	      const shaft = new THREE.Mesh(
-	        new THREE.CylinderGeometry(0.04, 0.05, 0.9, 6),
-	        new THREE.MeshStandardMaterial({
-	          color: 0xd8e4dc,
-	          roughness: 0.38,
-	          metalness: 0.18,
-	          flatShading: true,
-	        })
-	      );
+	      const shaft = new THREE.Mesh(parts.shaftGeo, parts.shaftMat);
 	      shaft.castShadow = CONFIG.shadowEnabled;
 	      shaft.receiveShadow = CONFIG.shadowEnabled;
 	      group.add(shaft);
 
-	      const tip = new THREE.Mesh(
-	        new THREE.ConeGeometry(0.07, 0.22, 6),
-	        new THREE.MeshStandardMaterial({
-	          color: 0x3d6e2a,
-	          emissive: 0x44bb22,
-	          emissiveIntensity: 0.6,
-	          roughness: 0.6,
-	          metalness: 0.0,
-	          flatShading: true,
-	        })
-	      );
+	      const tip = new THREE.Mesh(parts.tipGeo, parts.tipMat);
 	      tip.position.y = 0.56;
 	      tip.castShadow = CONFIG.shadowEnabled;
 	      group.add(tip);
 
-	      const finGeometry = new THREE.BoxGeometry(0.02, 0.18, 0.12);
 	      for (let i = 0; i < 3; i += 1) {
-	        const fin = new THREE.Mesh(
-	          finGeometry,
-	          new THREE.MeshLambertMaterial({ color: 0x7f9186, flatShading: true })
-	        );
+	        const fin = new THREE.Mesh(parts.finGeo, parts.finMat);
 	        const angle = (i / 3) * Math.PI * 2;
 	        fin.position.set(Math.cos(angle) * 0.05, -0.34, Math.sin(angle) * 0.05);
 	        fin.rotation.y = angle;
 	        group.add(fin);
 	      }
 
-	      // Small point light travels with the dart so it reads clearly in flight
-	      const dartLight = new THREE.PointLight(0x66ff44, 1.8, 4, 2);
-	      group.add(dartLight);
+	      // Additive glow keeps the dart readable in flight without a per-dart light.
+	      const glow = new THREE.Mesh(parts.glowGeo, parts.glowMat);
+	      glow.position.y = 0.4;
+	      group.add(glow);
 
 	      group.scale.setScalar(1.6);
 	      return group;
@@ -3647,7 +3663,6 @@
 	                break;
 	              }
 	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: CONFIG.maulaImpactDamage, attackType: "maula" });
-	              mp.emit("poisonPlayer", { targetId: rp.data.id, attackType: "maula" });
 	              rp.hitFlash = 1.0;
 	              triggerDamageNumberAtPosition(tempProjectileCenter, CONFIG.maulaImpactDamage);
 	              sfx.hitSoft.play({ volumeMultiplier: 0.86, playbackRate: 0.92 });
@@ -3664,7 +3679,6 @@
 	              }
 	              const result = resolveImpactDamage(CONFIG.maulaImpactDamage, { headshot: true });
 	              mp.emit("hitPlayer", { targetId: rp.data.id, damage: result.damage, attackType: "maula" });
-	              mp.emit("poisonPlayer", { targetId: rp.data.id, attackType: "maula" });
 	              rp.hitFlash = 1.0;
 	              triggerDamageNumberAtPosition(tempProjectileCenter, result.damage, true);
 	              sfx.hitSoft.play({ volumeMultiplier: 1.05, playbackRate: 0.92 });
@@ -4420,6 +4434,7 @@
           const nowMs = performance.now();
           if (nowMs - mp.lastLasgunHitAt >= 50) {
             mp.lastLasgunHitAt = nowMs;
+            sendMoveUpdate();
             mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg, attackType: "lasgun" });
           }
           const rp = remotePlayers.get(bestRemoteId);
@@ -10365,6 +10380,8 @@
       }
     }
 
+    const droppedSpiceGeo = new THREE.BoxGeometry(0.5, 0.15, 0.5);
+
     function spawnDroppedSpice(px, pz, amount = 1, serverDropId = null) {
       const groundY = samplePlayerGroundHeight(px, pz);
       const mat = new THREE.MeshStandardMaterial({
@@ -10377,11 +10394,25 @@
         transparent: true,
         opacity: 1.0,
       });
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.5), mat);
+      const mesh = new THREE.Mesh(droppedSpiceGeo, mat);
       mesh.position.set(px, groundY + 0.08, pz);
       scene.add(mesh);
       droppedSpicePickups.push({ mesh, mat, timer: 15, baseY: groundY + 0.08, amount, dropId: serverDropId });
     }
+
+	    // Frees the GPU buffers of a removed object tree (shared resources simply re-upload if reused).
+	    function disposeObject3D(root) {
+	      root.traverse((obj) => {
+	        obj.geometry?.dispose();
+	        const materials = Array.isArray(obj.material) ? obj.material : (obj.material ? [obj.material] : []);
+	        for (const material of materials) {
+	          for (const value of Object.values(material)) {
+	            if (value?.isTexture) value.dispose();
+	          }
+	          material.dispose();
+	        }
+	      });
+	    }
 
 	    function removeDropById(dropId) {
 	      for (let i = droppedSpicePickups.length - 1; i >= 0; i--) {
@@ -10976,6 +11007,7 @@
 
       controls.addEventListener("lock", () => {
         state.paused = false;
+        state.hasPlayed = true;
         ui.overlay.classList.add("hidden");
         ui.resumeHint.classList.remove("visible");
         // Fire deferred initial plume event on first entry
@@ -11125,7 +11157,7 @@
           targetVelocityX = tempInput.x * CONFIG.playerSpeed * stanceMultiplier * slopeSpeedMult;
           targetVelocityZ = tempInput.z * CONFIG.playerSpeed * stanceMultiplier * slopeSpeedMult;
 
-          const targetYaw = Math.atan2(tempInput.x, tempInput.z);
+          const targetYaw = state.knifeTimer > 0 ? player.rotation.y : Math.atan2(tempInput.x, tempInput.z);
           const yawDiff = ((targetYaw - player.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
           player.rotation.y += yawDiff * (1 - Math.exp(-CONFIG.playerTurnSpeed * delta));
         }
@@ -11713,6 +11745,13 @@
 	    function animate() {
 	      requestAnimationFrame(animate);
 	      const delta = Math.min(clock.getDelta(), 0.05);
+	      // Offline pause (Esc/alt-tab after starting) freezes the world; the shared online world never pauses.
+	      if (state.paused && state.hasPlayed && !mp.connected) {
+	        updateCameraRig(delta);
+	        refreshHud();
+	        renderer.render(scene, camera);
+	        return;
+	      }
 		      updateDayNight(delta);
       updateWormUiTimers(delta);
 		      updateShieldSystem(delta);
@@ -11985,13 +12024,117 @@
     function removeRemotePlayer(id) {
       const rp = remotePlayers.get(id);
       if (!rp) return;
-      const nameplate = rp.mesh.userData?.nameplate;
-      if (nameplate?.material?.map) nameplate.material.map.dispose();
-      if (nameplate?.material) nameplate.material.dispose();
       scene.remove(rp.mesh);
+      disposeObject3D(rp.mesh);
+      if (rp.beamFx) scene.remove(rp.beamFx);
+      if (rp.thumperFx) scene.remove(rp.thumperFx);
       remotePlayers.delete(id);
       pendingRemoteCarry.delete(id);
       updatePlayerCount();
+    }
+
+    // ── Other players' darts, lasgun beams and thumpers (visual only; the server resolves hits) ──
+    function spawnRemoteDart({ x, y, z, direction }) {
+      if (![x, y, z, direction?.x, direction?.y, direction?.z].every(Number.isFinite)) return;
+      const dir = tempRemoteFxA.set(direction.x, direction.y, direction.z).normalize();
+      const mesh = createMaulaProjectileMesh();
+      mesh.position.set(x, y + 3.3, z).addScaledVector(dir, 1.1);
+      const velocity = dir.clone().multiplyScalar(CONFIG.maulaProjectileSpeed);
+      mesh.quaternion.setFromUnitVectors(tempUp, dir);
+      const trailMesh = new THREE.Mesh(maulaTrailGeo, maulaTrailMat);
+      scene.add(mesh);
+      scene.add(trailMesh);
+      remoteDarts.push({ mesh, trailMesh, velocity, age: 0, travelDist: 0 });
+    }
+
+    function createRemoteBeamFx() {
+      const group = new THREE.Group();
+      group.renderOrder = 8;
+      for (const [geo, mat] of [[remoteFxParts.beamCoreGeo, remoteFxParts.beamCoreMat], [remoteFxParts.beamGlowGeo, remoteFxParts.beamGlowMat]]) {
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = 0.5;
+        group.add(mesh);
+      }
+      scene.add(group);
+      return group;
+    }
+
+    function createRemoteThumperFx() {
+      const group = new THREE.Group();
+      const post = new THREE.Mesh(remoteFxParts.postGeo, remoteFxParts.postMat);
+      post.position.y = 1.6;
+      post.castShadow = CONFIG.shadowEnabled;
+      group.add(post);
+      // Each thumper animates its own ring opacity, so the ring gets its own material clone.
+      const ring = new THREE.Mesh(remoteFxParts.ringGeo, remoteFxParts.ringMat.clone());
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.1;
+      group.add(ring);
+      group.userData.ring = ring;
+      scene.add(group);
+      return group;
+    }
+
+    function updateRemoteCombatFx(delta) {
+      for (let i = remoteDarts.length - 1; i >= 0; i -= 1) {
+        const dart = remoteDarts[i];
+        const start = tempRemoteFxA.copy(dart.mesh.position);
+        dart.velocity.y -= CONFIG.maulaProjectileGravity * delta;
+        dart.mesh.position.addScaledVector(dart.velocity, delta);
+        dart.age += delta;
+        const step = tempRemoteFxB.subVectors(dart.mesh.position, start);
+        const stepLen = step.length();
+        let rockHit = null;
+        if (stepLen > 0.0001 && worldCollisionMesh?.geometry?.boundsTree) {
+          rockHit = raycastWorldCollision(start, step.divideScalar(stepLen), stepLen, 0);
+          if (rockHit) dart.mesh.position.copy(rockHit.point);
+        }
+        const velDir = tempRemoteFxB.copy(dart.velocity).normalize();
+        dart.mesh.quaternion.setFromUnitVectors(tempUp, velDir);
+        dart.travelDist += dart.velocity.length() * delta;
+        const trailLen = Math.min(3.5, dart.travelDist);
+        dart.trailMesh.position.copy(dart.mesh.position).addScaledVector(velDir, -trailLen * 0.5);
+        dart.trailMesh.quaternion.setFromUnitVectors(tempUp, velDir);
+        dart.trailMesh.scale.y = trailLen;
+        const belowGround = dart.mesh.position.y < sampleGroundHeight(dart.mesh.position.x, dart.mesh.position.z);
+        if (rockHit) triggerMaulaDustPuff(rockHit.point, getWorldCollisionHitNormal(rockHit, tempSupportNormal));
+        if (rockHit || belowGround || dart.age >= CONFIG.maulaProjectileLifetime) {
+          scene.remove(dart.mesh);
+          scene.remove(dart.trailMesh);
+          remoteDarts.splice(i, 1);
+        }
+      }
+
+      for (const [, rp] of remotePlayers) {
+        const end = rp.data.beamEnd;
+        const firing = !rp.dead && end && [end.x, end.y, end.z].every(Number.isFinite);
+        if (firing) {
+          rp.beamFx ??= createRemoteBeamFx();
+          const start = tempRemoteFxA.set(rp.mesh.position.x, rp.mesh.position.y + 3.3, rp.mesh.position.z);
+          const dir = tempRemoteFxB.set(end.x, end.y, end.z).sub(start);
+          const length = Math.max(0.001, dir.length());
+          rp.beamFx.position.copy(start);
+          rp.beamFx.quaternion.setFromUnitVectors(tempUp, dir.divideScalar(length));
+          rp.beamFx.scale.set(1, length, 1);
+        }
+        if (rp.beamFx) rp.beamFx.visible = Boolean(firing);
+
+        const th = rp.data.thumper;
+        const thumping = th && Number.isFinite(th.x) && Number.isFinite(th.z);
+        if (thumping) {
+          if (!rp.thumperFx) {
+            rp.thumperFx = createRemoteThumperFx();
+            rp.thumperPulse = 0;
+          }
+          rp.thumperFx.position.set(th.x, sampleGroundHeight(th.x, th.z), th.z);
+          rp.thumperPulse = (rp.thumperPulse + delta) % CONFIG.thumperPulseInterval;
+          const t = rp.thumperPulse / CONFIG.thumperPulseInterval;
+          const ring = rp.thumperFx.userData.ring;
+          ring.scale.setScalar(1 + t * 9);
+          ring.material.opacity = 0.55 * (1 - t);
+        }
+        if (rp.thumperFx) rp.thumperFx.visible = Boolean(thumping);
+      }
     }
 
     function updateRemotePlayers(delta) {
@@ -12144,28 +12287,32 @@
 	    }
 
 	    // Send position to server at ~20hz
+    function sendMoveUpdate() {
+      mp.emit("move", {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+        rotY: player.rotation.y,
+        equipped: state.equippedWeapon,
+        shieldActive: isShieldOperational(),
+        noiseLevel: state.noiseLevel,
+        signLevel: state.signLevel,
+        harvestActive: Boolean(state.harvestNode),
+        beamEnd: state.lasgunBeamTimer > 0
+          ? { x: state.lasgunBeamEnd.x, y: state.lasgunBeamEnd.y, z: state.lasgunBeamEnd.z }
+          : null,
+        thumperActive: thumper.active,
+      });
+    }
+
     function tickMultiplayer(delta) {
       updateRemotePlayers(delta);
+      updateRemoteCombatFx(delta);
       if (!mp.connected) return;
       mpSendTimer += delta;
       if (mpSendTimer >= 0.05) {
         mpSendTimer = 0;
-	        mp.emit("move", {
-	          x: player.position.x,
-	          y: player.position.y,
-	          z: player.position.z,
-	          rotY: player.rotation.y,
-	          equipped: state.equippedWeapon,
-	          shieldActive: isShieldOperational(),
-	          surfaceType: state.surfaceType,
-	          noiseLevel: state.noiseLevel,
-	          signLevel: state.signLevel,
-          harvestActive: Boolean(state.harvestNode),
-	          thumperActive: thumper.active,
-	          thumperX: thumper.group.position.x,
-	          thumperZ: thumper.group.position.z,
-	          thumperSignal: thumper.signal,
-        });
+        sendMoveUpdate();
       }
     }
 
@@ -12337,6 +12484,8 @@
       socket.on("playerJoined", (data) => addRemotePlayer(data));
 
       socket.on("playerLeft", (id) => removeRemotePlayer(id));
+
+      socket.on("dartFired", spawnRemoteDart);
 
       socket.on("playerMoved", (data) => {
         const rp = remotePlayers.get(data.id);

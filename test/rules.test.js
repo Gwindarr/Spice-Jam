@@ -72,3 +72,26 @@ test('laser damage is limited by server time, range, facing and available charge
   a.laserCharge=0;
   assert.equal(Rules.hit(a,b,'lasgun',terrain,2051),0);
 });
+
+test('the shield battery drains while up, cannot be held forever, and recharges', () => {
+  const p = player();
+  assert.equal(Rules.shield(p, true, 1000), true);
+  let now = 1000;
+  while (Rules.shield(p, true, now += 50) && now < 60000);
+  assert.ok(now > 1000 + 6000 && now < 1000 + 9000, `shield lasted ${now - 1000}ms`);
+  assert.equal(Rules.shield(p, true, now += 50), false, 'empty battery cannot re-engage');
+  Rules.shield(p, false, now += 3000);
+  assert.equal(Rules.shield(p, true, now += 50), true, 'recharged past the activation threshold');
+});
+
+test('a client reporting silence is still heard when harvesting, shielded or running on sand', () => {
+  const quiet = player(); quiet.surfaceType = 'sand';
+  assert.equal(Rules.noiseFloor(quiet, 0.05).noise, 0);
+  const busy = player(); busy.surfaceType = 'sand'; busy.harvest = { id: 1 }; busy.shieldActive = true;
+  let sign = 0; for (let i = 0; i < 100; i++) sign = Rules.noiseFloor(busy, 0.05).sign;
+  assert.ok(sign > 0.32, `sign ${sign} reaches the worm's attack threshold`);
+  const runner = player(); runner.surfaceType = 'sand'; runner.vx = 26;
+  assert.ok(Rules.noiseFloor(runner, 0.05).noise > 0.5);
+  const sheltered = player(); sheltered.surfaceType = 'rock'; sheltered.serverSign = 0.8;
+  assert.ok(Rules.noiseFloor(sheltered, 1).sign < 0.8, 'rock bleeds sign');
+});

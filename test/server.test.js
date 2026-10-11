@@ -155,3 +155,15 @@ test('a player cannot detonate their own shield, and leaving while in danger for
   b.s.disconnect();await delay(200);const back=await f.connect({playerToken:'danger-test-token'});
   assert.equal(back.w.snapshot.players.find(p=>p.id===back.w.id).health,100,'fresh spawn, not a restore');
 });
+
+test('other players see darts and beams but not internal anti-cheat state', {timeout:15000}, async t=>{
+  const f=await fixture(t);const a=await f.connect(),b=await f.connect();
+  assert.equal(b.w.snapshot.players.find(p=>p.id===a.w.id).moveBudget,undefined);
+  await delay(1100);const y=World.groundHeight(terrain,a.w.spawn.x,a.w.spawn.z);
+  a.s.emit('move',{...a.w.spawn,y,rotY:0,equipped:'maula'});await delay(100);
+  const dart=event(b.s,'dartFired');a.s.emit('weaponFired',{direction:{x:0,y:0,z:1}});
+  assert.equal((await dart).id,a.w.id);
+  const beam=new Promise(r=>b.s.on('playerMoved',m=>{if(m.beamEnd)r(m);}));
+  a.s.emit('move',{...a.w.spawn,y,rotY:0,equipped:'lasgun',beamEnd:{x:a.w.spawn.x,y,z:a.w.spawn.z+40}});
+  assert.equal((await beam).beamEnd.z,a.w.spawn.z+40);
+});

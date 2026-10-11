@@ -16,6 +16,44 @@ function reset(player, now = Date.now()) {
   player.darts = 4;
   player.shot = null;
   player.thumperUntil = 0;
+  player.shieldCharge = 1;
+  player.shieldUpdatedAt = now;
+  player.serverSign = 0;
+}
+
+// Server-side shield battery. Drain is slightly under the client's and recharge uses the client's
+// best (full daylight) rate, so an honest client is never cut off but a shield can't stay up forever.
+const SHIELD_DRAIN = 0.16 * 0.85, SHIELD_RECHARGE = 0.055, SHIELD_MIN_ACTIVATE = 0.08;
+function shield(player, wantOn, now = Date.now()) {
+  const dt = Math.max(0, (now - player.shieldUpdatedAt) / 1000);
+  player.shieldUpdatedAt = now;
+  if (player.shieldActive) player.shieldCharge = Math.max(0, player.shieldCharge - dt * SHIELD_DRAIN);
+  else player.shieldCharge = Math.min(1, player.shieldCharge + dt * SHIELD_RECHARGE);
+  if (!wantOn) player.shieldActive = false;
+  else if (player.shieldActive) player.shieldActive = player.shieldCharge > 0;
+  else player.shieldActive = player.shieldCharge >= SHIELD_MIN_ACTIVATE;
+  return player.shieldActive;
+}
+
+// Lower bound on worm noise/sign from what the server observes itself (mirrors the client's
+// updateNoiseSystem with the quietest assumptions), so reporting zero doesn't hide a player.
+function noiseFloor(player, dt) {
+  const sand = player.surfaceType === 'sand';
+  const speed = Math.hypot(player.vx || 0, player.vz || 0);
+  const running = speed > 16.5 * 1.08;
+  const movement = running ? Math.min(1, speed / 16.5) * 0.6 : 0;
+  const noise = Math.min(1, (sand ? 1 : 0.32) * movement
+    + ((player.spiceCarry || 0) > 0 ? 0.1 : 0)
+    + (player.harvest ? 0.72 : 0)
+    + (player.shieldActive ? (sand ? 0.62 : 0.18) : 0)) * 0.9;
+  const exposure = Math.min(1, Math.max(0, (noise - 0.28) / 0.72));
+  const damp = (from, to, rate) => from + (to - from) * (1 - Math.exp(-rate * dt));
+  if (!sand) player.serverSign = damp(player.serverSign, 0, 0.28);
+  else {
+    const target = Math.max(Math.pow(exposure, 2.1), player.shieldActive ? 0.58 * 0.9 : 0);
+    player.serverSign = damp(player.serverSign, target, target > player.serverSign ? 0.28 : 0.09);
+  }
+  return { noise, sign: player.serverSign };
 }
 
 function move(player, data, terrain, now = Date.now(), pullSpeed = 0) {
@@ -95,4 +133,4 @@ function hit(player, target, type, terrain, now = Date.now()) {
   return 50 * duration;
 }
 
-module.exports = { record, finite, WEAPONS, distance, reset, move, visible, fireDart, hit };
+module.exports = { record, finite, WEAPONS, distance, reset, move, visible, fireDart, hit, shield, noiseFloor };

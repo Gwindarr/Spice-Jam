@@ -269,7 +269,7 @@ function pickPlayerSpawnPoint(excludeId = null) {
 
 function getWorldSnapshot() {
   return {
-    players: [...players.values()],
+    players: [...players.values()].map(publicPlayer),
     spiceNodes,
     spiceDrops: [...spiceDrops.values()],
     scores,
@@ -336,6 +336,34 @@ function setPlayerSpiceCarry(player, amount) {
   return player.spiceCarry;
 }
 
+// The fields clients render; internal anti-cheat state (shots, budgets, timers) stays on the server.
+function publicPlayer(player) {
+  return {
+    ...movedPayload(player),
+    name: player.name,
+    team: player.team,
+    health: player.health,
+    darts: player.darts,
+    spawnProtectedUntil: player.spawnProtectedUntil,
+  };
+}
+
+// What other clients see of a player's movement and visible actions.
+function movedPayload(player) {
+  return {
+    id: player.id,
+    x: player.x,
+    y: player.y,
+    z: player.z,
+    rotY: player.rotY,
+    spiceCarry: getPlayerSpiceCarry(player),
+    equipped: player.equipped,
+    shieldActive: player.shieldActive,
+    beamEnd: player.beamEnd || null,
+    thumper: player.thumperActive ? { x: player.thumperX, z: player.thumperZ } : null,
+  };
+}
+
 function emitPlayerCarry(player, targetSocket = null) {
   if (!player) return;
   const payload = { id: player.id, spiceCarry: getPlayerSpiceCarry(player) };
@@ -343,16 +371,7 @@ function emitPlayerCarry(player, targetSocket = null) {
     targetSocket.emit("playerCarryUpdated", payload);
   } else {
     io.emit("playerCarryUpdated", payload);
-    io.emit("playerMoved", {
-      id: player.id,
-      x: player.x,
-      y: player.y,
-      z: player.z,
-      rotY: player.rotY,
-      spiceCarry: payload.spiceCarry,
-      equipped: player.equipped,
-      shieldActive: player.shieldActive,
-    });
+    io.emit("playerMoved", movedPayload(player));
   }
 }
 
@@ -405,6 +424,7 @@ function getPlayerClusterCenter() {
   let sz = 0;
   let n = 0;
   for (const p of players.values()) {
+    if (p.health <= 0) continue;
     sx += p.x;
     sz += p.z;
     n += 1;
@@ -662,6 +682,7 @@ function clearPlayerTransientState(player, { clearCarry = true } = {}) {
   player.poisonTimer = 0;
   player.poisonAttackerId = null;
   player.shieldActive = false;
+  player.beamEnd = null;
   player.harvestActive = false;
   player.harvest = null;
   player.noiseLevel = 0;
@@ -1167,7 +1188,7 @@ io.on("connection", (socket) => {
   if (saved) player.darts = saved.darts;
   players.set(socket.id, player);
   // Drop malformed and excessive events before any handler dereferences input.
-  const objectEvents = new Set(["move", "noiseHotspot", "holtzmanDetonation", "harvestNode", "beginHarvest", "hitPlayer", "maulaHitPlayer", "weaponFired", "equipWeapon"]);
+  const objectEvents = new Set(["move", "noiseHotspot", "holtzmanDetonation", "harvestNode", "beginHarvest", "hitPlayer", "weaponFired", "equipWeapon"]);
   const limits = new Map();
   socket.use(([event, data], next) => {
     if (objectEvents.has(event) && !Rules.record(data)) return;
@@ -1182,7 +1203,10 @@ io.on("connection", (socket) => {
   socket.on("equipWeapon", ({ weapon }) => {
     if (player.health > 0 && Rules.WEAPONS.has(weapon)) player.equipped = weapon;
   });
-  socket.on("weaponFired", data => Rules.fireDart(player, data));
+  socket.on("weaponFired", (data) => {
+    if (!Rules.fireDart(player, data)) return;
+    socket.broadcast.emit("dartFired", { id: socket.id, x: player.x, y: player.y, z: player.z, direction: { x: player.shot.direction.x, y: player.shot.direction.y, z: player.shot.direction.z } });
+  });
   socket.on("beginHarvest", ({ id }) => {
     const node = Number.isInteger(id) ? spiceNodes[id] : null;
     if (player.health <= 0 || !node?.active || Rules.distance(player, node) > 9) return;
@@ -1206,7 +1230,7 @@ io.on("connection", (socket) => {
   socket.emit("welcome", { id: socket.id, team, spawn, snapshot: getWorldSnapshot() });
 
   // Tell everyone else about the new player
-  socket.broadcast.emit("playerJoined", player);
+  socket.broadcast.emit("playerJoined", publicPlayer(player));
 
   function isShieldBlockedAttack(attackType) {
     return attackType === "knife" || attackType === "maula";
@@ -1265,23 +1289,21 @@ io.on("connection", (socket) => {
 	    p.rotY = data.rotY;
 	    p.equipped = data.equipped;
     p.surfaceType = surfaceAt(x, z);
-    p.noiseLevel = Rules.finite(data.noiseLevel) ? clamp(data.noiseLevel, 0, 1) : 0;
-    p.signLevel = Rules.finite(data.signLevel) ? clamp(data.signLevel, 0, 1) : 0;
-    p.shieldActive = Boolean(data.shieldActive);
+    p.shieldActive = Rules.shield(p, Boolean(data.shieldActive));
     p.harvestActive = Boolean(p.harvest);
+    // Client values can only raise the server's own estimate, never hide a player from the worm.
+    const floor = Rules.noiseFloor(p, dt || 0.05);
+    p.noiseLevel = Math.max(floor.noise, Rules.finite(data.noiseLevel) ? clamp(data.noiseLevel, 0, 1) : 0);
+    p.signLevel = Math.max(floor.sign, Rules.finite(data.signLevel) ? clamp(data.signLevel, 0, 1) : 0);
     if (!data.thumperActive || Date.now() > p.thumperUntil) {
       p.thumperActive = false;
       p.thumperSignal = 0;
     }
+    const beam = data.beamEnd;
+    p.beamEnd = p.equipped === "lasgun" && Rules.record(beam) && ["x", "y", "z"].every(k => Rules.finite(beam[k]))
+      && Rules.distance(p, beam) <= 520 ? { x: beam.x, y: beam.y, z: beam.z } : null;
     // Relay to everyone else — don't echo back to sender
-    socket.broadcast.emit("playerMoved", {
-	      id: socket.id,
-	      x: p.x, y: p.y, z: p.z,
-	      rotY: p.rotY,
-	      spiceCarry: getPlayerSpiceCarry(p),
-	      equipped: p.equipped,
-	      shieldActive: p.shieldActive,
-	    });
+    socket.broadcast.emit("playerMoved", movedPayload(p));
   });
 
   socket.on("noiseHotspot", (data) => {
@@ -1529,7 +1551,6 @@ io.on("connection", (socket) => {
     }
   }
   socket.on("hitPlayer", handleHit);
-  socket.on("maulaHitPlayer", data => handleHit({ ...data, attackType: "maula" }));
 
   // ── Disconnect ──
   socket.on("disconnect", (reason) => {
