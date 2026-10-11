@@ -187,7 +187,6 @@ const worm = {
 	  strikeEventSent: false,
 	  strikeId: 0,
 	};
-let lastHoltzmanDetonationMs = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -606,6 +605,7 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
 	    emitPlayerCarry(target);
 	    io.emit("playerRespawned", {
 	      id: targetId,
+	      darts: target.darts,
 	      spawn,
 	      protectedUntil: target.spawnProtectedUntil,
 	      spiceCarry: getPlayerSpiceCarry(target),
@@ -628,6 +628,7 @@ function consumePlayerThumper(player) {
   if (!player?.thumperActive) return false;
   player.thumperActive = false;
   player.thumperSignal = 0;
+  player.thumperUntil = Date.now();
   io.to(player.id).emit("wormConsumedThumper");
   io.emit("deathEvent", {
     victimId: null,
@@ -671,6 +672,19 @@ function clearPlayerTransientState(player, { clearCarry = true } = {}) {
   if (clearCarry) {
     player.spiceCarry = 0;
   }
+}
+
+const DANGER_RECENT_DAMAGE_MS = 8000;
+const DANGER_WORM_RADIUS = 70;
+
+// True while leaving would dodge a pending death: recent damage, poison, or a worm closing in.
+function isPlayerInDanger(player) {
+  if (player.poisonTimer > 0) return true;
+  if (Date.now() - (player.lastDamagedAt || 0) < DANGER_RECENT_DAMAGE_MS) return true;
+  if (player.surfaceType !== "sand") return false;
+  const wormNear = (point) => point && dist2(player.x, player.z, point.x, point.z) <= DANGER_WORM_RADIUS * DANGER_WORM_RADIUS;
+  if (worm.phase === "warning" || worm.phase === "breach") return wormNear(worm.target);
+  return worm.state === "hunting" && wormNear(worm.targetHotspot);
 }
 
 function grantSpawnProtection(player, seconds = SPAWN_PROTECTION_SECONDS) {
@@ -1010,6 +1024,7 @@ setInterval(() => {
           Object.assign(slot, World.spicePosition(MAP_SEED, slot.id, slot.respawnCount, slot.type, spiceNodes, terrain));
           slot.active = true;
           slot.respawnTimer = 0;
+          pushNoiseHotspot("spice_blow", slot.x, slot.z, 0.82, { radius: 230, ttl: 12, signLevel: 0.76 });
           changed = true;
         }
       }
@@ -1020,6 +1035,10 @@ setInterval(() => {
 
   const sessionCutoff = Date.now() - SESSION_EXPIRY_MS;
   for (const [token, session] of playerSessions) {
+    if (session.saved && Date.now() >= session.saved.until) {
+      spawnSpiceDrop(session.saved.x, session.saved.z, session.saved.spiceCarry);
+      session.saved = null;
+    }
     if (!session.socketId && session.lastSeen < sessionCutoff) playerSessions.delete(token);
   }
 
@@ -1088,12 +1107,6 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
-  if (players.size >= MAX_PLAYERS) {
-    socket.emit("serverFull");
-    socket.disconnect(true);
-    return;
-  }
-
   const clientSeed = parseMapSeed(socket.handshake.auth?.seed);
   if (clientSeed !== null && clientSeed !== MAP_SEED) {
     socket.emit("seedMismatch", { seed: MAP_SEED });
@@ -1101,11 +1114,21 @@ io.on("connection", (socket) => {
     return;
   }
 
+  // Replace this session's previous socket first, so a reconnecting player never counts twice.
   const sessionToken = sanitizePlayerToken(typeof socket.handshake.auth?.playerToken === "string" ? socket.handshake.auth.playerToken : "");
   const session = sessionToken ? (playerSessions.get(sessionToken) || null) : null;
   if (session?.socketId && session.socketId !== socket.id) {
     const prevSocket = io.sockets.sockets.get(session.socketId);
-    if (prevSocket) prevSocket.disconnect(true);
+    if (prevSocket) {
+      prevSocket.emit("sessionReplaced");
+      prevSocket.disconnect(true);
+    }
+  }
+
+  if (players.size >= MAX_PLAYERS) {
+    socket.emit("serverFull");
+    socket.disconnect(true);
+    return;
   }
 
   // A quick reconnect (network blip, reload) resumes where the player left off.
@@ -1135,7 +1158,7 @@ io.on("connection", (socket) => {
     thumperX: 0,
     thumperZ: 0,
     thumperSignal: 0,
-    spawnProtectedUntil: getWorldTimeSeconds() + SPAWN_PROTECTION_SECONDS,
+    spawnProtectedUntil: saved ? 0 : getWorldTimeSeconds() + SPAWN_PROTECTION_SECONDS,
     vx: 0,
     vz: 0,
     moveTime: 0,
@@ -1199,6 +1222,7 @@ io.on("connection", (socket) => {
     }
     const clampedDamage = Math.max(0, Math.min(Number(damage) || 0, 100));
     target.health = Math.max(0, target.health - clampedDamage);
+    target.lastDamagedAt = Date.now();
     io.emit("playerDamaged", { id: targetId, health: target.health, attackerId });
 	    if (target.health <= 0) {
 			      dropPlayerCarriedSpice(target);
@@ -1264,7 +1288,7 @@ io.on("connection", (socket) => {
     if (!data) return;
     const p = players.get(socket.id);
     const kind = typeof data.kind === "string" ? data.kind : "generic";
-    if (!p || p.health <= 0 || !["thumper", "battle", "generic"].includes(kind)) return;
+    if (!p || p.health <= 0 || kind !== "thumper") return;
     const x = data.x;
     const z = data.z;
     const strength = Rules.finite(data.strength) ? clamp(data.strength, 0, 1) : 0;
@@ -1316,11 +1340,11 @@ io.on("connection", (socket) => {
     const now = Date.now();
     if (!p || p.health <= 0 || p.equipped !== "lasgun") return;
     const shieldTarget = players.get(data.targetId);
-    if (!shieldTarget || !shieldTarget.shieldActive || shieldTarget.health <= 0) return;
-    if (shieldTarget !== p && !Rules.hit(p, shieldTarget, "lasgun", terrain, now)) return;
+    if (!shieldTarget || shieldTarget === p || !shieldTarget.shieldActive || shieldTarget.health <= 0) return;
+    if (now - (p.lastHoltzmanAt || 0) < HOLTZMAN_EVENT_COOLDOWN_MS) return;
+    if (!Rules.hit(p, shieldTarget, "lasgun", terrain, now)) return;
     if (!Rules.finite(data.x) || !Rules.finite(data.z) || Math.hypot(data.x-shieldTarget.x,data.z-shieldTarget.z) > 5) return;
-    if (now - lastHoltzmanDetonationMs < HOLTZMAN_EVENT_COOLDOWN_MS) return;
-    lastHoltzmanDetonationMs = now;
+    p.lastHoltzmanAt = now;
     const x = shieldTarget.x;
     const y = shieldTarget.y;
     const z = shieldTarget.z;
@@ -1519,7 +1543,9 @@ io.on("connection", (socket) => {
         sessionState.lastSeen = Date.now();
         if (leftPlayer?.name) sessionState.name = leftPlayer.name;
         if (leftPlayer?.team) sessionState.team = leftPlayer.team;
-        sessionState.saved = leftPlayer && leftPlayer.health > 0 ? {
+        const fled = leftPlayer && leftPlayer.health > 0 && isPlayerInDanger(leftPlayer);
+        if (fled) dropPlayerCarriedSpice(leftPlayer);
+        sessionState.saved = leftPlayer && leftPlayer.health > 0 && !fled ? {
           x: leftPlayer.x,
           z: leftPlayer.z,
           health: leftPlayer.health,

@@ -134,3 +134,24 @@ test('a quick reconnect with the same session keeps position and carried spice',
   const stranger=await f.connect({playerToken:'another-player-token'});
   assert.equal(stranger.w.snapshot.players.find(p=>p.id===stranger.w.id).spiceCarry,0);
 });
+
+test('a player cannot detonate their own shield, and leaving while in danger forfeits the restore', {timeout:20000}, async t=>{
+  const f=await fixture(t);const a=await f.connect(),b=await f.connect({playerToken:'danger-test-token'});
+  const kills=[];b.s.on('playerKilled',k=>kills.push(k));await delay(1100);
+  const apos={...a.w.spawn,y:World.groundHeight(terrain,a.w.spawn.x,a.w.spawn.z),rotY:0};
+  a.s.emit('move',{...apos,equipped:'lasgun',shieldActive:true});await delay(100);
+  a.s.emit('holtzmanDetonation',{x:apos.x,z:apos.z,targetId:a.w.id});await delay(300);
+  assert.deepEqual(kills,[],'self-targeted atomic rejected');
+  // Stand b just in front of a, knife b, then b drops: the 75-health state must not be restored.
+  let bpos={...b.w.spawn};const dest={x:apos.x,z:apos.z+3};
+  while(Math.hypot(bpos.x-dest.x,bpos.z-dest.z)>.1){
+    await delay(100);const d=Math.hypot(bpos.x-dest.x,bpos.z-dest.z),step=Math.min(2.3,d);
+    bpos={x:bpos.x+(dest.x-bpos.x)*step/d,z:bpos.z+(dest.z-bpos.z)*step/d};
+    b.s.emit('move',{...bpos,y:World.groundHeight(terrain,bpos.x,bpos.z),rotY:0,equipped:'knife'});
+  }
+  a.s.emit('move',{...apos,equipped:'knife',shieldActive:false});await delay(150);
+  const hit=event(b.s,'playerDamaged');a.s.emit('hitPlayer',{targetId:b.w.id,attackType:'knife'});
+  assert.equal((await hit).health,75);
+  b.s.disconnect();await delay(200);const back=await f.connect({playerToken:'danger-test-token'});
+  assert.equal(back.w.snapshot.players.find(p=>p.id===back.w.id).health,100,'fresh spawn, not a restore');
+});

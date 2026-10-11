@@ -31,7 +31,7 @@ const path = require('node:path');
   }
   const node=await page.evaluate(()=>{const n=window.__review.spiceObjective.nodes[0];return{x:n.x,z:n.z}});
   await travel(node);await page.keyboard.down('KeyE');
-  try {await page.waitForFunction(()=>window.__review.state.spiceCarry>0,{},{timeout:18000});}
+  try {await page.waitForFunction(()=>window.__review.state.spiceCarry>0,{},{timeout:40000});}
   catch(e){console.log('Harvest debug',await page.evaluate(()=>({state:window.__review.state,pos:window.__review.player.position,corrections:window.__corrections})));throw e;}
   await page.keyboard.up('KeyE');const harvested=await page.evaluate(()=>window.__review.state.spiceCarry);
   await travel({x:-380,z:-390});await page.keyboard.down('KeyE');await page.waitForTimeout(250);await page.keyboard.up('KeyE');

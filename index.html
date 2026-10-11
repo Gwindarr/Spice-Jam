@@ -1616,6 +1616,8 @@
 	      lastWormStrikeId: 0,
 	      scores: null,
 	      lastLasgunHitAt: 0,
+	      serverFull: false,
+	      sessionReplaced: false,
 	      emit(...args) { if (this.connected && this.socket) this.socket.emit(...args); },
 	    };
     const remotePlayers = new Map(); // id -> { mesh, data }
@@ -8798,17 +8800,6 @@
         ttl: 12,
         signLevel: 0.76,
       });
-      if (mp.connected) {
-        mp.emit("noiseHotspot", {
-          kind: "spice_blow",
-          x: node.group.position.x,
-          z: node.group.position.z,
-          strength: 0.82,
-          radius: 230,
-          ttl: 12,
-          signLevel: 0.76,
-        });
-      }
       plumeEventState.active = true;
       plumeEventState.elapsed = 0;
     }
@@ -10455,8 +10446,9 @@
 	            if (mp.connected) {
 	              if (drop.dropId != null) {
 	                // Ask server to validate pickup (only once)
-	                if (!drop.pickupPending) {
+	                if (!drop.pickupPending || performance.now() - drop.pickupPendingAt > 1000) {
 	                  drop.pickupPending = true;
+	                  drop.pickupPendingAt = performance.now();
 	                  mp.emit("pickupSpiceDrop", drop.dropId);
 	                }
 	              }
@@ -11134,10 +11126,8 @@
           targetVelocityZ = tempInput.z * CONFIG.playerSpeed * stanceMultiplier * slopeSpeedMult;
 
           const targetYaw = Math.atan2(tempInput.x, tempInput.z);
-          player.rotation.y = THREE.MathUtils.lerp(
-            player.rotation.y, targetYaw,
-            1 - Math.exp(-CONFIG.playerTurnSpeed * delta)
-          );
+          const yawDiff = ((targetYaw - player.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+          player.rotation.y += yawDiff * (1 - Math.exp(-CONFIG.playerTurnSpeed * delta));
         }
       }
 
@@ -11926,7 +11916,11 @@
 
 	    function updatePlayerCount() {
 	      const count = remotePlayers.size + (mp.connected ? 1 : 0);
-	      const text = mp.connected ? `Players ${count}/20` : (mp.socket ? "Reconnecting…" : "");
+	      let text = "";
+	      if (mp.connected) text = `Players ${count}/20`;
+	      else if (mp.sessionReplaced) text = "Playing in another tab";
+	      else if (mp.serverFull) text = "Server full · retrying";
+	      else if (mp.socket) text = "Reconnecting…";
 	      console.log("[MP] updatePlayerCount:", text, "connected:", mp.connected, "remote:", remotePlayers.size);
 	      ui.hudPlayerCount.textContent = text;
 	    }
@@ -12237,12 +12231,16 @@
         mp.socket = socket;
 	        mp.connecting = false;
 	        mp.connected = true;
+	        mp.serverFull = false;
 	        mp.lastWormStrikeId = 0;
 	        console.log("[MP] Connected:", socket.id);
         updatePlayerCount();
       });
 
       socket.on("disconnect", (reason, details) => {
+        if (reason === "io server disconnect" && !mp.sessionReplaced) {
+          setTimeout(() => { if (!socket.connected) socket.connect(); }, mp.serverFull ? 15000 : 3000);
+        }
         mp.connecting = false;
         mp.connected = false;
         mp.team = null;
@@ -12254,7 +12252,14 @@
 
       socket.on("serverFull", () => {
         mp.connecting = false;
+        mp.serverFull = true;
         console.warn("[MP] Server full");
+        updatePlayerCount();
+      });
+
+      socket.on("sessionReplaced", () => {
+        mp.sessionReplaced = true;
+        updatePlayerCount();
       });
 
       socket.on("seedMismatch", ({ seed }) => {
@@ -12519,7 +12524,7 @@
         else sfx.shieldToggle.play({ volumeMultiplier: 1.05, playbackRate: 1.28 });
       });
 
-	      socket.on("playerRespawned", ({ id, spawn, protectedUntil, spiceCarry, worldTime }) => {
+	      socket.on("playerRespawned", ({ id, spawn, protectedUntil, spiceCarry, worldTime, darts }) => {
 	        const rp = remotePlayers.get(id);
 	        if (rp) {
           if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
@@ -12570,9 +12575,13 @@
           state.directHitNoticeTimer = 0;
           state.playerPoisonTimer = 0;
           if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
-            respawnAtBase({ spawnX: spawn.x, spawnZ: spawn.z });
+            respawnAtBase({ spawnX: spawn.x, spawnZ: spawn.z, applyMaulaLoadout: true });
           } else {
-            respawnAtBase();
+            respawnAtBase({ applyMaulaLoadout: true });
+          }
+          if (Number.isFinite(Number(darts))) {
+            state.maulaLoaded = darts > 0;
+            state.maulaReserveAmmo = Math.max(0, darts - 1);
           }
         }
       });
