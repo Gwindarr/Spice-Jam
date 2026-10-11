@@ -22,6 +22,8 @@ const SPICE_TUTORIAL_NODE_ID = 0;
 const SPICE_TUTORIAL_YIELD_MIN = 1;
 const SPICE_TUTORIAL_YIELD_MAX = 3;
 const MAX_PLAYERS = 20;
+const SESSION_RESTORE_MS = 30000;        // reconnect window that keeps position, health and carried spice
+const SESSION_EXPIRY_MS = 60 * 60 * 1000;
 const WORM_TICK_MS = 100;
 const WORLD_SIZE = 1500;
 const WORLD_HALF = WORLD_SIZE * 0.5;
@@ -39,7 +41,6 @@ const PLAYER_SPAWN_CENTER_X = -380;
 const PLAYER_SPAWN_CENTER_Z = -380;
 const PLAYER_SPAWN_RADIUS = 18;
 const PLAYER_SPAWN_MIN_SEPARATION = 6;
-const START_MESA_SAFE_RADIUS = 41;
 const SPICE_DEPOT_X = PLAYER_SPAWN_CENTER_X;
 const SPICE_DEPOT_Z = PLAYER_SPAWN_CENTER_Z - 10;
 const SPICE_DEPOSIT_RADIUS = 7.5;
@@ -204,10 +205,8 @@ function getWorldTimeSeconds() {
   return (Date.now() - SERVER_START_MS) / 1000;
 }
 
-function isInsideStartMesaSafeZone(x, z) {
-  const dx = x - PLAYER_SPAWN_CENTER_X;
-  const dz = z - PLAYER_SPAWN_CENTER_Z;
-  return (dx * dx) + (dz * dz) <= (START_MESA_SAFE_RADIUS * START_MESA_SAFE_RADIUS);
+function surfaceAt(x, z) {
+  return terrain.rockPatches.some(patch => Math.hypot(x - patch.x, z - patch.z) <= patch.radius + 6) ? "rock" : "sand";
 }
 
 function sanitizePlayerName(raw) {
@@ -599,6 +598,7 @@ function schedulePlayerRespawn(targetId, delayMs = 3000) {
 	    target.x = spawn.x;
 	    target.z = spawn.z;
 	    target.y = World.groundHeight(terrain, spawn.x, spawn.z);
+	    target.surfaceType = surfaceAt(spawn.x, spawn.z);
     Rules.reset(target);
     target.darts = 1;
 	    clearPlayerTransientState(target, { clearCarry: true });
@@ -1018,6 +1018,11 @@ setInterval(() => {
 
   if (changed) io.emit("spiceSync", spiceNodes);
 
+  const sessionCutoff = Date.now() - SESSION_EXPIRY_MS;
+  for (const [token, session] of playerSessions) {
+    if (!session.socketId && session.lastSeen < sessionCutoff) playerSessions.delete(token);
+  }
+
   // Expire spice drops
   for (const [id, drop] of spiceDrops) {
     drop.timer -= TICK_MS / 1000;
@@ -1103,8 +1108,11 @@ io.on("connection", (socket) => {
     if (prevSocket) prevSocket.disconnect(true);
   }
 
+  // A quick reconnect (network blip, reload) resumes where the player left off.
+  const saved = session?.saved && Date.now() < session.saved.until ? session.saved : null;
+  if (session) session.saved = null;
   const team = session?.team || assignTeam();
-  const spawn = pickPlayerSpawnPoint(socket.id);
+  const spawn = saved ? { x: saved.x, z: saved.z } : pickPlayerSpawnPoint(socket.id);
   const rawName = sanitizePlayerName(socket.handshake.auth?.name);
   const name = rawName || session?.name || fallbackPlayerName(socket.id, sessionToken);
   const player = {
@@ -1113,10 +1121,10 @@ io.on("connection", (socket) => {
     team,
     x: spawn.x, y: World.groundHeight(terrain, spawn.x, spawn.z), z: spawn.z,
     rotY: 0,
-    spiceCarry: 0,
-    health: 100,
+    spiceCarry: saved ? saved.spiceCarry : 0,
+    health: saved ? saved.health : 100,
     equipped: "knife",
-    surfaceType: "sand",
+    surfaceType: surfaceAt(spawn.x, spawn.z),
     noiseLevel: 0,
     signLevel: 0,
     shieldActive: false,
@@ -1133,6 +1141,7 @@ io.on("connection", (socket) => {
     moveTime: 0,
   };
   Rules.reset(player);
+  if (saved) player.darts = saved.darts;
   players.set(socket.id, player);
   // Drop malformed and excessive events before any handler dereferences input.
   const objectEvents = new Set(["move", "noiseHotspot", "holtzmanDetonation", "harvestNode", "beginHarvest", "hitPlayer", "maulaHitPlayer", "weaponFired", "equipWeapon"]);
@@ -1205,7 +1214,7 @@ io.on("connection", (socket) => {
   // ── Position updates (high frequency) ──
   socket.on("move", (data) => {
     const p = players.get(socket.id);
-    if (!p) return;
+    if (!p || p.health <= 0) return;
     const pullSpeed = ["warning", "breach"].includes(worm.phase) && Rules.distance(p, worm.target) < WORM_CFG.pullRadius ? 22 : 0;
     if (!Rules.move(p, data, terrain, Date.now(), pullSpeed)) {
       if (!p.lastCorrectionAt || Date.now() - p.lastCorrectionAt > 200) {
@@ -1231,7 +1240,7 @@ io.on("connection", (socket) => {
 	    p.z = z;
 	    p.rotY = data.rotY;
 	    p.equipped = data.equipped;
-    p.surfaceType = terrain.rockPatches.some(patch => Math.hypot(x-patch.x,z-patch.z) <= patch.radius + 6) ? "rock" : "sand";
+    p.surfaceType = surfaceAt(x, z);
     p.noiseLevel = Rules.finite(data.noiseLevel) ? clamp(data.noiseLevel, 0, 1) : 0;
     p.signLevel = Rules.finite(data.signLevel) ? clamp(data.signLevel, 0, 1) : 0;
     p.shieldActive = Boolean(data.shieldActive);
@@ -1510,6 +1519,14 @@ io.on("connection", (socket) => {
         sessionState.lastSeen = Date.now();
         if (leftPlayer?.name) sessionState.name = leftPlayer.name;
         if (leftPlayer?.team) sessionState.team = leftPlayer.team;
+        sessionState.saved = leftPlayer && leftPlayer.health > 0 ? {
+          x: leftPlayer.x,
+          z: leftPlayer.z,
+          health: leftPlayer.health,
+          spiceCarry: getPlayerSpiceCarry(leftPlayer),
+          darts: leftPlayer.darts,
+          until: Date.now() + SESSION_RESTORE_MS,
+        } : null;
       }
     }
     players.delete(socket.id);

@@ -949,7 +949,7 @@
       spiceSmallYieldMax: 9,
       spicePlumeYieldMin: 16,
       spicePlumeYieldMax: 20,
-      spicePlumeSpawnCheckInterval: 10, // TODO: restore to 60 after testing
+      spicePlumeSpawnCheckInterval: 60,
       spicePlumeSpawnChance: 0.35,
       spicePlumeMaxActive: 1,
       spicePlumeCooldown: 35,
@@ -1614,6 +1614,8 @@
 	      playerName: "",
 	      connecting: false,
 	      lastWormStrikeId: 0,
+	      scores: null,
+	      lastLasgunHitAt: 0,
 	      emit(...args) { if (this.connected && this.socket) this.socket.emit(...args); },
 	    };
     const remotePlayers = new Map(); // id -> { mesh, data }
@@ -4412,7 +4414,12 @@
 	        hitTarget(npcs[ni], 0.4, CONFIG.lasgunDPS * delta, { continuous: true });
 	      } else if (bestType === "remote" && bestRemoteId) {
           const dmg = CONFIG.lasgunDPS * delta;
-          mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg, attackType: "lasgun" });
+          // Server damage is time-based, so ~20 Hz loses nothing and stays under its rate limit.
+          const nowMs = performance.now();
+          if (nowMs - mp.lastLasgunHitAt >= 50) {
+            mp.lastLasgunHitAt = nowMs;
+            mp.emit("hitPlayer", { targetId: bestRemoteId, damage: dmg, attackType: "lasgun" });
+          }
           const rp = remotePlayers.get(bestRemoteId);
           if (rp) {
             rp.hitFlash = Math.max(rp.hitFlash || 0, 0.55);
@@ -11591,7 +11598,7 @@
 	      ui.hudPos.textContent = `Pos: (${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
 	      ui.hudSurface.textContent = `Surf ${state.surfaceType === "rock" ? "Rock" : "Sand"}`;
 	      ui.hudCargo.textContent = `Spice ${state.spiceCarry}/${CONFIG.spiceMaxCarry}`;
-	      ui.hudScore.textContent = `Bank ${state.spiceScore}`;
+	      ui.hudScore.textContent = getScoreLabel();
 	      const activePlume = spiceObjective.nodes.find(n => n.type === "plume" && n.active);
 	      ui.hudPlume.textContent = activePlume
 	        ? `Plume (${activePlume.x.toFixed(0)}, ${activePlume.z.toFixed(0)}) ${activePlume.remaining}/${activePlume.totalYield}`
@@ -11786,9 +11793,8 @@
     function getOrCreatePlayerToken() {
       const storageKey = "spice_player_token";
       const makeToken = () => {
-        const rand = Math.random().toString(36).slice(2, 10);
-        const now = Date.now().toString(36);
-        return `${now}${rand}`;
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
       };
       try {
         const existing = String(localStorage.getItem(storageKey) || "").trim();
@@ -11911,9 +11917,16 @@
 	      }
 	    }
 
+	    function getScoreLabel() {
+	      if (!mp.connected || !mp.team || !mp.scores) return `Bank ${state.spiceScore}`;
+	      const rival = mp.team === "fremen" ? "harkonnen" : "fremen";
+	      const name = (team) => (team === "fremen" ? "Fremen" : "Hark");
+	      return `${name(mp.team)} ${mp.scores[mp.team] ?? 0} · ${name(rival)} ${mp.scores[rival] ?? 0}`;
+	    }
+
 	    function updatePlayerCount() {
 	      const count = remotePlayers.size + (mp.connected ? 1 : 0);
-	      const text = mp.connected ? `Players ${count}/20` : "";
+	      const text = mp.connected ? `Players ${count}/20` : (mp.socket ? "Reconnecting…" : "");
 	      console.log("[MP] updatePlayerCount:", text, "connected:", mp.connected, "remote:", remotePlayers.size);
 	      ui.hudPlayerCount.textContent = text;
 	    }
@@ -11941,6 +11954,7 @@
 	        setSpiceCargoVisual(player, state.spiceCarry > 0);
 	      }
       if (mp.team && typeof scores?.[mp.team] === "number") {
+        mp.scores = { ...scores };
         state.spiceScore = scores[mp.team];
       }
       if (typeof health === "number") {
@@ -12208,8 +12222,8 @@
       mp.playerName = playerName;
       const socket = io(serverUrl, {
         transports: ["websocket", "polling"],
-        reconnectionAttempts: 3,
-        reconnectionDelay: 5000,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
         closeOnBeforeunload: true,
         auth: {
           seed: MAP_SEED,
@@ -12285,6 +12299,7 @@
           }
         }
         // Sync scores
+	        mp.scores = { ...snapshot.scores };
 	        state.spiceScore = snapshot.scores[team] ?? 0;
 	        applyNetworkWormState(snapshot.worm);
 	        const self = snapshot.players?.find((p) => p.id === id);
@@ -12302,6 +12317,7 @@
           mp.emit("equipWeapon", { weapon: state.equippedWeapon });
           state.playerHealth = self?.health ?? CONFIG.playerMaxHealth;
           state.spiceCarry = self?.spiceCarry ?? 0;
+          setSpiceCargoVisual(player, state.spiceCarry > 0);
         }
 
       });
@@ -12374,10 +12390,10 @@
       });
 
 	      socket.on("scoreUpdate", (scores) => {
+	        if (scores && typeof scores === "object") mp.scores = { ...scores };
 	        if (mp.team && typeof scores?.[mp.team] === "number") {
 	          state.spiceScore = scores[mp.team];
 	        }
-	        console.log("[MP] Scores:", scores);
 	      });
 
       socket.on("playerCarryUpdated", applyNetworkCarryUpdate);
@@ -12509,6 +12525,8 @@
           if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
             rp.data.x = spawn.x;
             rp.data.z = spawn.z;
+            rp.data.y = sampleGroundHeight(spawn.x, spawn.z);
+            rp.mesh.position.set(rp.data.x, rp.data.y, rp.data.z);
           }
 	          if (Number.isFinite(Number(protectedUntil))) {
 	            rp.data.spawnProtectedUntil = Number(protectedUntil);

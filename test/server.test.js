@@ -116,3 +116,21 @@ test('a nearby thumper attracts a warning and breach at its location; remote pla
   assert.ok(Math.hypot(breach.target.x-node.x,breach.target.z-node.z)<2);
   const observer=await f.connect();assert.equal(observer.w.snapshot.players.find(p=>p.id===a.w.id).health,100);
 });
+
+test('a quick reconnect with the same session keeps position and carried spice', {timeout:30000}, async t=>{
+  const f=await fixture(t),token='reconnect-test-token';const a=await f.connect({playerToken:token});let pos={...a.w.spawn};
+  const node=a.w.snapshot.spiceNodes[0];
+  while(Math.hypot(pos.x-node.x,pos.z-node.z)>.1){
+    await delay(100);const d=Math.hypot(pos.x-node.x,pos.z-node.z),step=Math.min(2.3,d);
+    pos={x:pos.x+(node.x-pos.x)*step/d,z:pos.z+(node.z-pos.z)*step/d};
+    a.s.emit('move',{...pos,y:World.groundHeight(terrain,pos.x,pos.z),rotY:0,equipped:'knife',harvestActive:true});
+  }
+  await delay(150);a.s.emit('beginHarvest',{id:0});await delay(4500);
+  const carry=event(a.s,'playerCarryUpdated');a.s.emit('harvestNode',{id:0});const amount=(await carry).spiceCarry;assert.ok(amount>0);
+  a.s.disconnect();await delay(200);
+  const back=await f.connect({playerToken:token});const self=back.w.snapshot.players.find(p=>p.id===back.w.id);
+  assert.equal(self.spiceCarry,amount);assert.equal(self.team,a.w.team);
+  assert.ok(Math.hypot(back.w.spawn.x-node.x,back.w.spawn.z-node.z)<1);
+  const stranger=await f.connect({playerToken:'another-player-token'});
+  assert.equal(stranger.w.snapshot.players.find(p=>p.id===stranger.w.id).spiceCarry,0);
+});
